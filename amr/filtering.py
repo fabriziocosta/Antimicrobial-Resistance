@@ -26,6 +26,8 @@ Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one sh
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETRIES = 3
 BACKOFF_FACTOR = 2
+LLM_RETRIES = 3
+LLM_BACKOFF_FACTOR = 2
 
 
 def _log(log_path: str | None, message: str) -> None:
@@ -96,19 +98,34 @@ def classify_abstract(
     *,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     max_tokens: int = 256,
+    log_path: str | None = None,
+    retries: int = LLM_RETRIES,
+    backoff: int = LLM_BACKOFF_FACTOR,
 ) -> dict:
-    """Call the LLM to classify a single abstract."""
+    """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
-    raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=0)
-    try:
-        data = json.loads(raw)
-    except Exception:
-        data = {"decision": "uncertain", "rationale": raw.strip()}
-    return {
-        "pmid": pmid,
-        "decision": data.get("decision", "uncertain"),
-        "rationale": data.get("rationale", ""),
-    }
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=0)
+            try:
+                data = json.loads(raw)
+            except Exception:
+                data = {"decision": "uncertain", "rationale": raw.strip()}
+            return {
+                "pmid": pmid,
+                "decision": data.get("decision", "uncertain"),
+                "rationale": data.get("rationale", ""),
+            }
+        except Exception as exc:  # pragma: no cover - network/API handling
+            last_error = exc
+            if attempt == retries - 1:
+                _log(log_path, f"LLM failed for PMID {pmid}: {exc}")
+                break
+            delay = backoff**attempt
+            _log(log_path, f"LLM error for PMID {pmid}: {exc}. Retrying in {delay}s...")
+            time.sleep(delay)
+    return {"pmid": pmid, "decision": "uncertain", "rationale": f"LLM failure: {last_error}"}
 
 
 def prepare_pmids_to_review(pmid_df: pd.DataFrame, *, max_pmids: int | None = None) -> pd.DataFrame:
@@ -134,12 +151,15 @@ def run_llm_filter(
     seen_pmids: set[str] | None = None,
     output_path: str | None = None,
     log_path: str | None = None,
+    max_llm_calls: int | None = None,
+    dry_run: bool = False,
 ) -> pd.DataFrame:
     """
     Process each PMID row and return a DataFrame with LLM decisions.
 
     - If resume_from or seen_pmids provided, processed PMIDs are skipped.
     - Keeps the “seen” index in-memory to avoid many filesystem writes; save once via output_path if desired.
+    - max_llm_calls limits LLM invocations per run; dry_run skips LLM calls.
     """
     seen = set(seen_pmids or [])
     existing = pd.DataFrame()
@@ -154,6 +174,7 @@ def run_llm_filter(
     total = len(long_df)
     processed = len(existing)
     positives = (existing["decision"].str.lower() == "yes").sum() if not existing.empty else 0
+    llm_calls_used = 0
 
     if total == 0:
         _log(log_path, "No PMIDs to process.")
@@ -173,6 +194,26 @@ def run_llm_filter(
         if not abstract:
             # Skip PMIDs without abstracts to avoid ambiguous judgments
             _log(log_path, f"[{idx+1}/{total}] PMID {pmid} skipped (no abstract).")
+            verdict = {
+                "pmid": pmid,
+                "decision": "uncertain",
+                "rationale": "no abstract",
+            }
+            title = title or ""
+            abstract = abstract or ""
+            verdict.update(
+                {
+                    "pathogen": row.pathogen,
+                    "antibiotic": row.antibiotic,
+                    "title": title,
+                    "abstract": abstract,
+                    "start_date": row.start_date,
+                    "end_date": row.end_date,
+                }
+            )
+            results.append(verdict)
+            seen.add(pmid)
+            processed += 1
             continue
 
         _log(
@@ -180,15 +221,27 @@ def run_llm_filter(
             f"[{idx+1}/{total}] PMID {pmid} | {row.pathogen} vs {row.antibiotic} | interval {row.start_date}–{row.end_date}",
         )
 
-        verdict = classify_abstract(
-            llm,
-            pmid,
-            row.pathogen,
-            row.antibiotic,
-            title,
-            abstract,
-            system_prompt=system_prompt,
-        )
+        if dry_run:
+            verdict = {
+                "pmid": pmid,
+                "decision": "uncertain",
+                "rationale": "dry_run",
+            }
+        else:
+            if max_llm_calls is not None and llm_calls_used >= max_llm_calls:
+                _log(log_path, f"Reached max_llm_calls={max_llm_calls}, stopping.")
+                break
+            verdict = classify_abstract(
+                llm,
+                pmid,
+                row.pathogen,
+                row.antibiotic,
+                title,
+                abstract,
+                system_prompt=system_prompt,
+                log_path=log_path,
+            )
+            llm_calls_used += 1
         verdict.update(
             {
                 "pathogen": row.pathogen,
