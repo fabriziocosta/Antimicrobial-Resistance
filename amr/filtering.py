@@ -28,6 +28,14 @@ RETRIES = 3
 BACKOFF_FACTOR = 2
 
 
+def _log(log_path: str | None, message: str) -> None:
+    """Write log to stdout and, if provided, append to a file."""
+    print(message)
+    if log_path:
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+
+
 def fetch_pubmed_abstract(
     pmid: str,
     *,
@@ -125,6 +133,7 @@ def run_llm_filter(
     resume_from: pd.DataFrame | None = None,
     seen_pmids: set[str] | None = None,
     output_path: str | None = None,
+    log_path: str | None = None,
 ) -> pd.DataFrame:
     """
     Process each PMID row and return a DataFrame with LLM decisions.
@@ -142,6 +151,13 @@ def run_llm_filter(
     results = [] if existing.empty else existing.to_dict("records")
     abstract_cache: dict[str, tuple[str, str]] = {}
     session = requests.Session()
+    total = len(long_df)
+    processed = len(existing)
+    positives = (existing["decision"].str.lower() == "yes").sum() if not existing.empty else 0
+
+    if total == 0:
+        _log(log_path, "No PMIDs to process.")
+        return existing
 
     for idx, row in long_df.iterrows():
         pmid = str(row.pmid)
@@ -156,7 +172,13 @@ def run_llm_filter(
 
         if not abstract:
             # Skip PMIDs without abstracts to avoid ambiguous judgments
+            _log(log_path, f"[{idx+1}/{total}] PMID {pmid} skipped (no abstract).")
             continue
+
+        _log(
+            log_path,
+            f"[{idx+1}/{total}] PMID {pmid} | {row.pathogen} vs {row.antibiotic} | interval {row.start_date}–{row.end_date}",
+        )
 
         verdict = classify_abstract(
             llm,
@@ -179,6 +201,9 @@ def run_llm_filter(
         )
         results.append(verdict)
         seen.add(pmid)
+        processed += 1
+        if str(verdict.get("decision", "")).lower() == "yes":
+            positives += 1
 
         if progress_every and (len(results) % progress_every == 0):
             print(f"Processed {len(seen)}/{len(long_df)}")
@@ -186,6 +211,10 @@ def run_llm_filter(
     df_out = pd.DataFrame(results)
     if output_path:
         df_out.to_parquet(output_path, index=False)
+    _log(
+        log_path,
+        f"Finished: processed {processed} / {total}; positives {positives} ({(positives/max(processed,1)):.3f} fraction).",
+    )
     session.close()
     return df_out
 
