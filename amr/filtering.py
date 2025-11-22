@@ -131,8 +131,8 @@ def classify_abstract(
 def prepare_pmids_to_review(
     pmid_df: pd.DataFrame,
     *,
-    max_pmids: int | None = None,
     exclude_pmids: set[str] | None = None,
+    max_pmids: int | None = None,
 ) -> pd.DataFrame:
     """Flatten pmids_results.parquet structure to one row per PMID/pathogen/antibiotic."""
     long_df = pmid_df.explode("pmids").dropna(subset=["pmids"]).copy()
