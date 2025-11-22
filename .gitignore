@@ -1,0 +1,9 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS noise
+.DS_Store
