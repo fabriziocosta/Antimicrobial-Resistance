@@ -128,12 +128,19 @@ def classify_abstract(
     return {"pmid": pmid, "decision": "uncertain", "rationale": f"LLM failure: {last_error}"}
 
 
-def prepare_pmids_to_review(pmid_df: pd.DataFrame, *, max_pmids: int | None = None) -> pd.DataFrame:
+def prepare_pmids_to_review(
+    pmid_df: pd.DataFrame,
+    *,
+    max_pmids: int | None = None,
+    exclude_pmids: set[str] | None = None,
+) -> pd.DataFrame:
     """Flatten pmids_results.parquet structure to one row per PMID/pathogen/antibiotic."""
     long_df = pmid_df.explode("pmids").dropna(subset=["pmids"]).copy()
-    long_df["pmid"] = long_df["pmids"].astype(str).str.extract(r"(\\d+)")[0]
+    long_df["pmid"] = long_df["pmids"].astype(str).str.extract("(\\d+)")[0]
     long_df = long_df.dropna(subset=["pmid"])
     long_df = long_df[["pmid", "pathogen", "antibiotic", "start_date", "end_date"]].drop_duplicates()
+    if exclude_pmids:
+        long_df = long_df[~long_df["pmid"].astype(str).isin(exclude_pmids)]
     if max_pmids:
         long_df = long_df.head(max_pmids)
     return long_df.reset_index(drop=True)
