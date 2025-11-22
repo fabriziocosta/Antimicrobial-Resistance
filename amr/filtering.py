@@ -263,8 +263,14 @@ def run_llm_filter(
         results.append(verdict)
         seen.add(pmid)
         processed += 1
-        if str(verdict.get("decision", "")).lower() == "yes":
+        decision = str(verdict.get("decision", "")).lower()
+        if decision == "yes":
             positives += 1
+
+        _log(
+            log_path,
+            f"    decision={decision} | rationale={verdict.get('rationale','')[:120]}",
+        )
 
         if output_path and save_every and (len(results) % save_every == 0):
             df_tmp = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
@@ -273,7 +279,7 @@ def run_llm_filter(
             _log(log_path, f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
 
         if progress_every and (len(results) % progress_every == 0):
-            print(f"Processed {len(seen)}/{len(long_df)}")
+            print(f"Processed {processed}/{total}")
 
     df_out = pd.DataFrame(results)
     if output_path:
@@ -281,10 +287,15 @@ def run_llm_filter(
         df_all = df_all.drop_duplicates(subset=["pmid"], keep="last")
         df_all.to_parquet(output_path, index=False)
         df_out = df_all  # return deduped full set for convenience
+    # Batch-level summary
+    yes_count = (df_out["decision"].str.lower() == "yes").sum() if not df_out.empty else 0
+    no_count = (df_out["decision"].str.lower() == "no").sum() if not df_out.empty else 0
+    unc_count = (df_out["decision"].str.lower() == "uncertain").sum() if not df_out.empty else 0
     _log(
         log_path,
         f"Finished: processed {processed} / {total}; positives {positives} ({(positives/max(processed,1)):.3f} fraction).",
     )
+    _log(log_path, f"Batch summary: yes={yes_count}, no={no_count}, uncertain={unc_count}")
     session.close()
     return df_out
 
