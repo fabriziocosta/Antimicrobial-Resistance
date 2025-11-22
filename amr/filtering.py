@@ -145,6 +145,7 @@ def run_llm_filter(
     *,
     email: str | None = None,
     rate_limit: float = 0.35,
+    save_every: int = 50,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     progress_every: int = 10,
     resume_from: pd.DataFrame | None = None,
@@ -168,7 +169,7 @@ def run_llm_filter(
         if "pmid" in existing.columns:
             seen.update(existing["pmid"].astype(str))
 
-    results = [] if existing.empty else existing.to_dict("records")
+    results = []  # only new rows collected this run
     abstract_cache: dict[str, tuple[str, str]] = {}
     session = requests.Session()
     total = len(long_df)
@@ -258,12 +259,21 @@ def run_llm_filter(
         if str(verdict.get("decision", "")).lower() == "yes":
             positives += 1
 
+        if output_path and save_every and (len(results) % save_every == 0):
+            df_tmp = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
+            df_tmp = df_tmp.drop_duplicates(subset=["pmid"], keep="last")
+            df_tmp.to_parquet(output_path, index=False)
+            _log(log_path, f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
+
         if progress_every and (len(results) % progress_every == 0):
             print(f"Processed {len(seen)}/{len(long_df)}")
 
     df_out = pd.DataFrame(results)
     if output_path:
-        df_out.to_parquet(output_path, index=False)
+        df_all = pd.concat([existing, df_out], ignore_index=True)
+        df_all = df_all.drop_duplicates(subset=["pmid"], keep="last")
+        df_all.to_parquet(output_path, index=False)
+        df_out = df_all  # return deduped full set for convenience
     _log(
         log_path,
         f"Finished: processed {processed} / {total}; positives {positives} ({(positives/max(processed,1)):.3f} fraction).",
