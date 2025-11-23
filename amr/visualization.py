@@ -483,12 +483,12 @@ def plot_umap_antibiotic_activity(
 
     overall_max = global_max if global_max > 0 else 1.0
 
-    # Optional animated GIF
-    if gif_path is not None:
+    # Optional animation export (MP4 preferred for reliable playback)
+    if gif_path is not None or mp4_path is not None:
         try:
             import imageio.v2 as imageio  # type: ignore
         except Exception as exc:  # pragma: no cover - optional dependency
-            raise ImportError("imageio is required to save GIFs. Install with `pip install imageio`.") from exc
+            raise ImportError("imageio is required to save animations. Install with `pip install imageio`.") from exc
         try:
             import kaleido  # noqa: F401
         except Exception as exc:  # pragma: no cover - optional dependency
@@ -532,12 +532,7 @@ def plot_umap_antibiotic_activity(
         else:
             frame_duration = 1.0 / max(gif_fps, 1e-6)
 
-        # write with explicit per-frame duration; pass duration per frame to avoid browser defaults
-        with imageio.get_writer(gif_path, mode="I", loop=0) as writer:
-            for frame in frames:
-                writer.append_data(frame, {"duration": frame_duration})
-
-        # optional MP4 for reliable playback in VS Code notebooks
+        # MP4 export for robust playback (preferred)
         if mp4_path is not None:
             try:
                 import imageio_ffmpeg  # noqa: F401
@@ -548,14 +543,12 @@ def plot_umap_antibiotic_activity(
             except Exception as exc:
                 print(f"Could not save MP4 (install imageio-ffmpeg): {exc}")
 
-        # sanity check on frame count
-        try:
-            reader = imageio.get_reader(gif_path)
-            n_frames = reader.get_length()
-            reader.close()
-            print(f"Saved animated GIF to {gif_path} with {n_frames} frames (frame_duration≈{frame_duration:.3f}s)")
-        except Exception:
-            print(f"Saved animated GIF to {gif_path}")
+        # GIF export (optional)
+        if gif_path is not None:
+            with imageio.get_writer(gif_path, mode="I", loop=0) as writer:
+                for frame in frames:
+                    writer.append_data(frame, {"duration": frame_duration})
+            print(f"Saved animated GIF to {gif_path} (frame_duration≈{frame_duration:.3f}s)")
         return working
 
     num_plots = len(color_arrays)
