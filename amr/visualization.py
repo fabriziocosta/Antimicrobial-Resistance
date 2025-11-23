@@ -531,10 +531,10 @@ def plot_umap_antibiotic_activity(
         else:
             frame_duration = 1.0 / max(gif_fps, 1e-6)
 
-        # write with explicit per-frame duration using the writer API for consistent timing
-        with imageio.get_writer(gif_path, mode="I", duration=frame_duration, loop=0) as writer:
+        # write with explicit per-frame duration; pass duration per frame to avoid browser defaults
+        with imageio.get_writer(gif_path, mode="I", loop=0) as writer:
             for frame in frames:
-                writer.append_data(frame)
+                writer.append_data(frame, {"duration": frame_duration})
 
         # sanity check on frame count
         try:
