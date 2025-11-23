@@ -213,7 +213,7 @@ def run_llm_filter(
 
         if not abstract:
             # Skip PMIDs without abstracts to avoid ambiguous judgments
-            _log(log_path, f"[{idx+1}/{total}] PMID {pmid} skipped (no abstract).")
+            _log(log_path, f"[{run_idx}/{total}] PMID {pmid} skipped (no abstract).")
             verdict = {
                 "pmid": pmid,
                 "decision": "uncertain",
