@@ -284,7 +284,12 @@ def run_llm_filter(
             no_count = (df_now["decision"].str.lower() == "no").sum() if not df_now.empty else 0
             yes_count = (df_now["decision"].str.lower() == "yes").sum() if not df_now.empty else 0
             unc_count = (df_now["decision"].str.lower() == "uncertain").sum() if not df_now.empty else 0
-            print(f"Processed {processed}/{total}    no:{no_count}    yes:{yes_count}    uncertain:{unc_count}")
+            run_processed = len(results)
+            cumulative_processed = processed
+            print(
+                f"Processed {run_processed}/{total} [cumulative {cumulative_processed}]"
+                f"    no:{no_count}    yes:{yes_count}    uncertain:{unc_count}"
+            )
 
     df_out = pd.DataFrame(results)
     if output_path:
