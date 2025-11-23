@@ -502,6 +502,7 @@ def plot_umap_antibiotic_activity(
         base_frame_count = len(color_arrays)
         for idx, (color_series, label) in enumerate(color_arrays):
             frac = 0.0 if base_frame_count <= 1 else idx / (base_frame_count - 1)
+            # always start bar at leftmost and extend to full width on last frame
             line_x_end = x_min + frac * (x_max - x_min)
             fig = go.Figure(
                 data=[
