@@ -400,11 +400,10 @@ def plot_umap_antibiotic_activity(
     min_n_causation: int = 3,
     max_marker_size: int = 10,
     min_marker_size: int = 1,
-    gif_path: str | None = None,
-    gif_fps: float = 2.0,
-    gif_ping_pong: bool = False,
-    gif_total_duration: float | None = None,
     mp4_path: str | None = None,
+    video_total_duration: float | None = None,
+    video_ping_pong: bool = False,
+    video_loop: bool = True,
 ):
     """Project pathogen embeddings with UMAP and color by antibiotic activity."""
     from io import BytesIO
@@ -483,8 +482,8 @@ def plot_umap_antibiotic_activity(
 
     overall_max = global_max if global_max > 0 else 1.0
 
-    # Optional animation export (MP4 preferred for reliable playback)
-    if gif_path is not None or mp4_path is not None:
+    # Optional MP4 animation export (preferred for reliable playback)
+    if mp4_path is not None:
         try:
             import imageio.v2 as imageio  # type: ignore
         except Exception as exc:  # pragma: no cover - optional dependency
@@ -525,30 +524,22 @@ def plot_umap_antibiotic_activity(
             )
             png_bytes = fig.to_image(format="png")
             frames.append(imageio.imread(BytesIO(png_bytes)))
-        if gif_ping_pong and len(frames) > 1:
+        if video_ping_pong and len(frames) > 1:
             frames = frames + frames[-2:0:-1]  # forward then backward without repeating endpoints
-        if gif_total_duration and len(frames) > 0:
-            frame_duration = gif_total_duration / len(frames)
+
+        if video_total_duration and len(frames) > 0:
+            frame_duration = video_total_duration / len(frames)
         else:
-            frame_duration = 1.0 / max(gif_fps, 1e-6)
+            frame_duration = 1.0 / max(len(frames), 1e-6)  # default 1s per frame if no duration given
 
-        # MP4 export for robust playback (preferred)
-        if mp4_path is not None:
-            try:
-                import imageio_ffmpeg  # noqa: F401
-                with imageio.get_writer(mp4_path, fps=1.0 / max(frame_duration, 1e-6)) as writer:
-                    for frame in frames:
-                        writer.append_data(frame)
-                print(f"Saved MP4 animation to {mp4_path}")
-            except Exception as exc:
-                print(f"Could not save MP4 (install imageio-ffmpeg): {exc}")
-
-        # GIF export (optional)
-        if gif_path is not None:
-            with imageio.get_writer(gif_path, mode="I", loop=0) as writer:
+        try:
+            import imageio_ffmpeg  # noqa: F401
+            with imageio.get_writer(mp4_path, fps=1.0 / max(frame_duration, 1e-6)) as writer:
                 for frame in frames:
-                    writer.append_data(frame, {"duration": frame_duration})
-            print(f"Saved animated GIF to {gif_path} (frame_duration≈{frame_duration:.3f}s)")
+                    writer.append_data(frame)
+            print(f"Saved MP4 animation to {mp4_path}")
+        except Exception as exc:
+            print(f"Could not save MP4 (install imageio-ffmpeg): {exc}")
         return working
 
     num_plots = len(color_arrays)

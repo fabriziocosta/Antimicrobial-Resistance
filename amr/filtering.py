@@ -200,7 +200,7 @@ def run_llm_filter(
         _log(log_path, "No PMIDs to process.")
         return existing
 
-    for idx, row in long_df.iterrows():
+    for run_idx, row in enumerate(long_df.itertuples(index=False), start=1):
         pmid = str(row.pmid)
         if pmid in seen:
             continue
@@ -238,7 +238,7 @@ def run_llm_filter(
 
         _log(
             log_path,
-            f"[{idx+1}/{total}] PMID {pmid} | {row.pathogen} vs {row.antibiotic} | interval {row.start_date}–{row.end_date}",
+            f"[{run_idx}/{total}] PMID {pmid} | {row.pathogen} vs {row.antibiotic} | interval {row.start_date}–{row.end_date}",
         )
 
         if dry_run:
