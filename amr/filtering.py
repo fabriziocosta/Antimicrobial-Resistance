@@ -32,10 +32,12 @@ LLM_BACKOFF_FACTOR = 2
 
 def _log(log_path: str | None, message: str) -> None:
     """Write log to stdout and, if provided, append to a file."""
-    print(message)
+    import datetime as _dt
+    stamped = f"[{_dt.datetime.now().isoformat(timespec='seconds')}] {message}"
+    print(stamped)
     if log_path:
         with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(message + "\n")
+            fh.write(stamped + "\n")
 
 
 def fetch_pubmed_abstract(
@@ -284,11 +286,17 @@ def run_llm_filter(
             no_count = (df_now["decision"].str.lower() == "no").sum() if not df_now.empty else 0
             yes_count = (df_now["decision"].str.lower() == "yes").sum() if not df_now.empty else 0
             unc_count = (df_now["decision"].str.lower() == "uncertain").sum() if not df_now.empty else 0
+            # cumulative counts (existing + current batch)
+            df_cum = pd.concat([existing, df_now], ignore_index=True)
+            cum_no = (df_cum["decision"].str.lower() == "no").sum() if not df_cum.empty else 0
+            cum_yes = (df_cum["decision"].str.lower() == "yes").sum() if not df_cum.empty else 0
+            cum_unc = (df_cum["decision"].str.lower() == "uncertain").sum() if not df_cum.empty else 0
+
             run_processed = len(results)
-            cumulative_processed = processed
+            cumulative_processed = len(df_cum)
             print(
-                f"Processed {run_processed}/{total} [cumulative {cumulative_processed}]"
-                f"    no:{no_count}    yes:{yes_count}    uncertain:{unc_count}"
+                f"Processed {run_processed}/{total}     no:{no_count}    yes:{yes_count}    uncertain:{unc_count}"
+                f"   |   cumulative {cumulative_processed}     no:{cum_no}    yes:{cum_yes}    uncertain:{cum_unc}"
             )
 
     df_out = pd.DataFrame(results)
