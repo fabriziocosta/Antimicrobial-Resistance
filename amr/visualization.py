@@ -525,7 +525,8 @@ def plot_umap_antibiotic_activity(
             frames.append(imageio.imread(BytesIO(png_bytes)))
         if gif_ping_pong and len(frames) > 1:
             frames = frames + frames[-2:0:-1]  # forward then backward without repeating endpoints
-        imageio.mimsave(gif_path, frames, duration=1.0 / max(gif_fps, 1e-6), loop=0)
+        frame_duration = 1.0 / max(gif_fps, 1e-6)
+        imageio.mimsave(gif_path, frames, duration=[frame_duration] * len(frames), loop=0)
         # sanity check on frame count
         try:
             reader = imageio.get_reader(gif_path)
