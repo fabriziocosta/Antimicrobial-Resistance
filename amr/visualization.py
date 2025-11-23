@@ -400,8 +400,12 @@ def plot_umap_antibiotic_activity(
     min_n_causation: int = 3,
     max_marker_size: int = 10,
     min_marker_size: int = 1,
+    gif_path: str | None = None,
+    gif_fps: float = 2.0,
 ):
     """Project pathogen embeddings with UMAP and color by antibiotic activity."""
+    from io import BytesIO
+
     if embedding_column not in data_df.columns:
         raise ValueError(f"Column '{embedding_column}' not found in data_df.")
     if size_column not in data_df.columns:
@@ -475,6 +479,52 @@ def plot_umap_antibiotic_activity(
             global_max = max(global_max, float(color_series.max()))
 
     overall_max = global_max if global_max > 0 else 1.0
+
+    # Optional animated GIF
+    if gif_path is not None:
+        try:
+            import imageio.v2 as imageio  # type: ignore
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise ImportError("imageio is required to save GIFs. Install with `pip install imageio`.") from exc
+        try:
+            import kaleido  # noqa: F401
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise ImportError("kaleido is required for figure export. Install with `pip install kaleido`.") from exc
+
+        frames = []
+        for color_series, label in color_arrays:
+            fig = go.Figure(
+                data=[
+                    go.Scatter(
+                        x=working["umap_x"],
+                        y=working["umap_y"],
+                        mode="markers",
+                        marker=dict(
+                            size=marker_pixel_sizes,
+                            color=color_series,
+                            cmin=0,
+                            cmax=overall_max,
+                            colorscale=cmap,
+                            line=dict(color="black", width=0.6),
+                        ),
+                        text=working["CanonicalSpecies"],
+                        hovertemplate="%{text}<extra></extra>",
+                    )
+                ]
+            )
+            fig.update_layout(
+                title=f"{antibiotic} @ {label}",
+                xaxis=dict(visible=False, showgrid=False, zeroline=False),
+                yaxis=dict(visible=False, showgrid=False, zeroline=False, scaleanchor="x", scaleratio=1),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                showlegend=False,
+            )
+            png_bytes = fig.to_image(format="png")
+            frames.append(imageio.imread(BytesIO(png_bytes)))
+        imageio.mimsave(gif_path, frames, duration=1.0 / max(gif_fps, 1e-6))
+        print(f"Saved animated GIF to {gif_path}")
+        return working
 
     num_plots = len(color_arrays)
     cols = max(1, math.ceil(math.sqrt(num_plots)))
