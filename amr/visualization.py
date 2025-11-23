@@ -403,6 +403,7 @@ def plot_umap_antibiotic_activity(
     gif_path: str | None = None,
     gif_fps: float = 2.0,
     gif_ping_pong: bool = False,
+    gif_total_duration: float | None = None,
 ):
     """Project pathogen embeddings with UMAP and color by antibiotic activity."""
     from io import BytesIO
@@ -525,7 +526,10 @@ def plot_umap_antibiotic_activity(
             frames.append(imageio.imread(BytesIO(png_bytes)))
         if gif_ping_pong and len(frames) > 1:
             frames = frames + frames[-2:0:-1]  # forward then backward without repeating endpoints
-        frame_duration = 1.0 / max(gif_fps, 1e-6)
+        if gif_total_duration and len(frames) > 0:
+            frame_duration = gif_total_duration / len(frames)
+        else:
+            frame_duration = 1.0 / max(gif_fps, 1e-6)
         imageio.mimsave(gif_path, frames, duration=[frame_duration] * len(frames), loop=0)
         # sanity check on frame count
         try:
