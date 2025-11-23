@@ -113,7 +113,17 @@ def classify_abstract(
             try:
                 data = json.loads(raw)
             except Exception:
-                data = {"decision": "uncertain", "rationale": raw.strip()}
+                # attempt to locate JSON substring if the model wrapped output
+                start = raw.find("{")
+                end = raw.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    fragment = raw[start : end + 1]
+                    try:
+                        data = json.loads(fragment)
+                    except Exception:
+                        data = {"decision": "uncertain", "rationale": raw.strip()}
+                else:
+                    data = {"decision": "uncertain", "rationale": raw.strip()}
             return {
                 "pmid": pmid,
                 "decision": data.get("decision", "uncertain"),
