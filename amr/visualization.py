@@ -404,6 +404,7 @@ def plot_umap_antibiotic_activity(
     video_total_duration: float | None = None,
     video_ping_pong: bool = False,
     video_loop: bool = True,
+    image_size: tuple[int, int] | None = (704, 512),
 ):
     """Project pathogen embeddings with UMAP and color by antibiotic activity."""
     from io import BytesIO
@@ -536,6 +537,8 @@ def plot_umap_antibiotic_activity(
                 paper_bgcolor="white",
                 plot_bgcolor="white",
                 showlegend=False,
+                width=image_size[0] if image_size else None,
+                height=image_size[1] if image_size else None,
             )
             png_bytes = fig.to_image(format="png")
             frames.append(imageio.imread(BytesIO(png_bytes)))
