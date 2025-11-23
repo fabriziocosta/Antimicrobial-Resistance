@@ -1,7 +1,9 @@
 # Byte-compiled / cache
 # Jupyter checkpoints
 # OS noise
+*.gif
 *.log
+*.mp4
 *.parquet
 *.py[cod]
 .DS_Store
