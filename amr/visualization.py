@@ -494,16 +494,10 @@ def plot_umap_antibiotic_activity(
         except Exception as exc:  # pragma: no cover - optional dependency
             raise ImportError("kaleido is required for figure export. Install with `pip install kaleido`.") from exc
 
-        x_min, x_max = working["umap_x"].min(), working["umap_x"].max()
-        y_min, y_max = working["umap_y"].min(), working["umap_y"].max()
-        y_bar = y_max + 0.05 * max((y_max - y_min), 1e-6)
-
         frames = []
         base_frame_count = len(color_arrays)
         for idx, (color_series, label) in enumerate(color_arrays):
             frac = 0.0 if base_frame_count <= 1 else idx / (base_frame_count - 1)
-            # always start bar at leftmost and extend to full width on last frame
-            line_x_end = x_min + frac * (x_max - x_min)
             fig = go.Figure(
                 data=[
                     go.Scatter(
@@ -521,14 +515,21 @@ def plot_umap_antibiotic_activity(
                         text=working["CanonicalSpecies"],
                         hovertemplate="%{text}<extra></extra>",
                     ),
-                    go.Scatter(
-                        x=[x_min, line_x_end],
-                        y=[y_bar, y_bar],
-                        mode="lines",
+                ]
+            )
+            # progress bar using figure fraction coordinates (paper space)
+            fig.update_layout(
+                shapes=[
+                    dict(
+                        type="line",
+                        xref="paper",
+                        yref="paper",
+                        x0=0,
+                        y0=1.05,
+                        x1=frac,
+                        y1=1.05,
                         line=dict(color="black", width=4),
-                        showlegend=False,
-                        hoverinfo="skip",
-                    ),
+                    )
                 ]
             )
             fig.update_layout(
