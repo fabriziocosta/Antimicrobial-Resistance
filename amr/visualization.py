@@ -404,6 +404,7 @@ def plot_umap_antibiotic_activity(
     gif_fps: float = 2.0,
     gif_ping_pong: bool = False,
     gif_total_duration: float | None = None,
+    mp4_path: str | None = None,
 ):
     """Project pathogen embeddings with UMAP and color by antibiotic activity."""
     from io import BytesIO
@@ -535,6 +536,17 @@ def plot_umap_antibiotic_activity(
         with imageio.get_writer(gif_path, mode="I", loop=0) as writer:
             for frame in frames:
                 writer.append_data(frame, {"duration": frame_duration})
+
+        # optional MP4 for reliable playback in VS Code notebooks
+        if mp4_path is not None:
+            try:
+                import imageio_ffmpeg  # noqa: F401
+                with imageio.get_writer(mp4_path, fps=1.0 / max(frame_duration, 1e-6)) as writer:
+                    for frame in frames:
+                        writer.append_data(frame)
+                print(f"Saved MP4 animation to {mp4_path}")
+            except Exception as exc:
+                print(f"Could not save MP4 (install imageio-ffmpeg): {exc}")
 
         # sanity check on frame count
         try:
