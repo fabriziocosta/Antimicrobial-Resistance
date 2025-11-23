@@ -279,7 +279,12 @@ def run_llm_filter(
             _log(log_path, f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
 
         if progress_every and (len(results) % progress_every == 0):
-            print(f"Processed {processed}/{total}")
+            # compute interim summary on current in-memory results
+            df_now = pd.DataFrame(results)
+            no_count = (df_now["decision"].str.lower() == "no").sum() if not df_now.empty else 0
+            yes_count = (df_now["decision"].str.lower() == "yes").sum() if not df_now.empty else 0
+            unc_count = (df_now["decision"].str.lower() == "uncertain").sum() if not df_now.empty else 0
+            print(f"Processed {processed}/{total}    no:{no_count}    yes:{yes_count}    uncertain:{unc_count}")
 
     df_out = pd.DataFrame(results)
     if output_path:
