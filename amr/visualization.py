@@ -530,13 +530,18 @@ def plot_umap_antibiotic_activity(
             frame_duration = gif_total_duration / len(frames)
         else:
             frame_duration = 1.0 / max(gif_fps, 1e-6)
-        imageio.mimsave(gif_path, frames, duration=[frame_duration] * len(frames), loop=0)
+
+        # write with explicit per-frame duration using the writer API for consistent timing
+        with imageio.get_writer(gif_path, mode="I", duration=frame_duration, loop=0) as writer:
+            for frame in frames:
+                writer.append_data(frame)
+
         # sanity check on frame count
         try:
             reader = imageio.get_reader(gif_path)
             n_frames = reader.get_length()
             reader.close()
-            print(f"Saved animated GIF to {gif_path} with {n_frames} frames")
+            print(f"Saved animated GIF to {gif_path} with {n_frames} frames (frame_duration≈{frame_duration:.3f}s)")
         except Exception:
             print(f"Saved animated GIF to {gif_path}")
         return working
