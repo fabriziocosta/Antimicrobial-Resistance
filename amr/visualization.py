@@ -522,8 +522,15 @@ def plot_umap_antibiotic_activity(
             )
             png_bytes = fig.to_image(format="png")
             frames.append(imageio.imread(BytesIO(png_bytes)))
-        imageio.mimsave(gif_path, frames, duration=1.0 / max(gif_fps, 1e-6))
-        print(f"Saved animated GIF to {gif_path}")
+        imageio.mimsave(gif_path, frames, duration=1.0 / max(gif_fps, 1e-6), loop=0)
+        # sanity check on frame count
+        try:
+            reader = imageio.get_reader(gif_path)
+            n_frames = reader.get_length()
+            reader.close()
+            print(f"Saved animated GIF to {gif_path} with {n_frames} frames")
+        except Exception:
+            print(f"Saved animated GIF to {gif_path}")
         return working
 
     num_plots = len(color_arrays)
