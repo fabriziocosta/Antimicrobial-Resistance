@@ -14260,3 +14260,8 @@ Checkpoint saved 7231 rows to pmids_results_filtered.parquet
     decision=no | rationale=The abstract states all strains were susceptible to amikacin.
 Finished: processed 7237 / 10000; positives 1773 (0.245 fraction).
 Batch summary: yes=1773, no=5303, uncertain=161
+[246/1000] PMID 2725399 | Staphylococcus aureus vs Amikacin | interval 1985/01/01–1989/12/31
+    decision=no | rationale=The abstract states that resistance to amikacin is 1.9%, which does not indicate clinically meaningful resistance.
+[247/1000] PMID 3219748 | Staphylococcus aureus vs Amikacin | interval 1985/01/01–1989/12/31
+    decision=yes | rationale=The abstract reports 9.7% resistance of Staphylococcus aureus to amikacin.
+[248/1000] PMID 3265869 | Staphylococcus aureus vs Amikacin | interval 1985/01/01–1989/12/31
