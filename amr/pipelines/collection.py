@@ -37,7 +37,9 @@ def count_pmids_per_year_for_pathogens(
 
     Columns: pathogen, year, count
     """
-    if not pathogens:
+    # Coerce to list to support numpy arrays/Series without ambiguous truth-value errors
+    pathogens = list(pathogens)
+    if len(pathogens) == 0:
         return pd.DataFrame(columns=["pathogen", "year", "count"])
     if start_year is None:
         start_year = 1950
@@ -68,7 +70,8 @@ def count_pmids_per_year_for_antibiotics(
 
     Columns: antibiotic, year, count
     """
-    if not antibiotics:
+    antibiotics = list(antibiotics)
+    if len(antibiotics) == 0:
         return pd.DataFrame(columns=["antibiotic", "year", "count"])
     if start_year is None:
         start_year = 1950
@@ -377,3 +380,207 @@ __all__ = [
     "fetch_pmids_intervals",
 ]
 
+
+def count_pmids_per_year_for_pathogens_resumable(
+    pathogens: Sequence[str],
+    bacteria_synonym_df: pd.DataFrame,
+    *,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    email: str = "your_email@example.com",
+    output_path: str = "pathogen_tiab_counts.parquet",
+    save_every: int = 200,
+    progress_every: int = 50,
+) -> pd.DataFrame:
+    """Resumable variant of yearly PMID counts per pathogen (TIAB + synonyms).
+
+    - Skips (pathogen, year) pairs already present in ``output_path``.
+    - Periodically merges and saves results; safe to interrupt and resume.
+    - Deduplicates on (pathogen, year) when saving.
+    """
+    import os
+
+    # Coerce inputs
+    pathogens = list(pathogens)
+    if len(pathogens) == 0:
+        return pd.DataFrame(columns=["pathogen", "year", "count"])
+
+    if start_year is None:
+        start_year = 1950
+    if end_year is None:
+        end_year = datetime.now().year
+
+    # Load existing partial results if present
+    if os.path.exists(output_path):
+        try:
+            existing = pd.read_parquet(output_path)
+        except Exception:
+            try:
+                existing = pd.read_csv(output_path)
+            except Exception:
+                existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+    else:
+        existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+
+    if not {"pathogen", "year", "count"}.issubset(existing.columns):
+        existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+
+    existing["pathogen"] = existing["pathogen"].astype(str)
+    existing["year"] = pd.to_numeric(existing["year"], errors="coerce").astype("Int64")
+    done_pairs = set(zip(existing["pathogen"].astype(str), existing["year"].astype(int, errors="ignore")))
+
+    # Build task list of missing (pathogen, year)
+    years = list(range(start_year, end_year + 1))
+    tasks: list[tuple[str, int]] = []
+    for p in pathogens:
+        p_str = str(p)
+        for y in years:
+            if (p_str, y) not in done_pairs:
+                tasks.append((p_str, y))
+
+    total = len(tasks)
+    if total == 0:
+        return existing.sort_values(["pathogen", "year"]).reset_index(drop=True)
+
+    results: list[dict] = []
+
+    import time
+    start_ts = time.time()
+
+    try:
+        for idx, (p, y) in enumerate(tasks, start=1):
+            clause = build_pathogen_tiab_query(p, bacteria_synonym_df)
+            cnt = esearch_count_for_year(clause, y, email=email)
+            results.append({"pathogen": p, "year": y, "count": int(cnt)})
+
+            if progress_every and (idx % progress_every == 0):
+                elapsed = max(1e-6, time.time() - start_ts)
+                rate = idx / elapsed
+                remaining = max(0, total - idx)
+                eta_sec = remaining / rate if rate > 0 else 0
+                eta_h = int(eta_sec // 3600)
+                eta_m = int((eta_sec % 3600) // 60)
+                print(f"Progress: {idx}/{total} pairs processed… [ETA {eta_h}h {eta_m} min]")
+
+            if save_every and (len(results) >= save_every):
+                batch_df = pd.DataFrame(results)
+                combined = pd.concat([existing, batch_df], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["pathogen", "year"], keep="last")
+                combined.to_parquet(output_path, index=False)
+                existing = combined
+                results = []
+    except KeyboardInterrupt:
+        print("Interrupted. Saving partial results…")
+    finally:
+        if results:
+            batch_df = pd.DataFrame(results)
+            combined = pd.concat([existing, batch_df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["pathogen", "year"], keep="last")
+            try:
+                combined.to_parquet(output_path, index=False)
+            except Exception:
+                combined.to_csv(output_path, index=False)
+            existing = combined
+
+    return existing.sort_values(["pathogen", "year"]).reset_index(drop=True)
+
+
+def count_pmids_per_year_for_antibiotics_resumable(
+    antibiotics: Sequence[str],
+    *,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    email: str = "your_email@example.com",
+    output_path: str = "antibiotic_tiab_counts.parquet",
+    save_every: int = 200,
+    progress_every: int = 50,
+) -> pd.DataFrame:
+    """Resumable yearly PMID counts per antibiotic (Title/Abstract; hyphen/slash variants).
+
+    - Uses prepare_antibiotic_pubmed_query_tiab to handle hyphens/slashes via AND splits.
+    - Skips already-processed (antibiotic, year) pairs from ``output_path``.
+    - Saves incrementally and resumes safely after interruption.
+    """
+    import os
+
+    antibiotics = list(antibiotics)
+    if len(antibiotics) == 0:
+        return pd.DataFrame(columns=["antibiotic", "year", "count"])
+
+    if start_year is None:
+        start_year = 1950
+    if end_year is None:
+        end_year = datetime.now().year
+
+    # Load existing
+    if os.path.exists(output_path):
+        try:
+            existing = pd.read_parquet(output_path)
+        except Exception:
+            try:
+                existing = pd.read_csv(output_path)
+            except Exception:
+                existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
+    else:
+        existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
+
+    if not {"antibiotic", "year", "count"}.issubset(existing.columns):
+        existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
+
+    existing["antibiotic"] = existing["antibiotic"].astype(str)
+    existing["year"] = pd.to_numeric(existing["year"], errors="coerce").astype("Int64")
+    done_pairs = set(zip(existing["antibiotic"].astype(str), existing["year"].astype(int, errors="ignore")))
+
+    years = list(range(start_year, end_year + 1))
+    tasks: list[tuple[str, int]] = []
+    for ab in antibiotics:
+        ab_str = str(ab)
+        for y in years:
+            if (ab_str, y) not in done_pairs:
+                tasks.append((ab_str, y))
+
+    total = len(tasks)
+    if total == 0:
+        return existing.sort_values(["antibiotic", "year"]).reset_index(drop=True)
+
+    results: list[dict] = []
+
+    import time
+    start_ts = time.time()
+
+    try:
+        for idx, (ab, y) in enumerate(tasks, start=1):
+            clause = prepare_antibiotic_pubmed_query_tiab(ab)
+            cnt = esearch_count_for_year(clause, y, email=email)
+            results.append({"antibiotic": ab, "year": y, "count": int(cnt)})
+
+            if progress_every and (idx % progress_every == 0):
+                elapsed = max(1e-6, time.time() - start_ts)
+                rate = idx / elapsed
+                remaining = max(0, total - idx)
+                eta_sec = remaining / rate if rate > 0 else 0
+                eta_h = int(eta_sec // 3600)
+                eta_m = int((eta_sec % 3600) // 60)
+                print(f"Progress: {idx}/{total} pairs processed… [ETA {eta_h}h {eta_m} min]")
+
+            if save_every and (len(results) >= save_every):
+                batch_df = pd.DataFrame(results)
+                combined = pd.concat([existing, batch_df], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["antibiotic", "year"], keep="last")
+                combined.to_parquet(output_path, index=False)
+                existing = combined
+                results = []
+    except KeyboardInterrupt:
+        print("Interrupted. Saving partial results…")
+    finally:
+        if results:
+            batch_df = pd.DataFrame(results)
+            combined = pd.concat([existing, batch_df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["antibiotic", "year"], keep="last")
+            try:
+                combined.to_parquet(output_path, index=False)
+            except Exception:
+                combined.to_csv(output_path, index=False)
+            existing = combined
+
+    return existing.sort_values(["antibiotic", "year"]).reset_index(drop=True)
