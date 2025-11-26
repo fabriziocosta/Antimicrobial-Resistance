@@ -613,8 +613,9 @@ def plot_umap_antibiotic_activity(
         coloraxis=dict(colorscale=cmap, cmin=0, cmax=overall_max, colorbar=dict(title="log₁₊ count")),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        width=500 * cols,
-        height=500 * rows,
+        autosize=False if image_size else True,
+        width=(image_size[0] if image_size else 500 * cols),
+        height=(image_size[1] if image_size else 500 * rows),
         showlegend=False,
     )
     fig.show()

@@ -49,6 +49,24 @@ def prepare_antibiotic_pubmed_query(name: str) -> str:
     return query
 
 
+def prepare_antibiotic_pubmed_query_tiab(name: str) -> str:
+    """Build a PubMed query clause for an antibiotic name in Title/Abstract (handles hyphens/slashes).
+
+    Examples:
+    - "co-trimoxazole" -> ('"co-trimoxazole"[Title/Abstract] OR ("co"[Title/Abstract] AND "trimoxazole"[Title/Abstract]))
+    - "sulfamethoxazole/trimethoprim" -> ("sulfamethoxazole/trimethoprim"[Title/Abstract] OR ("sulfamethoxazole"[Title/Abstract] AND "trimethoprim"[Title/Abstract]))
+    - otherwise -> '"term"[Title/Abstract]'
+    """
+    parts = re.split(r"[-/]", name)
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) > 1:
+        and_part = " AND ".join(f'"{p}"[Title/Abstract]' for p in parts)
+        query = f'("{name}"[Title/Abstract] OR ({and_part}))'
+    else:
+        query = f'"{name}"[Title/Abstract]'
+    return query
+
+
 def expand_synonyms(pathogen: str, bacteria_synonym_df: pd.DataFrame) -> List[str]:
     """Return a list of synonyms for `pathogen` from the lookup table."""
     mask = bacteria_synonym_df["bacteria name"].str.lower() == pathogen.lower()
@@ -59,6 +77,106 @@ def expand_synonyms(pathogen: str, bacteria_synonym_df: pd.DataFrame) -> List[st
         .str.strip()
     )
     return sorted({v for v in vals if v})
+
+
+def build_pathogen_tiab_query(pathogen: str, bacteria_synonym_df: pd.DataFrame) -> str:
+    """Construct a Title/Abstract-only clause OR-ing pathogen name with its synonyms."""
+    variants = expand_synonyms(pathogen, bacteria_synonym_df)
+    if not variants:
+        variants = [pathogen]
+    elif pathogen not in variants:
+        variants = [pathogen] + variants
+    clause = "(" + " OR ".join(f'"{v}"[Title/Abstract]' for v in variants) + ")"
+    return clause
+
+
+def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
+    """Return PubMed count for `term_clause` limited to a single publication year."""
+    Entrez.email = email
+    date_clause = f'("{year}/01/01"[Date - Publication] : "{year}/12/31"[Date - Publication])'
+    term = f"({term_clause}) AND {date_clause}"
+    for i in range(RETRIES):
+        try:
+            time.sleep(RATE_LIMIT_DELAY)
+            handle = Entrez.esearch(db="pubmed", term=term, retmax=0)
+            try:
+                record = Entrez.read(handle)
+            except Exception as e:
+                print(f"Failed to parse Entrez response: {e}")
+                record = {}
+            handle.close()
+            return int(record.get("Count", 0))
+        except (HTTPError, URLError) as e:
+            delay = BACKOFF_FACTOR * (2**i)
+            print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay}s...")
+            time.sleep(delay)
+        except Exception as e:  # pragma: no cover - defensive
+            print(f"Unexpected error in esearch_count_for_year: {e}")
+            break
+    return 0
+
+
+def count_pmids_per_year_for_pathogens(
+    pathogens: Sequence[str],
+    bacteria_synonym_df: pd.DataFrame,
+    *,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    email: str = "your_email@example.com",
+) -> pd.DataFrame:
+    """Return a DataFrame with yearly PMID counts for each pathogen (title/abstract match, synonym-aware).
+
+    Columns: pathogen, year, count
+    """
+    if not pathogens:
+        return pd.DataFrame(columns=["pathogen", "year", "count"])
+    if start_year is None:
+        start_year = 1950
+    if end_year is None:
+        end_year = datetime.now().year
+    rows = []
+    total_tasks = len(pathogens) * (end_year - start_year + 1)
+    done = 0
+    for pathogen in pathogens:
+        clause = build_pathogen_tiab_query(pathogen, bacteria_synonym_df)
+        for year in range(start_year, end_year + 1):
+            cnt = esearch_count_for_year(clause, year, email=email)
+            rows.append({"pathogen": pathogen, "year": year, "count": cnt})
+            done += 1
+            if done % 50 == 0:
+                print(f"Progress: {done}/{total_tasks} year-queries done")
+    return pd.DataFrame(rows)
+
+
+def count_pmids_per_year_for_antibiotics(
+    antibiotics: Sequence[str],
+    *,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    email: str = "your_email@example.com",
+) -> pd.DataFrame:
+    """Return a DataFrame with yearly PMID counts for each antibiotic (title/abstract match, dash/slash variants).
+
+    Columns: antibiotic, year, count
+    """
+    if not antibiotics:
+        return pd.DataFrame(columns=["antibiotic", "year", "count"])
+    if start_year is None:
+        start_year = 1950
+    if end_year is None:
+        end_year = datetime.now().year
+    rows = []
+    total_tasks = len(antibiotics) * (end_year - start_year + 1)
+    done = 0
+    for ab in antibiotics:
+        clause = prepare_antibiotic_pubmed_query_tiab(ab)
+        for year in range(start_year, end_year + 1):
+            cnt = esearch_count_for_year(clause, year, email=email)
+            rows.append({"antibiotic": ab, "year": year, "count": cnt})
+            done += 1
+            if done % 50 == 0:
+                print(f"Progress: {done}/{total_tasks} year-queries done")
+    return pd.DataFrame(rows)
 
 
 def parse_pubdate(pubdate: str | None) -> Optional[datetime]:
@@ -724,6 +842,11 @@ __all__ = [
     "prepare_antibiotic_pubmed_query",
     "expand_synonyms",
     "parse_pubdate",
+    "prepare_antibiotic_pubmed_query_tiab",
+    "build_pathogen_tiab_query",
+    "esearch_count_for_year",
+    "count_pmids_per_year_for_pathogens",
+    "count_pmids_per_year_for_antibiotics",
     "build_antibiotic_pathogen_query",
     "search_pmids",
     "retrieve_pmids",
