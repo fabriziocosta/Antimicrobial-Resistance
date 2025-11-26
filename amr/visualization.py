@@ -28,8 +28,13 @@ def plot_heatmap_for_pathogen(
     log_scale: bool = True,
     figsize: tuple[int, int] = (12, 6),
     show_only_class: bool = False,
+    sort_by_frequency: bool = False,
 ):
-    """Plot a heatmap of PMID counts for a given pathogen."""
+    """Plot a heatmap of PMID counts for a given pathogen.
+
+    Parameters
+    - sort_by_frequency: if True, sort rows by descending cumulative counts; if False, sort alphabetically.
+    """
     sub = df[df["pathogen"].str.lower() == pathogen.lower()].copy()
 
     if sub.empty:
@@ -85,8 +90,11 @@ def plot_heatmap_for_pathogen(
         print("No data available for plotting.")
         return
 
-    row_order = pivot.sum(axis=1).sort_values(ascending=False).index
-    pivot = pivot.loc[row_order]
+    if sort_by_frequency:
+        row_order = pivot.sum(axis=1).sort_values(ascending=False).index
+        pivot = pivot.loc[row_order]
+    else:
+        pivot = pivot.sort_index()
 
     vmax = pivot.values.max()
     if vmax <= 0:

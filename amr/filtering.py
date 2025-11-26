@@ -173,6 +173,7 @@ def run_llm_filter(
     log_path: str | None = None,
     max_llm_calls: int | None = None,
     dry_run: bool = False,
+    verbose: int = 1,
 ) -> pd.DataFrame:
     """
     Process each PMID row and return a DataFrame with LLM decisions.
@@ -180,7 +181,29 @@ def run_llm_filter(
     - If resume_from or seen_pmids provided, processed PMIDs are skipped.
     - Keeps the “seen” index in-memory to avoid many filesystem writes; save once via output_path if desired.
     - max_llm_calls limits LLM invocations per run; dry_run skips LLM calls.
+    - verbose controls stdout logging: 0 = silent, 1 = progress_every summaries, 2 = full output.
     """
+    def _stamp(message: str) -> str:
+        import datetime as _dt
+
+        return f"[{_dt.datetime.now().isoformat(timespec='seconds')}] {message}"
+
+    def _append_log(message: str) -> None:
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(_stamp(message) + "\n")
+
+    def _log_verbose(message: str) -> None:
+        if verbose >= 2:
+            _log(log_path, message)
+        else:
+            _append_log(message)
+
+    def _progress(message: str) -> None:
+        if verbose >= 1:
+            print(message)
+        _append_log(message)
+
     seen = set(seen_pmids or [])
     existing = pd.DataFrame()
     if resume_from is not None and not resume_from.empty:
@@ -197,7 +220,7 @@ def run_llm_filter(
     llm_calls_used = 0
 
     if total == 0:
-        _log(log_path, "No PMIDs to process.")
+        _log_verbose("No PMIDs to process.")
         return existing
 
     for run_idx, row in enumerate(long_df.itertuples(index=False), start=1):
@@ -213,7 +236,7 @@ def run_llm_filter(
 
         if not abstract:
             # Skip PMIDs without abstracts to avoid ambiguous judgments
-            _log(log_path, f"[{run_idx}/{total}] PMID {pmid} skipped (no abstract).")
+            _log_verbose(f"[{run_idx}/{total}] PMID {pmid} skipped (no abstract).")
             verdict = {
                 "pmid": pmid,
                 "decision": "uncertain",
@@ -236,8 +259,7 @@ def run_llm_filter(
             processed += 1
             continue
 
-        _log(
-            log_path,
+        _log_verbose(
             f"[{run_idx}/{total}] PMID {pmid} | {row.pathogen} vs {row.antibiotic} | interval {row.start_date}–{row.end_date}",
         )
 
@@ -249,7 +271,7 @@ def run_llm_filter(
             }
         else:
             if max_llm_calls is not None and llm_calls_used >= max_llm_calls:
-                _log(log_path, f"Reached max_llm_calls={max_llm_calls}, stopping.")
+                _log_verbose(f"Reached max_llm_calls={max_llm_calls}, stopping.")
                 break
             verdict = classify_abstract(
                 llm,
@@ -279,16 +301,13 @@ def run_llm_filter(
         if decision == "yes":
             positives += 1
 
-        _log(
-            log_path,
-            f"    decision={decision} | rationale={verdict.get('rationale','')[:120]}",
-        )
+        _log_verbose(f"    decision={decision} | rationale={verdict.get('rationale','')[:120]}")
 
         if output_path and save_every and (len(results) % save_every == 0):
             df_tmp = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
             df_tmp = df_tmp.drop_duplicates(subset=["pmid"], keep="last")
             df_tmp.to_parquet(output_path, index=False)
-            _log(log_path, f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
+            _log_verbose(f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
 
         if progress_every and (len(results) % progress_every == 0):
             # compute interim summary on current in-memory results
@@ -304,7 +323,7 @@ def run_llm_filter(
 
             run_processed = len(results)
             cumulative_processed = len(df_cum)
-            print(
+            _progress(
                 f"Processed {run_processed}/{total}     no:{no_count}    yes:{yes_count}    uncertain:{unc_count}"
                 f"   |   cumulative {cumulative_processed}     no:{cum_no}    yes:{cum_yes}    uncertain:{cum_unc}"
             )
@@ -319,11 +338,10 @@ def run_llm_filter(
     yes_count = (df_out["decision"].str.lower() == "yes").sum() if not df_out.empty else 0
     no_count = (df_out["decision"].str.lower() == "no").sum() if not df_out.empty else 0
     unc_count = (df_out["decision"].str.lower() == "uncertain").sum() if not df_out.empty else 0
-    _log(
-        log_path,
+    _log_verbose(
         f"Finished: processed {processed} / {total}; positives {positives} ({(positives/max(processed,1)):.3f} fraction).",
     )
-    _log(log_path, f"Batch summary: yes={yes_count}, no={no_count}, uncertain={unc_count}")
+    _log_verbose(f"Batch summary: yes={yes_count}, no={no_count}, uncertain={unc_count}")
     session.close()
     return df_out
 
