@@ -120,6 +120,98 @@ def plot_heatmap_for_pathogen(
     plt.show()
 
 
+def plot_venue_vector(
+    df_with_vecs: pd.DataFrame,
+    venue_index: dict[str, int],
+    row: Optional[int] = None,
+    ax=None,
+    rotation: int = 0,
+    title: Optional[str] = None,
+    use_all_dates: bool = False,
+    pathogen: Optional[str] = None,
+    antibiotic: Optional[str] = None,
+):
+    """Bar plot of venue counts for a given pathogen/antibiotic row."""
+    required_cols = {"venue_vector", "pathogen", "antibiotic"}
+    missing = required_cols - set(df_with_vecs.columns)
+    if missing:
+        raise KeyError(f"DataFrame missing required columns: {missing}")
+
+    if not isinstance(venue_index, dict):
+        raise TypeError("venue_index must be a dictionary of venue->position.")
+
+    if row is not None and (row < 0 or row >= len(df_with_vecs)):
+        raise IndexError("Row index out of range for venue_vector plot.")
+
+    if row is None:
+        if pathogen is None or antibiotic is None:
+            raise ValueError("Provide either `row` or both `pathogen` and `antibiotic`.")
+        row_mask = (df_with_vecs["pathogen"] == pathogen) & (df_with_vecs["antibiotic"] == antibiotic)
+        if not row_mask.any():
+            raise ValueError("No rows match the specified pathogen/antibiotic combination.")
+        current_row = df_with_vecs.loc[row_mask].iloc[0]
+    else:
+        current_row = df_with_vecs.iloc[row]
+        pathogen = pathogen or current_row["pathogen"]
+        antibiotic = antibiotic or current_row["antibiotic"]
+
+    venues_sorted = [venue for venue, _ in sorted(venue_index.items(), key=lambda kv: kv[1])]
+
+    def _coerce_vector(vector_like):
+        if not isinstance(vector_like, (list, tuple)):
+            raise TypeError("venue_vector entries must be list-like.")
+        vec = list(vector_like)
+        if len(vec) != len(venues_sorted):
+            adjusted = [0] * len(venues_sorted)
+            for venue, idx in venue_index.items():
+                if idx < len(vec):
+                    adjusted[idx] = vec[idx]
+            vec = adjusted
+        return vec
+
+    if use_all_dates:
+        mask = (df_with_vecs["pathogen"] == pathogen) & (df_with_vecs["antibiotic"] == antibiotic)
+        grouped = df_with_vecs.loc[mask, "venue_vector"]
+        aggregated = [0] * len(venues_sorted)
+        for vector_like in grouped:
+            try:
+                vec = _coerce_vector(vector_like)
+            except TypeError:
+                continue
+            for idx, value in enumerate(vec):
+                aggregated[idx] += value
+        vector = aggregated
+    else:
+        vector = _coerce_vector(current_row["venue_vector"])
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, max(4, len(venues_sorted) * 0.35)))
+    else:
+        fig = ax.figure
+
+    positions = list(range(len(venues_sorted)))
+    max_value = max(vector) if vector else 0
+    offset = 0.02 * max_value if max_value else 0.1
+    bars = ax.barh(positions, vector)
+    for bar, value in zip(bars, vector):
+        width = bar.get_width()
+        y_pos = bar.get_y() + bar.get_height() / 2
+        x_pos = width + offset if width else offset
+        ax.text(x_pos, y_pos, f"{value}", va="center", ha="left", fontsize=8)
+    ax.set_yticks(positions)
+    ax.set_yticklabels(venues_sorted, rotation=rotation)
+    ax.set_xlabel("Count")
+    ax.set_ylabel("Venue")
+    if title:
+        ax.set_title(title)
+    ax.margins(y=0.01)
+    try:
+        fig.tight_layout()
+    except ValueError:
+        pass
+    return ax
+
+
 def _resolve_interval_column(df: pd.DataFrame):
     """Ensure an interval column is present and return metadata for plotting."""
     interval_candidates = [
@@ -758,5 +850,6 @@ __all__ = [
     "plot_heatmap_counts_vs_expected_antibiotic",
     "plot_heatmap_counts_vs_expected_class",
     "plot_umap_antibiotic_activity",
+    "plot_venue_vector",
     "_umap_scatter",
 ]
