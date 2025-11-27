@@ -445,7 +445,11 @@ def count_pmids_per_year_for_pathogens_resumable(
     results: list[dict] = []
 
     import time
+    from collections import deque
     start_ts = time.time()
+    # Use only recent runtime throughput for ETA, ignoring idle delays
+    RECENT_WINDOW_SEC = 900  # 15 minutes
+    recent_progress = deque()  # (timestamp, idx)
 
     try:
         for idx, (p, y) in enumerate(tasks, start=1):
@@ -454,13 +458,25 @@ def count_pmids_per_year_for_pathogens_resumable(
             results.append({"pathogen": p, "year": y, "count": int(cnt)})
 
             if progress_every and (idx % progress_every == 0):
-                elapsed = max(1e-6, time.time() - start_ts)
-                rate = idx / elapsed
-                remaining = max(0, total - idx)
-                eta_sec = remaining / rate if rate > 0 else 0
-                eta_h = int(eta_sec // 3600)
-                eta_m = int((eta_sec % 3600) // 60)
-                print(f"Progress: {idx}/{total} pairs processed… [ETA {eta_h}h {eta_m} min]")
+                now = time.time()
+                recent_progress.append((now, idx))
+                # Drop samples outside the recent window
+                cutoff = now - RECENT_WINDOW_SEC
+                while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
+                    recent_progress.popleft()
+                # Compute recent rate
+                eta_str = "[ETA --]"
+                if len(recent_progress) >= 2:
+                    dt = recent_progress[-1][0] - recent_progress[0][0]
+                    dp = recent_progress[-1][1] - recent_progress[0][1]
+                    if dt > 0 and dp > 0:
+                        rate = dp / dt
+                        remaining = max(0, total - idx)
+                        eta_sec = remaining / rate if rate > 0 else 0
+                        eta_h = int(eta_sec // 3600)
+                        eta_m = int((eta_sec % 3600) // 60)
+                        eta_str = f"[ETA {eta_h}h {eta_m} min]"
+                print(f"Progress: {idx}/{total} pairs processed… {eta_str}")
 
             if save_every and (len(results) >= save_every):
                 batch_df = pd.DataFrame(results)
@@ -546,7 +562,11 @@ def count_pmids_per_year_for_antibiotics_resumable(
     results: list[dict] = []
 
     import time
+    from collections import deque
     start_ts = time.time()
+    # Use only recent runtime throughput for ETA, ignoring idle delays
+    RECENT_WINDOW_SEC = 900  # 15 minutes
+    recent_progress = deque()  # (timestamp, idx)
 
     try:
         for idx, (ab, y) in enumerate(tasks, start=1):
@@ -555,13 +575,25 @@ def count_pmids_per_year_for_antibiotics_resumable(
             results.append({"antibiotic": ab, "year": y, "count": int(cnt)})
 
             if progress_every and (idx % progress_every == 0):
-                elapsed = max(1e-6, time.time() - start_ts)
-                rate = idx / elapsed
-                remaining = max(0, total - idx)
-                eta_sec = remaining / rate if rate > 0 else 0
-                eta_h = int(eta_sec // 3600)
-                eta_m = int((eta_sec % 3600) // 60)
-                print(f"Progress: {idx}/{total} pairs processed… [ETA {eta_h}h {eta_m} min]")
+                now = time.time()
+                recent_progress.append((now, idx))
+                # Drop samples outside the recent window
+                cutoff = now - RECENT_WINDOW_SEC
+                while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
+                    recent_progress.popleft()
+                # Compute recent rate
+                eta_str = "[ETA --]"
+                if len(recent_progress) >= 2:
+                    dt = recent_progress[-1][0] - recent_progress[0][0]
+                    dp = recent_progress[-1][1] - recent_progress[0][1]
+                    if dt > 0 and dp > 0:
+                        rate = dp / dt
+                        remaining = max(0, total - idx)
+                        eta_sec = remaining / rate if rate > 0 else 0
+                        eta_h = int(eta_sec // 3600)
+                        eta_m = int((eta_sec % 3600) // 60)
+                        eta_str = f"[ETA {eta_h}h {eta_m} min]"
+                print(f"Progress: {idx}/{total} pairs processed… {eta_str}")
 
             if save_every and (len(results) >= save_every):
                 batch_df = pd.DataFrame(results)
