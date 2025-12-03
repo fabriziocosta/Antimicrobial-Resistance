@@ -243,6 +243,231 @@ def _resolve_interval_column(df: pd.DataFrame):
     )
 
 
+def plot_top_antibiotic_period_by_pathogen(
+    norm_df: pd.DataFrame,
+    values: Sequence[str] = ("z_bg", "resid_log_bg"),
+    top_k: int = 3,
+    cmap: str = "Reds",
+    color_by: str = "rank",
+    rank_min_intensity: float = 0.25,
+    data_df: pd.DataFrame | None = None,
+    top_k_pathogens: int = 10,
+    pathogen_name_col: str = "CanonicalSpecies",
+    pathogen_rank_col: str = "pathogenic_index",
+    width_multiplier: float = 1.0,
+    figsize: tuple[int, int] | None = None,
+    annotate: bool = True,
+    xtick_rotation: int = 45,
+):
+    """
+    For each pathogen, find the period (interval) and antibiotic with the
+    maximum signal across all antibiotics and periods, and plot them.
+
+    Parameters
+    - norm_df: DataFrame with columns: pathogen, antibiotic, start_date, end_date,
+               interval label (or start/end to infer), and at least one of
+               {"z_bg", "resid_log_bg"}.
+    - values: one or more metric names to plot; defaults to ("z_bg", "resid_log_bg").
+              Each metric produces a panel showing the peak per-pathogen.
+    - data_df: optional DataFrame with pathogen rankings; expects columns
+               pathogen_name_col (default CanonicalSpecies) and pathogen_rank_col
+               (default pathogenic_index). If provided, pathogens are ordered by
+               descending rank and limited to top_k_pathogens.
+    - top_k_pathogens: number of pathogens to include based on ranking (default 10).
+    - width_multiplier: scales the default figure width (ignored if figsize given).
+    - annotate: whether to label points with the antibiotic name.
+    - xtick_rotation: rotation for interval labels on the x-axis.
+
+    The x-axis shows interval labels; the y-axis lists pathogens. Each point
+    marks one of the top-k intervals where that pathogen attains its largest
+    metric value, annotated by the corresponding antibiotic.
+
+    Coloring
+    - color_by="rank" (default): within each pathogen's top-k, the top entry is
+      darkest and the k-th is lightest, independent of absolute value. Set
+      rank_min_intensity (0..1) to control the lightest shade.
+    - color_by="value": color encodes the actual metric magnitude.
+    """
+    if norm_df.empty:
+        print("norm_df is empty; nothing to plot.")
+        return
+
+    df = norm_df.copy()
+    # Ensure interval label exists
+    df, interval_col, x_label = _resolve_interval_column(df)
+
+    # Coerce metrics to numeric and keep only finite values
+    values = [v for v in values if v in df.columns]
+    if not values:
+        raise ValueError("None of the requested values are present in norm_df.")
+    for v in values:
+        df[v] = pd.to_numeric(df[v], errors="coerce")
+
+    # Order intervals by start year if available; otherwise alphabetical
+    if {"start_date", "end_date"}.issubset(df.columns):
+        df["_start_year"] = pd.to_datetime(df["start_date"]).dt.year.astype("Int64")
+        df["_end_year"] = pd.to_datetime(df["end_date"]).dt.year.astype("Int64")
+        interval_order = (
+            df[[interval_col, "_start_year", "_end_year"]]
+            .drop_duplicates(subset=[interval_col])
+            .sort_values(by=["_start_year", "_end_year", interval_col])
+        )
+        intervals_sorted = interval_order[interval_col].astype(str).tolist()
+    else:
+        intervals_sorted = sorted(df[interval_col].astype(str).unique().tolist())
+
+    # Build figure
+    n_panels = len(values)
+    if figsize is None:
+        # Height scales with #pathogens; estimate after computing order
+        pass
+
+    # Determine y order
+    pathogens_present = df["pathogen"].astype(str).unique().tolist()
+    pathogens_order: list[str]
+    ranked = False
+    if (
+        data_df is not None
+        and pathogen_name_col in data_df.columns
+        and pathogen_rank_col in data_df.columns
+    ):
+        dd = data_df[[pathogen_name_col, pathogen_rank_col]].copy()
+        dd["_name_l"] = dd[pathogen_name_col].astype(str).str.strip().str.lower()
+        # Aggregate duplicates via max rank
+        rank_series = dd.groupby("_name_l")[pathogen_rank_col].max().sort_values(ascending=False)
+        # Map present pathogens
+        pp = pd.DataFrame({
+            "orig": pd.Series(pathogens_present, dtype=str),
+        })
+        pp["_name_l"] = pp["orig"].str.strip().str.lower()
+        pp["rank"] = pp["_name_l"].map(rank_series)
+        pp = pp.sort_values(by=["rank"], ascending=[False], na_position="last")
+        pathogens_order = pp["orig"].tolist()
+        ranked = True
+    else:
+        # Fallback: order by maximum of the first metric
+        v0 = values[0]
+        df0 = df[["pathogen", "antibiotic", interval_col, v0]].copy()
+        df0 = df0.replace([np.inf, -np.inf], np.nan).dropna(subset=[v0])
+        if df0.empty:
+            print(f"No finite values for {v0}; nothing to plot.")
+            return
+        per_pathogen_max = df0.groupby("pathogen")[v0].max().sort_values(ascending=False)
+        pathogens_order = per_pathogen_max.index.tolist()
+
+    # Limit to top_k_pathogens if specified
+    if isinstance(top_k_pathogens, int) and top_k_pathogens > 0:
+        pathogens_order = pathogens_order[: top_k_pathogens]
+
+    # Default figsize after we know how many pathogens
+    if figsize is None:
+        height = max(6, int(len(pathogens_order) * 0.35) + 2)
+        width = 10 if n_panels == 1 else 12 + 4 * (n_panels - 1)
+        try:
+            wm = float(width_multiplier)
+            if wm > 0:
+                width = int(round(width * wm))
+        except Exception:
+            pass
+        figsize = (width, height)
+
+    fig, axes = plt.subplots(1, n_panels, figsize=figsize, squeeze=False)
+    axes = axes[0]
+
+    # Helper to plot a single panel
+    def _panel(ax, metric: str, title_suffix: str):
+        dfx = df[["pathogen", "antibiotic", interval_col, metric]].copy()
+        dfx = dfx.replace([np.inf, -np.inf], np.nan).dropna(subset=[metric])
+        if dfx.empty:
+            ax.set_visible(False)
+            return
+        # Take top-k rows per pathogen by metric
+        dfx_sorted = dfx.sort_values(by=metric, ascending=False)
+        top = dfx_sorted.groupby("pathogen").head(max(1, int(top_k)))
+        # Align to common y order; drop pathogens not present in base order
+        top = top[top["pathogen"].isin(pathogens_order)]
+        # Compute color values
+        if color_by.lower() == "rank":
+            # Rank within each pathogen's selected rows (1=top)
+            top = top.sort_values(["pathogen", metric], ascending=[True, False])
+            top["_rank"] = top.groupby("pathogen").cumcount() + 1
+            # Normalize to [rank_min_intensity, 1.0]
+            # If only one item, assign 1.0
+            def _rank_to_intensity(gr):
+                n = len(gr)
+                if n <= 1:
+                    return pd.Series([1.0] * n, index=gr.index)
+                lo = float(rank_min_intensity)
+                hi = 1.0
+                # Highest rank (1) -> hi, lowest rank (n) -> lo
+                scale = np.linspace(hi, lo, n)
+                return pd.Series(scale, index=gr.index)
+
+            top["_color_val"] = (
+                top.groupby("pathogen", group_keys=False)["_rank"].apply(lambda g: _rank_to_intensity(g))
+            )
+            c_vals = top["_color_val"].astype(float).values
+            vmin, vmax = 0.0, 1.0
+        else:
+            c_vals = top[metric].astype(float).values
+            vmin = float(np.nanmin(c_vals)) if c_vals.size else None
+            vmax = float(np.nanmax(c_vals)) if c_vals.size else None
+        # Map categories to positions
+        y_map = {p: i for i, p in enumerate(pathogens_order)}
+        x_map = {lab: i for i, lab in enumerate(intervals_sorted)}
+        top = top.assign(
+            x_idx=top[interval_col].astype(str).map(x_map),
+            y_base=top["pathogen"].map(y_map).astype(float),
+        )
+        # If multiple top entries fall on the same interval for a pathogen,
+        # spread them vertically to avoid overlap (stack as multiple lines)
+        top["_yoff"] = 0.0
+        groups = top.groupby(["pathogen", "x_idx"], sort=False)
+        for (_, _), idxs in groups.groups.items():
+            n = len(idxs)
+            if n > 1:
+                # symmetric offsets within the unit row height
+                spread = min(0.4, 0.15 * (n - 1))
+                offsets = np.linspace(-spread, spread, n)
+                top.loc[list(idxs), "_yoff"] = offsets
+
+        xs = top["x_idx"].values
+        ys = (top["y_base"] + top["_yoff"]).values
+        # Alternating horizontal bands per pathogen row to improve readability
+        try:
+            nrows = len(pathogens_order)
+            for i in range(nrows):
+                if i % 2 == 0:
+                    ax.axhspan(i - 0.5, i + 0.5, color="#f0f0f0", zorder=0)
+        except Exception:
+            pass
+        sc = ax.scatter(xs, ys, c=c_vals, cmap=cmap, edgecolor="k", s=60, vmin=vmin, vmax=vmax)
+        if annotate:
+            for (x, y, label) in zip(xs, ys, top["antibiotic" ]):
+                ax.text(x + 0.1, y, str(label), va="center", ha="left", fontsize=8)
+
+        ax.set_yticks(range(len(pathogens_order)))
+        ax.set_yticklabels(pathogens_order)
+        # Reserve one empty column on the right to avoid clipping annotations
+        ncols = len(intervals_sorted)
+        ax.set_xticks(range(ncols + 1))
+        ax.set_xticklabels(list(intervals_sorted) + [""], rotation=xtick_rotation, ha="right")
+        ax.set_xlim(-0.5, ncols - 0.5 + 1.0)
+        ax.set_xlabel(x_label)
+        ax.set_title(f"Top {top_k} {title_suffix} per pathogen")
+        ax.grid(axis="x", linestyle=":", alpha=0.4)
+        cbar = plt.colorbar(sc, ax=ax)
+        cbar.set_label(f"rank" if color_by.lower()=="rank" else metric)
+
+    for i, metric in enumerate(values):
+        suffix = metric
+        _panel(axes[i], metric, suffix)
+
+    # Improve layout
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_heatmap_for_pathogen_debiased(
     df: pd.DataFrame,
     pathogen: str,
@@ -319,13 +544,18 @@ def plot_heatmap_for_pathogen_debiased(
         return
 
     plt.figure(figsize=figsize)
-    sns.heatmap(
+    ax = sns.heatmap(
         pivot,
         cmap="RdBu_r",
         norm=norm,
         cbar_kws={"label": f"{value} (detrended)"},
         linewidths=0.3,
     )
+    # Show interval labels on both bottom and top for easier reading
+    try:
+        ax.tick_params(axis="x", top=True, bottom=True, labeltop=True, labelbottom=True)
+    except Exception:
+        pass
     plt.title(f"Debiased {value} heatmap for {pathogen}")
     plt.xlabel(x_label)
     plt.ylabel("Antibiotic class" if show_only_class else "Antibiotic (prefixed by class)")
@@ -500,13 +730,24 @@ def plot_umap_antibiotic_activity(
     min_n_causation: int = 3,
     max_marker_size: int = 10,
     min_marker_size: int = 1,
+    color_envelope: tuple[float, float] | None = None,
     mp4_path: str | None = None,
     video_total_duration: float | None = None,
     video_ping_pong: bool = False,
     video_loop: bool = True,
     image_size: tuple[int, int] | None = (704, 512),
 ):
-    """Project pathogen embeddings with UMAP and color by antibiotic activity."""
+    """Project pathogen embeddings with UMAP and color by antibiotic activity.
+
+    Parameters
+    - color_envelope: optional (real, visualized) pivot on [0,1].
+      If provided, apply a piecewise linear remapping of normalized color
+      values x in [0,1] so that x=real maps to visualized, enhancing lower
+      values: for x <= real: y = (visualized/real) * x; for x > real:
+      y = visualized + (1-visualized) * (x - real) / (1 - real).
+      The remapped values are then scaled back to the original [0, overall_max]
+      range so the colorbar remains in data units.
+    """
     from io import BytesIO
 
     if embedding_column not in data_df.columns:
@@ -583,6 +824,29 @@ def plot_umap_antibiotic_activity(
 
     overall_max = global_max if global_max > 0 else 1.0
 
+    def _apply_piecewise_envelope(values: pd.Series, max_val: float) -> pd.Series:
+        if color_envelope is None or values.empty:
+            return values
+        r, v = color_envelope
+        # Validate and clamp parameters to avoid division errors
+        r = float(np.clip(r, 1e-9, 1 - 1e-9))
+        v = float(np.clip(v, 0.0, 1.0))
+        # Normalize to [0,1]
+        norm = (values / max_val) if max_val > 0 else values.copy()
+        # Piecewise mapping
+        below = norm <= r
+        out = norm.copy()
+        if r > 0:
+            out[below] = (v / r) * norm[below]
+        else:
+            out[below] = 0.0
+        if r < 1:
+            out[~below] = v + (1.0 - v) * (norm[~below] - r) / (1.0 - r)
+        else:
+            out[~below] = 1.0
+        # Rescale back to data units so colorbar remains meaningful
+        return out * max_val
+
     # Optional MP4 animation export (preferred for reliable playback)
     if mp4_path is not None:
         try:
@@ -597,6 +861,7 @@ def plot_umap_antibiotic_activity(
         frames = []
         base_frame_count = len(color_arrays)
         for idx, (color_series, label) in enumerate(color_arrays):
+            display_series = _apply_piecewise_envelope(color_series, overall_max)
             frac = 0.0 if base_frame_count <= 1 else idx / (base_frame_count - 1)
             fig = go.Figure(
                 data=[
@@ -606,7 +871,7 @@ def plot_umap_antibiotic_activity(
                         mode="markers",
                         marker=dict(
                             size=marker_pixel_sizes,
-                            color=color_series,
+                            color=display_series,
                             cmin=0,
                             cmax=overall_max,
                             colorscale=cmap,
@@ -671,6 +936,7 @@ def plot_umap_antibiotic_activity(
     for idx, (color_series, label) in enumerate(color_arrays):
         row = idx // cols + 1
         col = idx % cols + 1
+        display_series = _apply_piecewise_envelope(color_series, overall_max)
         fig.add_trace(
             go.Scatter(
                 x=working["umap_x"],
@@ -678,7 +944,7 @@ def plot_umap_antibiotic_activity(
                 mode="markers",
                 marker=dict(
                     size=marker_pixel_sizes,
-                    color=color_series,
+                    color=display_series,
                     coloraxis="coloraxis",
                     line=dict(color="black", width=0.6),
                 ),
@@ -754,6 +1020,86 @@ def _resolve_color_sequence(color_map, n_categories: int):
     else:
         sequence = sequence[:effective]
     return sequence
+
+
+def build_pubmed_links_html(
+    amr_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    date,
+) -> str:
+    """
+    Return an HTML string listing PubMed links for PMIDs matching
+    the given pathogen, antibiotic, and a target date within [start_date, end_date].
+
+    The function supports two input shapes:
+    - Interval rows with a list-like "pmids" column.
+    - Per-PMID rows with a scalar "pmid" column.
+
+    Usage in a notebook:
+        from IPython.display import HTML
+        html = build_pubmed_links_html(amr_df, "Neisseria gonorrhoeae", "Thiamphenicol", "1980/01/01")
+        HTML(html)
+    """
+    if not {"pathogen", "antibiotic", "start_date", "end_date"}.issubset(amr_df.columns):
+        raise ValueError("amr_df must include columns: pathogen, antibiotic, start_date, end_date")
+
+    target_date = pd.to_datetime(date)
+    df = amr_df.copy()
+    df["_path"] = df["pathogen"].astype(str).str.strip().str.lower()
+    df["_abx"] = df["antibiotic"].astype(str).str.strip().str.lower()
+    want_path = str(pathogen).strip().lower()
+    want_abx = str(antibiotic).strip().lower()
+    df["start_date"] = pd.to_datetime(df["start_date"])  # errors raise
+    df["end_date"] = pd.to_datetime(df["end_date"])      # errors raise
+
+    mask = (df["_path"] == want_path) & (df["_abx"] == want_abx) & (df["start_date"] <= target_date) & (df["end_date"] >= target_date)
+    sub = df.loc[mask].copy()
+
+    pmid_list: list[str] = []
+    if "pmids" in sub.columns:
+        def _as_list(x):
+            if isinstance(x, (list, tuple, set, np.ndarray, pd.Series)):
+                return [str(i) for i in x]
+            if pd.isna(x) or x is None:
+                return []
+            # try to parse common string representations like "[123, 456]"
+            try:
+                import ast as _ast
+                val = _ast.literal_eval(str(x))
+                if isinstance(val, (list, tuple, set, np.ndarray, pd.Series)):
+                    return [str(i) for i in val]
+            except Exception:
+                pass
+            return [str(x)]
+
+        for items in sub["pmids"].tolist():
+            pmid_list.extend(_as_list(items))
+    elif "pmid" in sub.columns:
+        pmid_list = [str(v) for v in sub["pmid"].dropna().astype(str).tolist()]
+    else:
+        # No PMIDs column available
+        return "<em>No PMIDs column found (expected 'pmids' or 'pmid').</em>"
+
+    # Normalize and unique while preserving order
+    seen = set()
+    unique_pmids: list[str] = []
+    for p in pmid_list:
+        p_stripped = "".join(ch for ch in str(p) if ch.isdigit())
+        if not p_stripped or p_stripped in seen:
+            continue
+        seen.add(p_stripped)
+        unique_pmids.append(p_stripped)
+
+    header = f"<strong>{pathogen}</strong> × <strong>{antibiotic}</strong> on {pd.to_datetime(target_date).date()}: {len(unique_pmids)} PMIDs"
+    if not unique_pmids:
+        return header + "<br><em>No PMIDs found for the selected date.</em>"
+
+    items = "\n".join(
+        f'<li><a href="https://pubmed.ncbi.nlm.nih.gov/{pmid}/" target="_blank" rel="noopener noreferrer">{pmid}</a></li>'
+        for pmid in unique_pmids
+    )
+    return f"{header}<ul>{items}</ul>"
 
 
 def _umap_scatter(
@@ -851,5 +1197,7 @@ __all__ = [
     "plot_heatmap_counts_vs_expected_class",
     "plot_umap_antibiotic_activity",
     "plot_venue_vector",
+    "plot_top_antibiotic_period_by_pathogen",
+    "build_pubmed_links_html",
     "_umap_scatter",
 ]
