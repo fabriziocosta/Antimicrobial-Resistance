@@ -252,12 +252,14 @@ def plot_top_antibiotic_period_by_pathogen(
     rank_min_intensity: float = 0.25,
     data_df: pd.DataFrame | None = None,
     top_k_pathogens: int = 10,
+    top_k_antibiotics: int = 20,
     pathogen_name_col: str = "CanonicalSpecies",
     pathogen_rank_col: str = "pathogenic_index",
     width_multiplier: float = 1.0,
     figsize: tuple[int, int] | None = None,
     annotate: bool = True,
     xtick_rotation: int = 45,
+    invert: bool = False,
 ):
     """
     For each pathogen, find the period (interval) and antibiotic with the
@@ -274,13 +276,17 @@ def plot_top_antibiotic_period_by_pathogen(
                (default pathogenic_index). If provided, pathogens are ordered by
                descending rank and limited to top_k_pathogens.
     - top_k_pathogens: number of pathogens to include based on ranking (default 10).
+    - top_k_antibiotics: number of antibiotics to include when invert=True (default 20).
     - width_multiplier: scales the default figure width (ignored if figsize given).
     - annotate: whether to label points with the antibiotic name.
     - xtick_rotation: rotation for interval labels on the x-axis.
+    - invert: if False (default), rows are pathogens and point labels are
+              antibiotics. If True, rows are antibiotics and point labels are
+              pathogens.
 
-    The x-axis shows interval labels; the y-axis lists pathogens. Each point
-    marks one of the top-k intervals where that pathogen attains its largest
-    metric value, annotated by the corresponding antibiotic.
+    The x-axis shows interval labels. By default, the y-axis lists pathogens
+    and each point is annotated by antibiotic. With invert=True, the y-axis
+    lists antibiotics and points are annotated by pathogen.
 
     Coloring
     - color_by="rank" (default): within each pathogen's top-k, the top entry is
@@ -296,10 +302,21 @@ def plot_top_antibiotic_period_by_pathogen(
     # Ensure interval label exists
     df, interval_col, x_label = _resolve_interval_column(df)
 
+    # Accept either a single metric string or a sequence of metric names
+    if isinstance(values, str):
+        values = [values]
+    else:
+        values = list(values)
+    requested_values = list(values)
+
     # Coerce metrics to numeric and keep only finite values
     values = [v for v in values if v in df.columns]
     if not values:
-        raise ValueError("None of the requested values are present in norm_df.")
+        available = ", ".join(sorted(df.columns))
+        raise ValueError(
+            "None of the requested values are present in norm_df. "
+            f"Requested: {requested_values}. Available columns: {available}"
+        )
     for v in values:
         df[v] = pd.to_numeric(df[v], errors="coerce")
 
@@ -322,12 +339,16 @@ def plot_top_antibiotic_period_by_pathogen(
         # Height scales with #pathogens; estimate after computing order
         pass
 
-    # Determine y order
-    pathogens_present = df["pathogen"].astype(str).unique().tolist()
-    pathogens_order: list[str]
-    ranked = False
+    # Determine row axis and labels (default: pathogen rows, inverted: antibiotic rows)
+    row_col = "antibiotic" if invert else "pathogen"
+    label_col = "pathogen" if invert else "antibiotic"
+    row_axis_label = "Antibiotic" if invert else "Pathogen"
+    row_title_suffix = "antibiotic" if invert else "pathogen"
+    row_values_present = df[row_col].astype(str).unique().tolist()
+    rows_order: list[str]
     if (
-        data_df is not None
+        not invert
+        and data_df is not None
         and pathogen_name_col in data_df.columns
         and pathogen_rank_col in data_df.columns
     ):
@@ -335,33 +356,35 @@ def plot_top_antibiotic_period_by_pathogen(
         dd["_name_l"] = dd[pathogen_name_col].astype(str).str.strip().str.lower()
         # Aggregate duplicates via max rank
         rank_series = dd.groupby("_name_l")[pathogen_rank_col].max().sort_values(ascending=False)
-        # Map present pathogens
-        pp = pd.DataFrame({
-            "orig": pd.Series(pathogens_present, dtype=str),
-        })
+        pp = pd.DataFrame({"orig": pd.Series(row_values_present, dtype=str)})
         pp["_name_l"] = pp["orig"].str.strip().str.lower()
         pp["rank"] = pp["_name_l"].map(rank_series)
         pp = pp.sort_values(by=["rank"], ascending=[False], na_position="last")
-        pathogens_order = pp["orig"].tolist()
-        ranked = True
+        rows_order = pp["orig"].tolist()
     else:
-        # Fallback: order by maximum of the first metric
+        # Fallback: order rows by maximum of the first metric
         v0 = values[0]
-        df0 = df[["pathogen", "antibiotic", interval_col, v0]].copy()
+        base_cols = [row_col, interval_col, v0]
+        if "antibiotic" not in base_cols:
+            base_cols.insert(1, "antibiotic")
+        df0 = df[base_cols].copy()
         df0 = df0.replace([np.inf, -np.inf], np.nan).dropna(subset=[v0])
         if df0.empty:
             print(f"No finite values for {v0}; nothing to plot.")
             return
-        per_pathogen_max = df0.groupby("pathogen")[v0].max().sort_values(ascending=False)
-        pathogens_order = per_pathogen_max.index.tolist()
+        per_row_max = df0.groupby(row_col)[v0].max().sort_values(ascending=False)
+        rows_order = per_row_max.index.tolist()
 
-    # Limit to top_k_pathogens if specified
-    if isinstance(top_k_pathogens, int) and top_k_pathogens > 0:
-        pathogens_order = pathogens_order[: top_k_pathogens]
+    if invert:
+        if isinstance(top_k_antibiotics, int) and top_k_antibiotics > 0:
+            rows_order = rows_order[: top_k_antibiotics]
+    else:
+        if isinstance(top_k_pathogens, int) and top_k_pathogens > 0:
+            rows_order = rows_order[: top_k_pathogens]
 
     # Default figsize after we know how many pathogens
     if figsize is None:
-        height = max(6, int(len(pathogens_order) * 0.35) + 2)
+        height = max(6, int(len(rows_order) * 0.35) + 2)
         width = 10 if n_panels == 1 else 12 + 4 * (n_panels - 1)
         try:
             wm = float(width_multiplier)
@@ -381,16 +404,16 @@ def plot_top_antibiotic_period_by_pathogen(
         if dfx.empty:
             ax.set_visible(False)
             return
-        # Take top-k rows per pathogen by metric
+        # Take top-k rows per selected row entity (pathogen or antibiotic) by metric
         dfx_sorted = dfx.sort_values(by=metric, ascending=False)
-        top = dfx_sorted.groupby("pathogen").head(max(1, int(top_k)))
-        # Align to common y order; drop pathogens not present in base order
-        top = top[top["pathogen"].isin(pathogens_order)]
+        top = dfx_sorted.groupby(row_col).head(max(1, int(top_k)))
+        # Align to common y order; drop rows not present in base order
+        top = top[top[row_col].isin(rows_order)]
         # Compute color values
         if color_by.lower() == "rank":
-            # Rank within each pathogen's selected rows (1=top)
-            top = top.sort_values(["pathogen", metric], ascending=[True, False])
-            top["_rank"] = top.groupby("pathogen").cumcount() + 1
+            # Rank within each row's selected points (1=top)
+            top = top.sort_values([row_col, metric], ascending=[True, False])
+            top["_rank"] = top.groupby(row_col).cumcount() + 1
             # Normalize to [rank_min_intensity, 1.0]
             # If only one item, assign 1.0
             def _rank_to_intensity(gr):
@@ -404,7 +427,7 @@ def plot_top_antibiotic_period_by_pathogen(
                 return pd.Series(scale, index=gr.index)
 
             top["_color_val"] = (
-                top.groupby("pathogen", group_keys=False)["_rank"].apply(lambda g: _rank_to_intensity(g))
+                top.groupby(row_col, group_keys=False)["_rank"].apply(lambda g: _rank_to_intensity(g))
             )
             c_vals = top["_color_val"].astype(float).values
             vmin, vmax = 0.0, 1.0
@@ -413,16 +436,16 @@ def plot_top_antibiotic_period_by_pathogen(
             vmin = float(np.nanmin(c_vals)) if c_vals.size else None
             vmax = float(np.nanmax(c_vals)) if c_vals.size else None
         # Map categories to positions
-        y_map = {p: i for i, p in enumerate(pathogens_order)}
+        y_map = {p: i for i, p in enumerate(rows_order)}
         x_map = {lab: i for i, lab in enumerate(intervals_sorted)}
         top = top.assign(
             x_idx=top[interval_col].astype(str).map(x_map),
-            y_base=top["pathogen"].map(y_map).astype(float),
+            y_base=top[row_col].map(y_map).astype(float),
         )
         # If multiple top entries fall on the same interval for a pathogen,
         # spread them vertically to avoid overlap (stack as multiple lines)
         top["_yoff"] = 0.0
-        groups = top.groupby(["pathogen", "x_idx"], sort=False)
+        groups = top.groupby([row_col, "x_idx"], sort=False)
         for (_, _), idxs in groups.groups.items():
             n = len(idxs)
             if n > 1:
@@ -435,7 +458,7 @@ def plot_top_antibiotic_period_by_pathogen(
         ys = (top["y_base"] + top["_yoff"]).values
         # Alternating horizontal bands per pathogen row to improve readability
         try:
-            nrows = len(pathogens_order)
+            nrows = len(rows_order)
             for i in range(nrows):
                 if i % 2 == 0:
                     ax.axhspan(i - 0.5, i + 0.5, color="#f0f0f0", zorder=0)
@@ -443,21 +466,23 @@ def plot_top_antibiotic_period_by_pathogen(
             pass
         sc = ax.scatter(xs, ys, c=c_vals, cmap=cmap, edgecolor="k", s=60, vmin=vmin, vmax=vmax)
         if annotate:
-            for (x, y, label) in zip(xs, ys, top["antibiotic" ]):
+            for (x, y, label) in zip(xs, ys, top[label_col]):
                 ax.text(x + 0.1, y, str(label), va="center", ha="left", fontsize=8)
 
-        ax.set_yticks(range(len(pathogens_order)))
-        ax.set_yticklabels(pathogens_order)
+        ax.set_yticks(range(len(rows_order)))
+        ax.set_yticklabels(rows_order)
+        # Mirror y-axis labels on the right for easier scanning
+        ax.yaxis.set_ticks_position("both")
+        ax.tick_params(axis="y", which="both", left=True, right=True, labelleft=True, labelright=True)
         # Reserve one empty column on the right to avoid clipping annotations
         ncols = len(intervals_sorted)
         ax.set_xticks(range(ncols + 1))
         ax.set_xticklabels(list(intervals_sorted) + [""], rotation=xtick_rotation, ha="right")
         ax.set_xlim(-0.5, ncols - 0.5 + 1.0)
         ax.set_xlabel(x_label)
-        ax.set_title(f"Top {top_k} {title_suffix} per pathogen")
+        ax.set_ylabel(row_axis_label)
+        ax.set_title(f"Top {top_k} {title_suffix} per {row_title_suffix}")
         ax.grid(axis="x", linestyle=":", alpha=0.4)
-        cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label(f"rank" if color_by.lower()=="rank" else metric)
 
     for i, metric in enumerate(values):
         suffix = metric
@@ -466,6 +491,417 @@ def plot_top_antibiotic_period_by_pathogen(
     # Improve layout
     plt.tight_layout()
     plt.show()
+
+
+def plot_top_pairs_by_period(
+    norm_df: pd.DataFrame,
+    value_col: str = "resid_log_bg",
+    top_k: int = 10,
+    period_col: str | None = None,
+    stack_labels: bool = True,
+    use_rank_fallback: bool = False,
+    min_gap_ratio: float = 0.03,
+    figsize: tuple[int, int] = (16, 9),
+    width_multiplier: float = 1.0,
+    fontsize: int = 8,
+    label_x_base_offset: float = 0.10,
+    label_x_step: float = 0.02,
+    label_x_pad: float = 0.01,
+    connector_dx_space: float = 0.0,
+):
+    """
+    Plot top-k (antibiotic, pathogen) pairs per period as text labels.
+
+    - x-axis: period
+    - y-axis: value_col (default resid_log_bg)
+    - text label: "(antibiotic, pathogen)"
+
+    Readability options:
+    - stack_labels=True: vertically separate labels in each period when
+      values are too close.
+    - use_rank_fallback=True: use rank (1=highest) as y-axis instead of value.
+    """
+    if norm_df is None or norm_df.empty:
+        print("norm_df is empty; nothing to plot.")
+        return
+
+    required_cols = {"antibiotic", "pathogen", value_col}
+    missing = required_cols - set(norm_df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+    df = norm_df.copy()
+
+    if period_col is None:
+        for col in [
+            "interval_label",
+            "interval",
+            "time_interval",
+            "period",
+            "year_bin",
+            "decade",
+        ]:
+            if col in df.columns:
+                period_col = col
+                break
+
+    if period_col is None and {"start_date", "end_date"}.issubset(df.columns):
+        start_year = pd.to_datetime(df["start_date"], errors="coerce").dt.year.astype("Int64")
+        end_year = pd.to_datetime(df["end_date"], errors="coerce").dt.year.astype("Int64")
+        df["_period_label"] = start_year.astype(str) + "-" + end_year.astype(str)
+        period_col = "_period_label"
+
+    if period_col is None or period_col not in df.columns:
+        raise ValueError("Could not infer period column. Provide `period_col` explicitly.")
+
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    # Avoid DataFrame-wide replace here because some notebooks keep array-like
+    # objects in other columns (e.g., embeddings), which can break comparisons.
+    df = df[np.isfinite(df[value_col])]
+    df = df.dropna(subset=["antibiotic", "pathogen", period_col])
+    if df.empty:
+        print(f"No finite {value_col} values after filtering.")
+        return
+
+    top = (
+        df.sort_values([period_col, value_col], ascending=[True, False])
+        .groupby(period_col, group_keys=False)
+        .head(max(1, int(top_k)))
+        .copy()
+    )
+    top["pair_label"] = (
+        "(" + top["antibiotic"].astype(str) + ", " + top["pathogen"].astype(str) + ")"
+    )
+    top["_rank"] = top.groupby(period_col).cumcount() + 1
+
+    if {"start_date", "end_date"}.issubset(df.columns):
+        order_df = df[[period_col, "start_date", "end_date"]].drop_duplicates().copy()
+        order_df["_s"] = pd.to_datetime(order_df["start_date"], errors="coerce")
+        order_df["_e"] = pd.to_datetime(order_df["end_date"], errors="coerce")
+        order_df = order_df.sort_values(["_s", "_e", period_col])
+        periods = order_df[period_col].astype(str).tolist()
+    else:
+        periods = sorted(top[period_col].astype(str).unique().tolist())
+
+    period_map = {p: i for i, p in enumerate(periods)}
+    top["_x"] = top[period_col].astype(str).map(period_map)
+
+    if use_rank_fallback:
+        top["_y_raw"] = top["_rank"].astype(float)
+        top["_y"] = top["_y_raw"]
+        y_label = f"Rank by {value_col} (1=highest)"
+    else:
+        top["_y_raw"] = top[value_col].astype(float)
+        top["_y"] = top["_y_raw"]
+        y_label = value_col
+
+        if stack_labels:
+            y_min = float(top["_y_raw"].min())
+            y_max = float(top["_y_raw"].max())
+            y_span = max(y_max - y_min, 1e-9)
+            min_gap = max(y_span * float(min_gap_ratio), 1e-6)
+
+            for _, grp in top.groupby(period_col, sort=False):
+                idx = grp.sort_values("_y_raw").index.tolist()
+                adjusted = top.loc[idx, "_y_raw"].to_numpy(dtype=float)
+                for i in range(1, len(adjusted)):
+                    if adjusted[i] - adjusted[i - 1] < min_gap:
+                        adjusted[i] = adjusted[i - 1] + min_gap
+                top.loc[idx, "_y"] = adjusted
+
+    plot_figsize = figsize
+    try:
+        wm = float(width_multiplier)
+        if wm > 0:
+            plot_figsize = (figsize[0] * wm, figsize[1])
+    except Exception:
+        pass
+
+    _, ax = plt.subplots(figsize=plot_figsize)
+    ax.scatter(top["_x"], top["_y_raw"], s=14, color="#777777", alpha=0.35, zorder=1)
+
+    # Keep labels flush-left per period (anchored at each year mark), while
+    # connector vertical segments are parallel and slightly offset by rank.
+    # `connector_dx_space` expands the marker->text gap used to distribute
+    # connector x offsets, which helps avoid overcrowding.
+    base_text_offset = float(label_x_base_offset) + max(0.0, float(connector_dx_space))
+    top["_x_text"] = top["_x"].astype(float) + base_text_offset
+    top["_x_marker"] = top["_x"].astype(float) + float(label_x_pad)
+    top["_x_conn"] = top["_x_marker"]
+
+    # Keep connector offsets fully inside marker->text gap to avoid overlap
+    # with labels, while preserving parallel/offset vertical segments.
+    for _, grp in top.groupby(period_col, sort=False):
+        idx = grp.sort_values("_rank").index.tolist()
+        n = len(idx)
+        if n == 0:
+            continue
+
+        x_marker = float(top.loc[idx[0], "_x_marker"])
+        x_text = float(top.loc[idx[0], "_x_text"])
+        x_left = x_marker + float(label_x_pad)
+        x_right = x_text - float(label_x_pad)
+
+        if n == 1:
+            x_conn_vals = [max(x_left, min(x_right, x_left))]
+        else:
+            available_span = max(0.0, x_right - x_left)
+            desired_step = max(0.0, float(label_x_step))
+            desired_span = desired_step * float(n - 1)
+            if desired_span <= available_span:
+                step = desired_step
+            else:
+                step = available_span / float(n - 1) if n > 1 else 0.0
+            x_conn_vals = [x_left + i * step for i in range(n)]
+
+        top.loc[idx, "_x_conn"] = x_conn_vals
+
+    for _, row in top.sort_values(["_x", "_y"]).iterrows():
+        x_marker = float(row["_x_marker"])
+        x_conn = float(row["_x_conn"])
+        x_label_edge = float(row["_x_text"]) - float(label_x_pad)
+
+        if x_conn > x_marker:
+            ax.plot(
+                [x_marker, x_conn],
+                [row["_y_raw"], row["_y_raw"]],
+                color="#9a9a9a",
+                lw=0.8,
+                alpha=0.9,
+                zorder=1,
+            )
+        ax.plot(
+            [x_conn, x_conn],
+            [row["_y_raw"], row["_y"]],
+            color="#9a9a9a",
+            lw=0.8,
+            alpha=0.9,
+            zorder=1,
+        )
+        if x_label_edge > x_conn:
+            ax.plot(
+                [x_conn, x_label_edge],
+                [row["_y"], row["_y"]],
+                color="#9a9a9a",
+                lw=0.8,
+                alpha=0.9,
+                zorder=1,
+            )
+        ax.text(
+            row["_x_text"],
+            row["_y"],
+            row["pair_label"],
+            va="center",
+            ha="left",
+            fontsize=fontsize,
+            zorder=2,
+        )
+
+    ax.set_xticks(range(len(periods)))
+    ax.set_xticklabels(periods, rotation=45, ha="right")
+    extra_right = base_text_offset + 0.8
+    ax.set_xlim(-0.4, max(len(periods) - 1 + extra_right, 0.6))
+
+    if use_rank_fallback:
+        ax.invert_yaxis()
+
+    ax.set_xlabel("Period")
+    ax.set_ylabel(y_label)
+    ax.set_title(f"Top {top_k} (antibiotic, pathogen) pairs per period by {value_col}")
+    ax.grid(axis="y", linestyle=":", alpha=0.35)
+    plt.tight_layout()
+    plt.show()
+
+
+def build_pair_trend_summary(
+    norm_df: pd.DataFrame,
+    amr_df: pd.DataFrame,
+    pa_counts_df: pd.DataFrame,
+    ab_counts_df: pd.DataFrame,
+    resid_col: str = "resid_log_bg",
+    z_col: str = "z_bg",
+    amr_count_col: str = "count",
+    min_points_for_slope: int = 2,
+    log_x_offset: float = 1.0,
+    figsize: tuple[int, int] = (14, 10),
+    annotate: bool = True,
+    fontsize: int = 7,
+):
+    """
+    Build pair-level trend summary and plot pair labels in 2D.
+
+    Output columns:
+    - antibiotic
+    - pathogen
+    - coef_resid_log_bg
+    - coef_z_bg
+    - amr_pair_total_count
+    - pathogen_total_publications
+    - antibiotic_total_publications
+    - x_log_pair_total_count
+    - y_coef_resid_log_bg
+    - pair_label
+
+    Plot:
+    - x = log(amr_pair_total_count + log_x_offset)
+    - y = coef_resid_log_bg
+    """
+    required_norm = {"pathogen", "antibiotic", resid_col, z_col}
+    missing_norm = required_norm - set(norm_df.columns)
+    if missing_norm:
+        raise ValueError(f"norm_df missing required columns: {sorted(missing_norm)}")
+
+    required_amr = {"pathogen", "antibiotic", amr_count_col}
+    missing_amr = required_amr - set(amr_df.columns)
+    if missing_amr:
+        raise ValueError(f"amr_df missing required columns: {sorted(missing_amr)}")
+
+    required_pa = {"pathogen", "count"}
+    missing_pa = required_pa - set(pa_counts_df.columns)
+    if missing_pa:
+        raise ValueError(f"pa_counts_df missing required columns: {sorted(missing_pa)}")
+
+    required_ab = {"antibiotic", "count"}
+    missing_ab = required_ab - set(ab_counts_df.columns)
+    if missing_ab:
+        raise ValueError(f"ab_counts_df missing required columns: {sorted(missing_ab)}")
+
+    df = norm_df.copy()
+    df, interval_col, _ = _resolve_interval_column(df)
+
+    # Build a numeric time axis for regression (ordered intervals).
+    if {"start_date", "end_date"}.issubset(df.columns):
+        order_df = df[[interval_col, "start_date", "end_date"]].drop_duplicates().copy()
+        order_df["_s"] = pd.to_datetime(order_df["start_date"], errors="coerce")
+        order_df["_e"] = pd.to_datetime(order_df["end_date"], errors="coerce")
+        order_df = order_df.sort_values(["_s", "_e", interval_col])
+        interval_order = order_df[interval_col].astype(str).tolist()
+    else:
+        interval_order = sorted(df[interval_col].astype(str).unique().tolist())
+    interval_to_x = {k: i for i, k in enumerate(interval_order)}
+
+    # Ensure numeric regression targets and clean rows.
+    df[resid_col] = pd.to_numeric(df[resid_col], errors="coerce")
+    df[z_col] = pd.to_numeric(df[z_col], errors="coerce")
+    df = df.dropna(subset=["pathogen", "antibiotic"])
+    df["_interval_key"] = df[interval_col].astype(str)
+    df["_x_time"] = df["_interval_key"].map(interval_to_x).astype(float)
+
+    pair_keys = ["antibiotic", "pathogen"]
+
+    def _slope_for_group(group: pd.DataFrame, value_col: str) -> float:
+        gx = pd.to_numeric(group["_x_time"], errors="coerce")
+        gy = pd.to_numeric(group[value_col], errors="coerce")
+        ok = np.isfinite(gx) & np.isfinite(gy)
+        if int(ok.sum()) < int(min_points_for_slope):
+            return float("nan")
+        x = gx[ok].to_numpy(dtype=float)
+        y = gy[ok].to_numpy(dtype=float)
+        if np.unique(x).size < 2:
+            return float("nan")
+        return float(np.polyfit(x, y, 1)[0])
+
+    grouped = df.groupby(pair_keys, as_index=False, sort=False)
+    coef_rows = []
+    for (ab, pa), g in grouped:
+        coef_rows.append(
+            {
+                "antibiotic": str(ab),
+                "pathogen": str(pa),
+                "coef_resid_log_bg": _slope_for_group(g, resid_col),
+                "coef_z_bg": _slope_for_group(g, z_col),
+            }
+        )
+    coef_df = pd.DataFrame(coef_rows)
+
+    amr_totals = (
+        amr_df.copy()
+        .assign(
+            pathogen=lambda d: d["pathogen"].astype(str),
+            antibiotic=lambda d: d["antibiotic"].astype(str),
+            _count_num=lambda d: pd.to_numeric(d[amr_count_col], errors="coerce"),
+        )
+        .dropna(subset=["_count_num"])
+        .groupby(pair_keys, as_index=False)["_count_num"]
+        .sum()
+        .rename(columns={"_count_num": "amr_pair_total_count"})
+    )
+
+    pa_totals = (
+        pa_counts_df.copy()
+        .assign(
+            pathogen=lambda d: d["pathogen"].astype(str),
+            _count_num=lambda d: pd.to_numeric(d["count"], errors="coerce"),
+        )
+        .dropna(subset=["_count_num"])
+        .groupby("pathogen", as_index=False)["_count_num"]
+        .sum()
+        .rename(columns={"_count_num": "pathogen_total_publications"})
+    )
+
+    ab_totals = (
+        ab_counts_df.copy()
+        .assign(
+            antibiotic=lambda d: d["antibiotic"].astype(str),
+            _count_num=lambda d: pd.to_numeric(d["count"], errors="coerce"),
+        )
+        .dropna(subset=["_count_num"])
+        .groupby("antibiotic", as_index=False)["_count_num"]
+        .sum()
+        .rename(columns={"_count_num": "antibiotic_total_publications"})
+    )
+
+    summary_df = (
+        coef_df.merge(amr_totals, on=pair_keys, how="left")
+        .merge(pa_totals, on="pathogen", how="left")
+        .merge(ab_totals, on="antibiotic", how="left")
+    )
+
+    summary_df["amr_pair_total_count"] = pd.to_numeric(
+        summary_df["amr_pair_total_count"], errors="coerce"
+    ).fillna(0.0)
+    summary_df["x_log_pair_total_count"] = np.log(summary_df["amr_pair_total_count"] + float(log_x_offset))
+    summary_df["y_coef_resid_log_bg"] = pd.to_numeric(
+        summary_df["coef_resid_log_bg"], errors="coerce"
+    )
+    summary_df["pair_label"] = (
+        "(" + summary_df["antibiotic"].astype(str) + ", " + summary_df["pathogen"].astype(str) + ")"
+    )
+
+    plot_df = summary_df.replace([np.inf, -np.inf], np.nan).dropna(
+        subset=["x_log_pair_total_count", "y_coef_resid_log_bg"]
+    )
+
+    _, ax = plt.subplots(figsize=figsize)
+    ax.scatter(
+        plot_df["x_log_pair_total_count"],
+        plot_df["y_coef_resid_log_bg"],
+        s=14,
+        color="#666666",
+        alpha=0.55,
+        zorder=1,
+    )
+
+    if annotate:
+        for _, row in plot_df.iterrows():
+            ax.text(
+                float(row["x_log_pair_total_count"]),
+                float(row["y_coef_resid_log_bg"]),
+                str(row["pair_label"]),
+                fontsize=fontsize,
+                ha="left",
+                va="center",
+                zorder=2,
+            )
+
+    ax.set_xlabel(f"log(amr_pair_total_count + {float(log_x_offset):g})")
+    ax.set_ylabel("Linear regression coefficient (resid_log_bg)")
+    ax.set_title("Pair trend map: log pair count vs resid_log_bg slope")
+    ax.grid(alpha=0.25, linestyle=":")
+    plt.tight_layout()
+    plt.show()
+
+    return summary_df
 
 
 def plot_heatmap_for_pathogen_debiased(

@@ -26,6 +26,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+import warnings
 
 
 @dataclass
@@ -91,6 +92,143 @@ def _compute_pairwise_expected(
     work["z_bg"] = (work[count_col] - work["expected_bg"]) / np.sqrt(np.maximum(work["expected_bg"], cfg.tiny))
 
     return work
+
+
+def _normalise_level_name(level: str) -> str:
+    return str(level).strip().lower().replace(" ", "_")
+
+
+def _resolve_antibiotic_level_column(level: str) -> str:
+    level_map = {
+        "antibiotic": "Antibiotic",
+        "class": "Class",
+        "simplified_category": "Simplified categories",
+        "simplified_categories": "Simplified categories",
+        "high_level_category": "High level categories",
+        "high_level_categories": "High level categories",
+        "origin": "Origin",
+    }
+    return level_map.get(_normalise_level_name(level), level)
+
+
+def recompute_resid_log_bg_by_antibiotic_level(
+    amr_norm_df: pd.DataFrame,
+    *,
+    antibiotic_level: str = "antibiotic",
+    antibiotic_meta_df: pd.DataFrame | None = None,
+    count_col: str = "count",
+    cfg: BackgroundNormaliseConfig | None = None,
+    error_on_unmapped: bool = True,
+    validate_bg_consistency: bool = True,
+) -> pd.DataFrame:
+    """
+    Recompute background-normalised residuals at a chosen antibiotic partition level.
+
+    This function expects a dataframe that already contains interval-level background
+    columns (`bg_pathogen_n`, `bg_antibiotic_n`) such as `amr_df_normalised.parquet`.
+    It aggregates rows to the requested antibiotic granularity, then recomputes:
+    `frac_among_*`, `geo_frac`, `expected_bg`, `resid_log_bg`, and `z_bg`.
+    """
+    if cfg is None:
+        cfg = BackgroundNormaliseConfig()
+
+    required = {
+        "pathogen",
+        "antibiotic",
+        "start_date",
+        "end_date",
+        "bg_pathogen_n",
+        "bg_antibiotic_n",
+        count_col,
+    }
+    missing = required - set(amr_norm_df.columns)
+    if missing:
+        raise KeyError(f"amr_norm_df missing required columns: {missing}")
+
+    work = amr_norm_df.copy()
+    work["antibiotic"] = work["antibiotic"].astype(str)
+    level_key = _normalise_level_name(antibiotic_level)
+
+    if level_key == "antibiotic":
+        work["_ab_group"] = work["antibiotic"]
+    else:
+        if antibiotic_meta_df is None:
+            raise ValueError(
+                f"antibiotic_level='{antibiotic_level}' requires antibiotic_meta_df mapping."
+            )
+        if "Antibiotic" not in antibiotic_meta_df.columns:
+            available = ", ".join(sorted(antibiotic_meta_df.columns))
+            raise KeyError(
+                "antibiotic_meta_df must include an 'Antibiotic' column. "
+                f"Available columns: {available}"
+            )
+        level_col = _resolve_antibiotic_level_column(antibiotic_level)
+        if level_col not in antibiotic_meta_df.columns:
+            available = ", ".join(sorted(antibiotic_meta_df.columns))
+            raise KeyError(
+                f"antibiotic_level '{antibiotic_level}' not found in metadata. "
+                f"Expected column '{level_col}'. Available columns: {available}"
+            )
+
+        meta = antibiotic_meta_df[["Antibiotic", level_col]].copy()
+        meta["Antibiotic"] = meta["Antibiotic"].astype(str)
+        meta[level_col] = meta[level_col].astype(str)
+        meta = meta.drop_duplicates(subset=["Antibiotic"])
+        mapper = dict(zip(meta["Antibiotic"], meta[level_col]))
+        mapped = work["antibiotic"].map(mapper)
+        if error_on_unmapped:
+            missing = sorted(work.loc[mapped.isna(), "antibiotic"].astype(str).unique().tolist())
+            if missing:
+                preview = ", ".join(missing[:20])
+                extra = "" if len(missing) <= 20 else f" ... (+{len(missing)-20} more)"
+                raise ValueError(
+                    f"{len(missing)} antibiotics are missing from metadata for level '{antibiotic_level}': "
+                    f"{preview}{extra}"
+                )
+        work["_ab_group"] = mapped.fillna(work["antibiotic"])
+
+    group_cols = ["pathogen", "_ab_group", "start_date", "end_date"]
+    if validate_bg_consistency:
+        # bg_pathogen_n should be identical within (pathogen, interval).
+        bg_check = work.groupby(["pathogen", "start_date", "end_date"])["bg_pathogen_n"].nunique(dropna=False)
+        inconsistent = int((bg_check > 1).sum())
+        if inconsistent > 0:
+            warnings.warn(
+                "Inconsistent bg_pathogen_n values detected within (pathogen, interval). "
+                f"Found {inconsistent} inconsistent groups. Aggregation will use max(bg_pathogen_n).",
+                RuntimeWarning,
+            )
+    agg = (
+        work.groupby(group_cols, as_index=False)
+        .agg(
+            **{
+                count_col: (count_col, "sum"),
+                "bg_antibiotic_n": ("bg_antibiotic_n", "sum"),
+                # Pathogen background should be interval-level; keep one representative.
+                "bg_pathogen_n": ("bg_pathogen_n", "max"),
+            }
+        )
+    )
+    agg = agg.rename(columns={"_ab_group": "antibiotic"})
+
+    # Simple fractions (smoothed)
+    agg["frac_among_pathogen"] = (agg[count_col] + cfg.alpha) / (agg["bg_pathogen_n"] + cfg.alpha)
+    agg["frac_among_antibiotic"] = (agg[count_col] + cfg.alpha) / (agg["bg_antibiotic_n"] + cfg.alpha)
+    agg["geo_frac"] = np.sqrt(agg["frac_among_pathogen"] * agg["frac_among_antibiotic"])
+
+    # Expected counts and residuals at the chosen antibiotic level
+    pairwise = _compute_pairwise_expected(
+        agg,
+        pair_cols=("pathogen", "antibiotic"),
+        bg_pathogen_col="bg_pathogen_n",
+        bg_antibiotic_col="bg_antibiotic_n",
+        count_col=count_col,
+        cfg=cfg,
+    )
+    agg = agg.join(pairwise[["expected_bg", "resid_log_bg", "z_bg"]])
+    agg["antibiotic_level"] = level_key
+
+    return agg
 
 
 def normalise_by_background(
@@ -202,5 +340,5 @@ def normalise_by_background(
 __all__ = [
     "BackgroundNormaliseConfig",
     "normalise_by_background",
+    "recompute_resid_log_bg_by_antibiotic_level",
 ]
-
