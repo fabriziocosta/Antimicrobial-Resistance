@@ -520,10 +520,27 @@ def plot_top_pairs_by_period(
     - stack_labels=True: vertically separate labels in each period when
       values are too close.
     - use_rank_fallback=True: use rank (1=highest) as y-axis instead of value.
+
+    Returns:
+    - DataFrame with plotted rows and helper coordinates.
     """
+    result_cols = [
+        "antibiotic",
+        "pathogen",
+        "period",
+        "pair_label",
+        "rank",
+        "value_raw",
+        "y_raw",
+        "y_plot",
+        "x_idx",
+        "x_marker",
+        "x_conn",
+        "x_text",
+    ]
     if norm_df is None or norm_df.empty:
         print("norm_df is empty; nothing to plot.")
-        return
+        return pd.DataFrame(columns=result_cols)
 
     required_cols = {"antibiotic", "pathogen", value_col}
     missing = required_cols - set(norm_df.columns)
@@ -561,7 +578,7 @@ def plot_top_pairs_by_period(
     df = df.dropna(subset=["antibiotic", "pathogen", period_col])
     if df.empty:
         print(f"No finite {value_col} values after filtering.")
-        return
+        return pd.DataFrame(columns=result_cols)
 
     top = (
         df.sort_values([period_col, value_col], ascending=[True, False])
@@ -712,8 +729,21 @@ def plot_top_pairs_by_period(
     plt.tight_layout()
     plt.show()
 
+    out = top.copy()
+    out["period"] = out[period_col].astype(str)
+    out["rank"] = pd.to_numeric(out["_rank"], errors="coerce").astype("Int64")
+    out["value_raw"] = pd.to_numeric(out[value_col], errors="coerce")
+    out["y_raw"] = pd.to_numeric(out["_y_raw"], errors="coerce")
+    out["y_plot"] = pd.to_numeric(out["_y"], errors="coerce")
+    out["x_idx"] = pd.to_numeric(out["_x"], errors="coerce")
+    out["x_marker"] = pd.to_numeric(out["_x_marker"], errors="coerce")
+    out["x_conn"] = pd.to_numeric(out["_x_conn"], errors="coerce")
+    out["x_text"] = pd.to_numeric(out["_x_text"], errors="coerce")
+    out = out[result_cols].sort_values(["x_idx", "rank", "antibiotic", "pathogen"]).reset_index(drop=True)
+    return out
 
-def build_pair_trend_summary(
+
+def compute_pair_trend_summary(
     norm_df: pd.DataFrame,
     amr_df: pd.DataFrame,
     pa_counts_df: pd.DataFrame,
@@ -723,12 +753,9 @@ def build_pair_trend_summary(
     amr_count_col: str = "count",
     min_points_for_slope: int = 2,
     log_x_offset: float = 1.0,
-    figsize: tuple[int, int] = (14, 10),
-    annotate: bool = True,
-    fontsize: int = 7,
 ):
     """
-    Build pair-level trend summary and plot pair labels in 2D.
+    Build pair-level trend summary dataframe.
 
     Output columns:
     - antibiotic
@@ -741,10 +768,6 @@ def build_pair_trend_summary(
     - x_log_pair_total_count
     - y_coef_resid_log_bg
     - pair_label
-
-    Plot:
-    - x = log(amr_pair_total_count + log_x_offset)
-    - y = coef_resid_log_bg
     """
     required_norm = {"pathogen", "antibiotic", resid_col, z_col}
     missing_norm = required_norm - set(norm_df.columns)
@@ -868,39 +891,333 @@ def build_pair_trend_summary(
         "(" + summary_df["antibiotic"].astype(str) + ", " + summary_df["pathogen"].astype(str) + ")"
     )
 
-    plot_df = summary_df.replace([np.inf, -np.inf], np.nan).dropna(
-        subset=["x_log_pair_total_count", "y_coef_resid_log_bg"]
+    return summary_df
+
+
+def _pareto_front_shells(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    n_shells: int | None = None,
+    maximize_x: bool = True,
+    maximize_y: bool = True,
+) -> pd.Series:
+    """
+    Compute Pareto shell index (1=best) with configurable objectives.
+    Returns a series aligned with df.index; NaN for rows with non-finite x/y.
+    """
+    shells = pd.Series(np.nan, index=df.index, dtype=float)
+    valid = df[np.isfinite(pd.to_numeric(df[x_col], errors="coerce")) & np.isfinite(pd.to_numeric(df[y_col], errors="coerce"))]
+    remaining = valid.index.tolist()
+    shell_id = 1
+
+    while remaining and (n_shells is None or shell_id <= int(n_shells)):
+        rem = df.loc[remaining, [x_col, y_col]].astype(float)
+        pts = rem.to_numpy()
+        tx = pts[:, 0] if maximize_x else -pts[:, 0]
+        ty = pts[:, 1] if maximize_y else -pts[:, 1]
+        nondominated = np.ones(len(rem), dtype=bool)
+
+        # i is dominated if any j is better-or-equal on both transformed axes
+        # (maximize) and strictly better on at least one axis.
+        for i in range(len(rem)):
+            dominates_i = (
+                (tx >= tx[i])
+                & (ty >= ty[i])
+                & ((tx > tx[i]) | (ty > ty[i]))
+            )
+            if np.any(dominates_i):
+                nondominated[i] = False
+
+        shell_indices = rem.index[nondominated].tolist()
+        if not shell_indices:
+            break
+        shells.loc[shell_indices] = float(shell_id)
+        shell_set = set(shell_indices)
+        remaining = [idx for idx in remaining if idx not in shell_set]
+        shell_id += 1
+
+    return shells
+
+
+def plot_pair_trend_summary(
+    pair_trend_df: pd.DataFrame,
+    n_pareto_front_shells: int | tuple[int, int] | None = None,
+    x_col: str = "x_log_pair_total_count",
+    y_col: str = "y_coef_resid_log_bg",
+    label_col: str = "pair_label",
+    figsize: tuple[int, int] = (14, 10),
+    annotate: bool = True,
+    fontsize: int = 7,
+    show_pareto_front_lines: bool = True,
+    front_linewidth: float = 2.0,
+    pareto_cmap: str = "Pastel1",
+    use_lowest_coef_front: bool = False,
+):
+    """
+    Plot pair trend summary in 2D.
+
+    If n_pareto_front_shells is:
+    - int N: only points in shells 1..N are shown (existing behavior).
+    - tuple (a, b): only points in shells a..b are shown.
+    Optional colored front lines can be overlaid via show_pareto_front_lines.
+
+    Set use_lowest_coef_front=True to select shells by:
+    - maximize x_col (log pair count)
+    - minimize y_col (coefficient)
+    """
+    required_cols = {x_col, y_col, label_col}
+    missing = required_cols - set(pair_trend_df.columns)
+    if missing:
+        raise ValueError(f"pair_trend_df missing required columns: {sorted(missing)}")
+
+    # Fallback for stale interactive sessions where global helper resolution can fail.
+    def _pareto_front_shells_local(
+        df_local: pd.DataFrame,
+        x_name: str,
+        y_name: str,
+        n_shells_local: int | None = None,
+        maximize_x_local: bool = True,
+        maximize_y_local: bool = True,
+    ) -> pd.Series:
+        shells_local = pd.Series(np.nan, index=df_local.index, dtype=float)
+        valid_local = df_local[
+            np.isfinite(pd.to_numeric(df_local[x_name], errors="coerce"))
+            & np.isfinite(pd.to_numeric(df_local[y_name], errors="coerce"))
+        ]
+        remaining_local = valid_local.index.tolist()
+        shell_id_local = 1
+
+        while remaining_local and (n_shells_local is None or shell_id_local <= int(n_shells_local)):
+            rem_local = df_local.loc[remaining_local, [x_name, y_name]].astype(float)
+            pts_local = rem_local.to_numpy()
+            tx_local = pts_local[:, 0] if maximize_x_local else -pts_local[:, 0]
+            ty_local = pts_local[:, 1] if maximize_y_local else -pts_local[:, 1]
+            nondominated_local = np.ones(len(rem_local), dtype=bool)
+
+            for i in range(len(rem_local)):
+                dominates_i_local = (
+                    (tx_local >= tx_local[i])
+                    & (ty_local >= ty_local[i])
+                    & ((tx_local > tx_local[i]) | (ty_local > ty_local[i]))
+                )
+                if np.any(dominates_i_local):
+                    nondominated_local[i] = False
+
+            shell_indices_local = rem_local.index[nondominated_local].tolist()
+            if not shell_indices_local:
+                break
+            shells_local.loc[shell_indices_local] = float(shell_id_local)
+            shell_set_local = set(shell_indices_local)
+            remaining_local = [idx for idx in remaining_local if idx not in shell_set_local]
+            shell_id_local += 1
+
+        return shells_local
+
+    plot_df = pair_trend_df.copy()
+    plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
+    plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors="coerce")
+    plot_df = plot_df.replace([np.inf, -np.inf], np.nan).dropna(subset=[x_col, y_col])
+
+    if plot_df.empty:
+        print("No finite points to plot.")
+        return plot_df
+
+    shell_start: int | None = None
+    shell_end: int | None = None
+    if isinstance(n_pareto_front_shells, tuple):
+        if len(n_pareto_front_shells) != 2:
+            raise ValueError("n_pareto_front_shells tuple must be (start, end).")
+        shell_start = int(n_pareto_front_shells[0])
+        shell_end = int(n_pareto_front_shells[1])
+        if shell_start < 1 or shell_end < shell_start:
+            raise ValueError("For tuple n_pareto_front_shells=(start,end), require 1 <= start <= end.")
+    elif n_pareto_front_shells is not None:
+        shell_end = int(n_pareto_front_shells)
+        shell_start = 1
+        if shell_end < 1:
+            raise ValueError("n_pareto_front_shells must be >= 1 when provided.")
+
+    maximize_y = not bool(use_lowest_coef_front)
+    pareto_fn = globals().get("_pareto_front_shells", _pareto_front_shells_local)
+    plot_df["pareto_shell"] = pareto_fn(
+        plot_df,
+        x_col,
+        y_col,
+        shell_end,
+        True,
+        maximize_y,
     )
 
+    if shell_end is not None:
+        plot_df = plot_df[
+            plot_df["pareto_shell"].notna()
+            & (plot_df["pareto_shell"] >= int(shell_start))
+            & (plot_df["pareto_shell"] <= int(shell_end))
+        ].copy()
+
     _, ax = plt.subplots(figsize=figsize)
-    ax.scatter(
-        plot_df["x_log_pair_total_count"],
-        plot_df["y_coef_resid_log_bg"],
-        s=14,
-        color="#666666",
-        alpha=0.55,
-        zorder=1,
-    )
+
+    if shell_end is None:
+        ax.scatter(plot_df[x_col], plot_df[y_col], s=14, color="#bdbdbd", alpha=0.5, zorder=1)
+    else:
+        shell_vals = plot_df["pareto_shell"].astype(int).to_numpy()
+        sc = ax.scatter(
+            plot_df[x_col],
+            plot_df[y_col],
+            c=shell_vals,
+            cmap=pareto_cmap,
+            s=18,
+            alpha=0.85,
+            zorder=1,
+        )
+        cbar = plt.colorbar(sc, ax=ax)
+        cbar.set_label("Pareto shell (1=best)")
+
+    if show_pareto_front_lines:
+        shell_unique = sorted(plot_df["pareto_shell"].dropna().astype(int).unique().tolist())
+        if shell_unique:
+            cmap = plt.get_cmap(pareto_cmap)
+            max_shell = max(shell_unique)
+            def _plot_step_front(ax_obj, x_vals, y_vals, color_val, lw_val):
+                # Draw Pareto front as staircase: vertical first, then horizontal.
+                if len(x_vals) < 2:
+                    return
+                for i in range(len(x_vals) - 1):
+                    x0 = float(x_vals[i])
+                    y0 = float(y_vals[i])
+                    x1 = float(x_vals[i + 1])
+                    y1 = float(y_vals[i + 1])
+                    # Vertical segment at current x
+                    ax_obj.plot(
+                        [x0, x0],
+                        [y0, y1],
+                        color=color_val,
+                        linewidth=lw_val,
+                        alpha=0.9,
+                        zorder=3,
+                    )
+                    # Horizontal segment at next y
+                    ax_obj.plot(
+                        [x0, x1],
+                        [y1, y1],
+                        color=color_val,
+                        linewidth=lw_val,
+                        alpha=0.9,
+                        zorder=3,
+                    )
+
+            for shell in shell_unique:
+                shell_df = plot_df[plot_df["pareto_shell"].astype(int) == shell].copy()
+                if len(shell_df) < 2:
+                    continue
+                shell_df = (
+                    shell_df[[x_col, y_col]]
+                    .dropna()
+                    .groupby(x_col, as_index=False)[y_col]
+                    .agg("min" if use_lowest_coef_front else "max")
+                    .sort_values(x_col)
+                )
+                if len(shell_df) < 2:
+                    continue
+                if shell_end is None:
+                    color = "#fbb4ae" if shell == 1 else "#ccebc5"
+                else:
+                    denom = max(1, max_shell - 1)
+                    color = cmap((shell - 1) / denom)
+                xs = shell_df[x_col].to_numpy(dtype=float)
+                ys = shell_df[y_col].to_numpy(dtype=float)
+                _plot_step_front(
+                    ax_obj=ax,
+                    x_vals=xs,
+                    y_vals=ys,
+                    color_val=color,
+                    lw_val=float(front_linewidth),
+                )
 
     if annotate:
         for _, row in plot_df.iterrows():
             ax.text(
-                float(row["x_log_pair_total_count"]),
-                float(row["y_coef_resid_log_bg"]),
-                str(row["pair_label"]),
+                float(row[x_col]),
+                float(row[y_col]),
+                str(row[label_col]),
                 fontsize=fontsize,
                 ha="left",
                 va="center",
-                zorder=2,
+                zorder=5,
             )
 
-    ax.set_xlabel(f"log(amr_pair_total_count + {float(log_x_offset):g})")
+    ax.set_xlabel("log(total AMR pair count)")
     ax.set_ylabel("Linear regression coefficient (resid_log_bg)")
-    ax.set_title("Pair trend map: log pair count vs resid_log_bg slope")
+    if shell_end is None:
+        mode_txt = "lowest coef" if use_lowest_coef_front else "highest coef"
+        ax.set_title(f"Pair trend map: log pair count vs resid_log_bg slope ({mode_txt} front)")
+    else:
+        mode_txt = "lowest coef" if use_lowest_coef_front else "highest coef"
+        if shell_start == 1:
+            shell_txt = f"1..{int(shell_end)}"
+        else:
+            shell_txt = f"{int(shell_start)}..{int(shell_end)}"
+        ax.set_title(
+            f"Pair trend map (Pareto shells {shell_txt}, {mode_txt} front)"
+        )
     ax.grid(alpha=0.25, linestyle=":")
     plt.tight_layout()
     plt.show()
 
+    sort_cols = []
+    ascending = []
+    if "pareto_shell" in plot_df.columns:
+        sort_cols.append("pareto_shell")
+        ascending.append(True)
+    if "amr_pair_total_count" in plot_df.columns:
+        sort_cols.append("amr_pair_total_count")
+        ascending.append(True)
+    if sort_cols:
+        plot_df = plot_df.sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
+
+    return plot_df
+
+
+def build_pair_trend_summary(
+    norm_df: pd.DataFrame,
+    amr_df: pd.DataFrame,
+    pa_counts_df: pd.DataFrame,
+    ab_counts_df: pd.DataFrame,
+    resid_col: str = "resid_log_bg",
+    z_col: str = "z_bg",
+    amr_count_col: str = "count",
+    min_points_for_slope: int = 2,
+    log_x_offset: float = 1.0,
+    figsize: tuple[int, int] = (14, 10),
+    annotate: bool = True,
+    fontsize: int = 7,
+):
+    """
+    Backward-compatible wrapper.
+    Prefer compute_pair_trend_summary + plot_pair_trend_summary.
+    """
+    summary_df = compute_pair_trend_summary(
+        norm_df=norm_df,
+        amr_df=amr_df,
+        pa_counts_df=pa_counts_df,
+        ab_counts_df=ab_counts_df,
+        resid_col=resid_col,
+        z_col=z_col,
+        amr_count_col=amr_count_col,
+        min_points_for_slope=min_points_for_slope,
+        log_x_offset=log_x_offset,
+    )
+    plot_pair_trend_summary(
+        summary_df,
+        n_pareto_front_shells=None,
+        x_col="x_log_pair_total_count",
+        y_col="y_coef_resid_log_bg",
+        label_col="pair_label",
+        figsize=figsize,
+        annotate=annotate,
+        fontsize=fontsize,
+    )
     return summary_df
 
 
