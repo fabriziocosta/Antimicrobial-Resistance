@@ -586,9 +586,7 @@ def plot_top_pairs_by_period(
         .head(max(1, int(top_k)))
         .copy()
     )
-    top["pair_label"] = (
-        "(" + top["antibiotic"].astype(str) + ", " + top["pathogen"].astype(str) + ")"
-    )
+    top["pair_label"] = top["antibiotic"].astype(str) + "\n" + top["pathogen"].astype(str)
     top["_rank"] = top.groupby(period_col).cumcount() + 1
 
     if {"start_date", "end_date"}.issubset(df.columns):
@@ -753,9 +751,15 @@ def compute_pair_trend_summary(
     amr_count_col: str = "count",
     min_points_for_slope: int = 2,
     log_x_offset: float = 1.0,
+    start_year: int | None = None,
+    end_year: int | None = None,
 ):
     """
     Build pair-level trend summary dataframe.
+
+    Optional year window filtering is inclusive:
+    - start_year=2000 means rows intersecting 2000-01-01 and later are kept.
+    - end_year=2025 means rows intersecting up to 2025-12-31 are kept.
 
     Output columns:
     - antibiotic
@@ -789,7 +793,45 @@ def compute_pair_trend_summary(
     if missing_ab:
         raise ValueError(f"ab_counts_df missing required columns: {sorted(missing_ab)}")
 
-    df = norm_df.copy()
+    if start_year is not None and end_year is not None and int(start_year) > int(end_year):
+        raise ValueError(f"start_year ({start_year}) must be <= end_year ({end_year}).")
+
+    def _filter_year_window(
+        data: pd.DataFrame,
+        frame_name: str,
+        require_date_cols: bool = True,
+    ) -> pd.DataFrame:
+        if start_year is None and end_year is None:
+            return data.copy()
+        if not {"start_date", "end_date"}.issubset(data.columns):
+            if not require_date_cols:
+                return data.copy()
+            raise ValueError(
+                f"{frame_name} must include 'start_date' and 'end_date' when "
+                "start_year/end_year filtering is requested."
+            )
+
+        out = data.copy()
+        out["_start_date"] = pd.to_datetime(out["start_date"], errors="coerce")
+        out["_end_date"] = pd.to_datetime(out["end_date"], errors="coerce")
+        out = out.dropna(subset=["_start_date", "_end_date"])
+
+        # If one bound is omitted, expand to dataset extrema.
+        effective_start = (
+            pd.Timestamp(year=int(start_year), month=1, day=1)
+            if start_year is not None
+            else out["_start_date"].min()
+        )
+        effective_end = (
+            pd.Timestamp(year=int(end_year), month=12, day=31)
+            if end_year is not None
+            else out["_end_date"].max()
+        )
+        out = out[(out["_end_date"] >= effective_start) & (out["_start_date"] <= effective_end)]
+
+        return out.drop(columns=["_start_date", "_end_date"])
+
+    df = _filter_year_window(norm_df, "norm_df")
     df, interval_col, _ = _resolve_interval_column(df)
 
     # Build a numeric time axis for regression (ordered intervals).
@@ -837,8 +879,9 @@ def compute_pair_trend_summary(
         )
     coef_df = pd.DataFrame(coef_rows)
 
+    amr_filtered = _filter_year_window(amr_df, "amr_df")
     amr_totals = (
-        amr_df.copy()
+        amr_filtered
         .assign(
             pathogen=lambda d: d["pathogen"].astype(str),
             antibiotic=lambda d: d["antibiotic"].astype(str),
@@ -851,7 +894,7 @@ def compute_pair_trend_summary(
     )
 
     pa_totals = (
-        pa_counts_df.copy()
+        _filter_year_window(pa_counts_df, "pa_counts_df", require_date_cols=False)
         .assign(
             pathogen=lambda d: d["pathogen"].astype(str),
             _count_num=lambda d: pd.to_numeric(d["count"], errors="coerce"),
@@ -863,7 +906,7 @@ def compute_pair_trend_summary(
     )
 
     ab_totals = (
-        ab_counts_df.copy()
+        _filter_year_window(ab_counts_df, "ab_counts_df", require_date_cols=False)
         .assign(
             antibiotic=lambda d: d["antibiotic"].astype(str),
             _count_num=lambda d: pd.to_numeric(d["count"], errors="coerce"),
@@ -888,7 +931,7 @@ def compute_pair_trend_summary(
         summary_df["coef_resid_log_bg"], errors="coerce"
     )
     summary_df["pair_label"] = (
-        "(" + summary_df["antibiotic"].astype(str) + ", " + summary_df["pathogen"].astype(str) + ")"
+        summary_df["antibiotic"].astype(str) + "\n" + summary_df["pathogen"].astype(str)
     )
 
     return summary_df
@@ -953,6 +996,8 @@ def plot_pair_trend_summary(
     front_linewidth: float = 2.0,
     pareto_cmap: str = "Pastel1",
     use_lowest_coef_front: bool = False,
+    min_n_pubs: float = 100,
+    min_reg_coef: float = 1,
 ):
     """
     Plot pair trend summary in 2D.
@@ -965,6 +1010,10 @@ def plot_pair_trend_summary(
     Set use_lowest_coef_front=True to select shells by:
     - maximize x_col (log pair count)
     - minimize y_col (coefficient)
+
+    Background mask:
+    - Gray where constraints are not met.
+    - White where both are met: n_pubs >= min_n_pubs and coef >= min_reg_coef.
     """
     required_cols = {x_col, y_col, label_col}
     missing = required_cols - set(pair_trend_df.columns)
@@ -1057,6 +1106,35 @@ def plot_pair_trend_summary(
         ].copy()
 
     _, ax = plt.subplots(figsize=figsize)
+    ax.set_facecolor("white")
+
+    # Background gating region: assume x_col is a log pair-count axis.
+    # Valid area is x >= log(min_n_pubs) and y >= min_reg_coef.
+    x_vals = plot_df[x_col].to_numpy(dtype=float)
+    y_vals = plot_df[y_col].to_numpy(dtype=float)
+    x_pad = max(1e-6, 0.04 * (float(np.nanmax(x_vals)) - float(np.nanmin(x_vals)) or 1.0))
+    y_pad = max(1e-6, 0.06 * (float(np.nanmax(y_vals)) - float(np.nanmin(y_vals)) or 1.0))
+    x_min = float(np.nanmin(x_vals)) - x_pad
+    x_max = float(np.nanmax(x_vals)) + x_pad
+    y_min = float(np.nanmin(y_vals)) - y_pad
+    y_max = float(np.nanmax(y_vals)) + y_pad
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    bg_gray = "#ececec"
+    if min_n_pubs is not None:
+        x_threshold = float(np.log(max(float(min_n_pubs), 1e-12)))
+        x_left = min(max(x_threshold, x_min), x_max)
+        if x_left > x_min:
+            ax.axvspan(x_min, x_left, color=bg_gray, alpha=1.0, zorder=0)
+    else:
+        x_threshold = x_min
+    if min_reg_coef is not None and x_max > x_min:
+        y_threshold = float(min_reg_coef)
+        y_low = min(max(y_threshold, y_min), y_max)
+        if y_low > y_min:
+            frac_start = float(np.clip((x_threshold - x_min) / (x_max - x_min), 0.0, 1.0))
+            ax.axhspan(y_min, y_low, xmin=frac_start, xmax=1.0, color=bg_gray, alpha=1.0, zorder=0)
 
     if shell_end is None:
         ax.scatter(plot_df[x_col], plot_df[y_col], s=14, color="#bdbdbd", alpha=0.5, zorder=1)
@@ -1189,6 +1267,8 @@ def build_pair_trend_summary(
     amr_count_col: str = "count",
     min_points_for_slope: int = 2,
     log_x_offset: float = 1.0,
+    start_year: int | None = None,
+    end_year: int | None = None,
     figsize: tuple[int, int] = (14, 10),
     annotate: bool = True,
     fontsize: int = 7,
@@ -1207,6 +1287,8 @@ def build_pair_trend_summary(
         amr_count_col=amr_count_col,
         min_points_for_slope=min_points_for_slope,
         log_x_offset=log_x_offset,
+        start_year=start_year,
+        end_year=end_year,
     )
     plot_pair_trend_summary(
         summary_df,
