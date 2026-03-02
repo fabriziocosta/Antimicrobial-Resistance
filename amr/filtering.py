@@ -431,6 +431,71 @@ def run_llm_filter(
     return df_out
 
 
+def build_positive_dataset(
+    pmid_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    *,
+    output_path: str | None = None,
+) -> pd.DataFrame:
+    """Build a positive-only dataset at the original interval grain.
+
+    This preserves the combination-level review grain of ``filtered_df``:
+    a PMID is retained only for the specific reviewed
+    ``(pmid, pathogen, antibiotic, start_date, end_date)`` rows marked ``yes``.
+    """
+    required_pmid_cols = {"pathogen", "antibiotic", "start_date", "end_date", "pmids"}
+    missing_pmid = required_pmid_cols - set(pmid_df.columns)
+    if missing_pmid:
+        raise KeyError(f"pmid_df missing required columns: {missing_pmid}")
+
+    required_filtered_cols = {"pmid", "pathogen", "antibiotic", "decision"}
+    missing_filtered = required_filtered_cols - set(filtered_df.columns)
+    if missing_filtered:
+        raise KeyError(f"filtered_df missing required columns: {missing_filtered}")
+
+    work = pmid_df.copy()
+    work = work.explode("pmids").dropna(subset=["pmids"]).copy()
+    work["pmid"] = work["pmids"].astype(str).str.extract(r"(\d+)")[0]
+    work = work.dropna(subset=["pmid"])
+
+    merge_cols = ["pmid", "pathogen", "antibiotic"]
+    optional_cols = ["start_date", "end_date"]
+    merge_cols.extend([col for col in optional_cols if col in filtered_df.columns and col in work.columns])
+
+    positive_keys = (
+        filtered_df.loc[filtered_df["decision"].astype(str).str.lower() == "yes", merge_cols]
+        .astype({col: str for col in merge_cols})
+        .drop_duplicates()
+    )
+    if positive_keys.empty:
+        out = pd.DataFrame(
+            columns=["pathogen", "antibiotic", "start_date", "end_date", "pmids", "count", "venue_histogram"]
+        )
+        if output_path:
+            out.to_parquet(output_path, index=False)
+        return out
+
+    work = work.astype({col: str for col in merge_cols})
+    positive_rows = work.merge(positive_keys, on=merge_cols, how="inner")
+    positive_rows = positive_rows.drop_duplicates(subset=merge_cols)
+
+    def _unique_pmids(series: pd.Series) -> list[str]:
+        return list(dict.fromkeys(series.astype(str).tolist()))
+
+    out = (
+        positive_rows.groupby(["pathogen", "antibiotic", "start_date", "end_date"], as_index=False)
+        .agg(
+            pmids=("pmid", _unique_pmids),
+            count=("pmid", "nunique"),
+            venue_histogram=("venue_histogram", "first"),
+        )
+    )
+
+    if output_path:
+        out.to_parquet(output_path, index=False)
+    return out
+
+
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "PUBMED_EFETCH",
@@ -439,4 +504,5 @@ __all__ = [
     "classify_abstract",
     "prepare_pmids_to_review",
     "run_llm_filter",
+    "build_positive_dataset",
 ]

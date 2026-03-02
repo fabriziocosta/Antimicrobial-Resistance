@@ -289,12 +289,12 @@ def normalise_by_background(
     def _row_years(s, e):
         return list(range(int(s), int(e) + 1))
 
-    exploded = work[["pathogen", "antibiotic", "start_year", "end_year"]].copy()
+    work["_row_id"] = np.arange(len(work), dtype=int)
+    exploded = work[["_row_id", "pathogen", "antibiotic", "start_year", "end_year"]].copy()
     exploded["year"] = [
         _row_years(s, e) for s, e in zip(exploded["start_year"], exploded["end_year"])
     ]
     exploded = exploded.explode("year").astype({"year": int})
-    exploded["_row_id"] = np.arange(len(exploded), dtype=int)
 
     # Join pathogen-year counts
     p_join = exploded.merge(p_year, on=["pathogen", "year"], how="left")
@@ -307,7 +307,6 @@ def normalise_by_background(
     bg_ab = a_join.groupby(["_row_id"])['count'].sum().rename("bg_antibiotic_n")
 
     # Map back to rows
-    work["_row_id"] = np.arange(len(work), dtype=int)
     work = work.merge(bg_path, on="_row_id", how="left").merge(bg_ab, on="_row_id", how="left").drop(columns=["_row_id"])
     work["bg_pathogen_n"] = work["bg_pathogen_n"].fillna(0.0)
     work["bg_antibiotic_n"] = work["bg_antibiotic_n"].fillna(0.0)
