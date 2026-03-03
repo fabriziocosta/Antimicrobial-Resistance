@@ -15,7 +15,6 @@ from .pubmed.queries import (
 )
 from .pubmed.search import esearch_count_for_year
 from .features.venues import add_venue_vectors
-
 __all__ = [
     "pubmed",
     "features",

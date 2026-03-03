@@ -41,16 +41,7 @@ class BackgroundNormaliseConfig:
     tiny: float = 1e-9
 
 
-def _aggregate_years_over_interval(year_df: pd.DataFrame, key_col: str, start_year: int, end_year: int) -> pd.Series:
-    """Return a Series of background counts per key within [start_year, end_year].
-
-    year_df must have columns: key_col, 'year', 'count'.
-    """
-    if year_df.empty:
-        return pd.Series(dtype=float)
-    mask = (year_df["year"] >= start_year) & (year_df["year"] <= end_year)
-    sub = year_df.loc[mask]
-    return sub.groupby(key_col)["count"].sum()
+METRIC_COLS = ["expected_bg", "resid_log_bg", "z_bg"]
 
 
 def _compute_pairwise_expected(
@@ -65,19 +56,22 @@ def _compute_pairwise_expected(
     product-of-marginals across that pair's intervals, then residuals and z-scores.
     """
     pcol, acol = pair_cols
+    group_cols = [pcol, acol]
+    work = df.copy()
+    n_intervals = work.groupby(group_cols)[count_col].transform("size")
 
-    # Totals over intervals for each pair (observed AMR positives)
-    totals = df.groupby([pcol, acol])[count_col].sum().rename("pair_total")
+    # Totals over intervals for each pair.
+    work["pair_total"] = work.groupby(group_cols)[count_col].transform("sum")
+    work["bgp_total"] = work.groupby(group_cols)[bg_pathogen_col].transform("sum")
+    work["bga_total"] = work.groupby(group_cols)[bg_antibiotic_col].transform("sum")
 
-    # Background totals across intervals for the pair
-    bgp_tot = df.groupby([pcol, acol])[bg_pathogen_col].sum().rename("bgp_total")
-    bga_tot = df.groupby([pcol, acol])[bg_antibiotic_col].sum().rename("bga_total")
-
-    work = df.merge(totals, on=[pcol, acol], how="left").merge(bgp_tot, on=[pcol, acol], how="left").merge(bga_tot, on=[pcol, acol], how="left")
-
-    # Marginal probabilities within each pair over intervals (with smoothing)
-    work["p_path_int"] = (work[bg_pathogen_col] + cfg.alpha) / (work["bgp_total"] + cfg.alpha * work.groupby([pcol, acol])[bg_pathogen_col].transform("size"))
-    work["p_ab_int"] = (work[bg_antibiotic_col] + cfg.alpha) / (work["bga_total"] + cfg.alpha * work.groupby([pcol, acol])[bg_antibiotic_col].transform("size"))
+    # Marginal probabilities within each pair over intervals (with smoothing).
+    work["p_path_int"] = (work[bg_pathogen_col] + cfg.alpha) / (
+        work["bgp_total"] + cfg.alpha * n_intervals
+    )
+    work["p_ab_int"] = (work[bg_antibiotic_col] + cfg.alpha) / (
+        work["bga_total"] + cfg.alpha * n_intervals
+    )
 
     # Unnormalised joint under independence
     work["q_int"] = work["p_path_int"] * work["p_ab_int"]
@@ -109,6 +103,24 @@ def _resolve_antibiotic_level_column(level: str) -> str:
         "origin": "Origin",
     }
     return level_map.get(_normalise_level_name(level), level)
+
+
+def _prepare_year_counts(year_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise a yearly background dataframe to integer years and numeric counts."""
+    work = year_df.copy()
+    work["year"] = pd.to_numeric(work["year"], errors="coerce").astype("Int64")
+    work["count"] = pd.to_numeric(work["count"], errors="coerce").fillna(0.0)
+    return work.dropna(subset=["year"]).astype({"year": int})
+
+
+def _expand_interval_years(work: pd.DataFrame) -> pd.DataFrame:
+    """Explode interval rows into one row per covered year."""
+    exploded = work[["_row_id", "pathogen", "antibiotic", "start_year", "end_year"]].copy()
+    exploded["year"] = [
+        list(range(int(start_year), int(end_year) + 1))
+        for start_year, end_year in zip(exploded["start_year"], exploded["end_year"])
+    ]
+    return exploded.explode("year").astype({"year": int})
 
 
 def recompute_resid_log_bg_by_antibiotic_level(
@@ -172,8 +184,20 @@ def recompute_resid_log_bg_by_antibiotic_level(
 
         meta = antibiotic_meta_df[["Antibiotic", level_col]].copy()
         meta["Antibiotic"] = meta["Antibiotic"].astype(str)
-        meta[level_col] = meta[level_col].astype(str)
-        meta = meta.drop_duplicates(subset=["Antibiotic"])
+        conflicting = (
+            meta.dropna(subset=[level_col])
+            .groupby("Antibiotic")[level_col]
+            .nunique()
+        )
+        conflicting = conflicting[conflicting > 1]
+        if not conflicting.empty:
+            antibiotics = ", ".join(conflicting.index.astype(str).tolist()[:10])
+            extra = "" if len(conflicting) <= 10 else f" ... (+{len(conflicting) - 10} more)"
+            raise ValueError(
+                f"Conflicting metadata values found for level '{antibiotic_level}' "
+                f"for {len(conflicting)} antibiotics: {antibiotics}{extra}"
+            )
+        meta = meta.drop_duplicates(subset=["Antibiotic"], keep="first")
         mapper = dict(zip(meta["Antibiotic"], meta[level_col]))
         mapped = work["antibiotic"].map(mapper)
         if error_on_unmapped:
@@ -225,7 +249,7 @@ def recompute_resid_log_bg_by_antibiotic_level(
         count_col=count_col,
         cfg=cfg,
     )
-    agg = agg.join(pairwise[["expected_bg", "resid_log_bg", "z_bg"]])
+    agg[METRIC_COLS] = pairwise[METRIC_COLS]
     agg["antibiotic_level"] = level_key
 
     return agg
@@ -275,36 +299,20 @@ def normalise_by_background(
     work["start_year"] = pd.to_datetime(work["start_date"]).dt.year.astype(int)
     work["end_year"] = pd.to_datetime(work["end_date"]).dt.year.astype(int)
 
-    # Pre-aggregate yearly background counts per (entity, year)
-    p_year = pathogen_year_df.copy()
-    p_year["year"] = pd.to_numeric(p_year["year"], errors="coerce").astype("Int64")
-    p_year = p_year.dropna(subset=["year"]).astype({"year": int})
-
-    a_year = antibiotic_year_df.copy()
-    a_year["year"] = pd.to_numeric(a_year["year"], errors="coerce").astype("Int64")
-    a_year = a_year.dropna(subset=["year"]).astype({"year": int})
-
-    # Compute background counts per interval row (vectorised via merge-expansion)
-    # Expand per-row into years, then aggregate – safe for typical intervals (<= 10 years)
-    def _row_years(s, e):
-        return list(range(int(s), int(e) + 1))
+    # Pre-aggregate yearly background counts per (entity, year).
+    p_year = _prepare_year_counts(pathogen_year_df)
+    a_year = _prepare_year_counts(antibiotic_year_df)
 
     work["_row_id"] = np.arange(len(work), dtype=int)
-    exploded = work[["_row_id", "pathogen", "antibiotic", "start_year", "end_year"]].copy()
-    exploded["year"] = [
-        _row_years(s, e) for s, e in zip(exploded["start_year"], exploded["end_year"])
-    ]
-    exploded = exploded.explode("year").astype({"year": int})
+    exploded = _expand_interval_years(work)
 
     # Join pathogen-year counts
     p_join = exploded.merge(p_year, on=["pathogen", "year"], how="left")
-    p_join["count"] = p_join["count"].fillna(0.0)
-    bg_path = p_join.groupby(["_row_id"])['count'].sum().rename("bg_pathogen_n")
+    bg_path = p_join.groupby("_row_id")["count"].sum().rename("bg_pathogen_n")
 
     # Join antibiotic-year counts
     a_join = exploded.merge(a_year, on=["antibiotic", "year"], how="left")
-    a_join["count"] = a_join["count"].fillna(0.0)
-    bg_ab = a_join.groupby(["_row_id"])['count'].sum().rename("bg_antibiotic_n")
+    bg_ab = a_join.groupby("_row_id")["count"].sum().rename("bg_antibiotic_n")
 
     # Map back to rows
     work = work.merge(bg_path, on="_row_id", how="left").merge(bg_ab, on="_row_id", how="left").drop(columns=["_row_id"])
@@ -326,12 +334,7 @@ def normalise_by_background(
         cfg=cfg,
     )
 
-    cols_to_keep = [
-        "expected_bg",
-        "resid_log_bg",
-        "z_bg",
-    ]
-    work = work.join(pairwise[cols_to_keep])
+    work[METRIC_COLS] = pairwise[METRIC_COLS]
 
     return work
 

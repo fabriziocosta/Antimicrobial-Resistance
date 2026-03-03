@@ -19,6 +19,15 @@ from .cache import (
     get_metadata,
     merge_with_existing,
 )
+from .yearly import (
+    explode_positive_pair_pmids,
+    load_pubmed_metadata_cache,
+    save_pubmed_metadata_cache,
+    refresh_pubmed_metadata_cache,
+    attach_pubmed_metadata,
+    aggregate_pair_counts_by_year,
+    summarize_metadata_coverage,
+)
 
 __all__ = [
     # queries
@@ -37,5 +46,12 @@ __all__ = [
     "update_metadata_cache",
     "get_metadata",
     "merge_with_existing",
+    # yearly helpers
+    "explode_positive_pair_pmids",
+    "load_pubmed_metadata_cache",
+    "save_pubmed_metadata_cache",
+    "refresh_pubmed_metadata_cache",
+    "attach_pubmed_metadata",
+    "aggregate_pair_counts_by_year",
+    "summarize_metadata_coverage",
 ]
-
