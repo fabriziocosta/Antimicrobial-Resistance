@@ -16,6 +16,8 @@ from sklearn.linear_model import Ridge
 
 from .normalisation import BackgroundNormaliseConfig, normalise_by_background
 
+_AUTO_TAIL_DAMPING = object()
+
 
 def load_amr_background_df(
     *,
@@ -129,6 +131,64 @@ def build_pair_si_interval_series(si_df: pd.DataFrame, pathogen: str, antibiotic
     return pair_df
 
 
+def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: str) -> pd.DataFrame:
+    """Collapse SI data to one row per pathogen-antibiotic year."""
+    required_cols = {
+        "pathogen",
+        "antibiotic",
+        "year",
+        "count",
+        "bg_pathogen_n",
+        "bg_antibiotic_n",
+        "expected_count_global",
+        "expected_log_count_global",
+        "SI",
+    }
+    missing = required_cols - set(si_df.columns)
+    if missing:
+        raise KeyError(f"si_df is missing required yearly SI columns: {sorted(missing)}")
+
+    pair_df = (
+        si_df.loc[
+            (si_df["pathogen"] == pathogen) & (si_df["antibiotic"] == antibiotic),
+            [
+                "pathogen",
+                "antibiotic",
+                "year",
+                "count",
+                "bg_pathogen_n",
+                "bg_antibiotic_n",
+                "expected_count_global",
+                "expected_log_count_global",
+                "SI",
+            ],
+        ]
+        .sort_values("year")
+        .reset_index(drop=True)
+    )
+
+    if pair_df.empty:
+        raise ValueError(f"No yearly SI data found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
+
+    pair_df = (
+        pair_df.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+        .agg(
+            {
+                "count": "sum",
+                "bg_pathogen_n": "max",
+                "bg_antibiotic_n": "max",
+                "expected_count_global": "sum",
+                "expected_log_count_global": "mean",
+                "SI": "mean",
+            }
+        )
+        .sort_values("year")
+        .reset_index(drop=True)
+    )
+    pair_df["log_count"] = np.log1p(pair_df["count"].astype(float))
+    return pair_df
+
+
 def _interpolate_expected_log_count_curve(pair_df: pd.DataFrame, years: np.ndarray) -> np.ndarray:
     """Interpolate the pooled expected log-count baseline onto a yearly grid."""
     anchor_years = pair_df["end_year"].astype(int).to_numpy()
@@ -177,6 +237,7 @@ def _fit_loess_log_count_curve(
     *,
     loess_frac: float,
     loess_degree: int,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
 ) -> dict[str, Any]:
     years = np.asarray(years, dtype=float)
     log_counts = np.asarray(log_counts, dtype=float)
@@ -193,6 +254,7 @@ def _fit_loess_log_count_curve(
             "constant_level": constant_level,
             "left_slope": 0.0,
             "right_slope": 0.0,
+            "tail_damping_years": None if tail_damping_years is None else 1.0,
             "year_min": float(years[0]),
             "year_max": float(years[0]),
             "left_value": constant_level,
@@ -257,8 +319,15 @@ def _fit_loess_log_count_curve(
         else:
             residual_std = float(0.1 * abs(log_counts[-1] - log_counts[0]))
 
-    left_slope = float((log_counts[1] - log_counts[0]) / (years[1] - years[0]))
-    right_slope = float((log_counts[-1] - log_counts[-2]) / (years[-1] - years[-2]))
+    left_slope = float((fitted_log_counts[1] - fitted_log_counts[0]) / (years[1] - years[0]))
+    right_slope = float((fitted_log_counts[-1] - fitted_log_counts[-2]) / (years[-1] - years[-2]))
+    if tail_damping_years is _AUTO_TAIL_DAMPING:
+        tail_span_years = float(max(years[-1] - years[0], 1.0))
+        tail_damping_years = float(max(2.0, 0.10 * tail_span_years))
+    elif tail_damping_years is None:
+        tail_damping_years = None
+    else:
+        tail_damping_years = float(max(tail_damping_years, 1e-6))
     return {
         "frac": float(loess_frac),
         "degree": int(fitted_degree),
@@ -268,10 +337,11 @@ def _fit_loess_log_count_curve(
         "constant_level": None,
         "left_slope": left_slope,
         "right_slope": right_slope,
+        "tail_damping_years": tail_damping_years,
         "year_min": float(years[0]),
         "year_max": float(years[-1]),
-        "left_value": float(log_counts[0]),
-        "right_value": float(log_counts[-1]),
+        "left_value": float(fitted_log_counts[0]),
+        "right_value": float(fitted_log_counts[-1]),
         "train_years": years,
         "train_log_counts": log_counts,
         "fit_method": fit_method,
@@ -279,6 +349,20 @@ def _fit_loess_log_count_curve(
         "linear_intercept": linear_intercept,
         "poly_coeffs": poly_coeffs.tolist() if poly_coeffs is not None else None,
     }
+
+
+def _damped_linear_extrapolation(
+    base_value: float,
+    slope: float,
+    delta_years: np.ndarray,
+    damping_years: float | None,
+) -> np.ndarray:
+    delta_years = np.asarray(delta_years, dtype=float)
+    if damping_years is None:
+        return base_value + slope * delta_years
+    damping_years = float(max(damping_years, 1e-6))
+    signed_decay = np.sign(delta_years) * (1.0 - np.exp(-np.abs(delta_years) / damping_years))
+    return base_value + slope * damping_years * signed_decay
 
 
 def _predict_loess_log_count_with_linear_tails(loess_fit: dict[str, Any], years: np.ndarray) -> np.ndarray:
@@ -301,8 +385,18 @@ def _predict_loess_log_count_with_linear_tails(loess_fit: dict[str, Any], years:
         frac=loess_fit["frac"],
         degree=loess_fit["degree"],
     )
-    pred[left_mask] = loess_fit["left_value"] + loess_fit["left_slope"] * (years[left_mask] - loess_fit["year_min"])
-    pred[right_mask] = loess_fit["right_value"] + loess_fit["right_slope"] * (years[right_mask] - loess_fit["year_max"])
+    pred[left_mask] = _damped_linear_extrapolation(
+        loess_fit["left_value"],
+        loess_fit["left_slope"],
+        years[left_mask] - loess_fit["year_min"],
+        loess_fit.get("tail_damping_years", None),
+    )
+    pred[right_mask] = _damped_linear_extrapolation(
+        loess_fit["right_value"],
+        loess_fit["right_slope"],
+        years[right_mask] - loess_fit["year_max"],
+        loess_fit.get("tail_damping_years", None),
+    )
     return pred
 
 
@@ -317,6 +411,7 @@ def fit_predict_si_loess(
     min_train_points: int = 3,
     loess_frac: float = 0.6,
     loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
 ) -> dict[str, Any]:
     """Fit a smooth count trajectory and derive SI forecasts from it."""
     if fit_end_year < fit_start_year:
@@ -339,6 +434,7 @@ def fit_predict_si_loess(
         train_df["log_count"].to_numpy(dtype=float),
         loess_frac=loess_frac,
         loess_degree=loess_degree,
+        tail_damping_years=tail_damping_years,
     )
 
     prediction_end_year = latest_available_year + int(num_additional_years)
@@ -384,6 +480,116 @@ def fit_predict_si_loess(
     )
     comparison_df["count_prediction_error_loess"] = comparison_df["observed_count"] - comparison_df["predicted_count_loess"]
     comparison_df["count_abs_error_loess"] = comparison_df["count_prediction_error_loess"].abs()
+    preferred_cols = [
+        "year",
+        "observed_count",
+        "predicted_count_loess",
+    ]
+    remaining_cols = [col for col in comparison_df.columns if col not in preferred_cols]
+    comparison_df = comparison_df[preferred_cols + remaining_cols]
+
+    return {
+        "pathogen": pathogen,
+        "antibiotic": antibiotic,
+        "fit_start_year": int(fit_start_year),
+        "fit_end_year": int(fit_end_year),
+        "latest_available_year": latest_available_year,
+        "num_additional_years": int(num_additional_years),
+        "loess_degree": int(loess_fit["degree"]),
+        "model_plot_start_year": model_plot_start_year,
+        "pair_df": pair_df,
+        "train_df": train_df,
+        "pred_df": pred_df,
+        "comparison_df": comparison_df,
+        "loess_fit": loess_fit,
+    }
+
+
+def fit_predict_yearly_si_loess(
+    si_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    fit_start_year: int,
+    fit_end_year: int,
+    num_additional_years: int = 5,
+    *,
+    min_train_points: int = 3,
+    loess_frac: float = 0.6,
+    loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+) -> dict[str, Any]:
+    """Fit a smooth yearly count trajectory and derive yearly SI forecasts from it."""
+    if fit_end_year < fit_start_year:
+        raise ValueError("fit_end_year must be >= fit_start_year.")
+    if num_additional_years < 0:
+        raise ValueError("num_additional_years must be >= 0.")
+
+    pair_df = build_pair_si_yearly_series(si_df, pathogen, antibiotic)
+    latest_available_year = int(pair_df["year"].max())
+
+    train_df = pair_df.loc[pair_df["year"].between(int(fit_start_year), int(fit_end_year))].copy()
+    if train_df["year"].nunique() < min_train_points:
+        raise ValueError(
+            f"Need at least {min_train_points} observed years between {fit_start_year} and {fit_end_year}; "
+            f"found {train_df['year'].nunique()}."
+        )
+
+    loess_fit = _fit_loess_log_count_curve(
+        train_df["year"].to_numpy(dtype=float),
+        train_df["log_count"].to_numpy(dtype=float),
+        loess_frac=loess_frac,
+        loess_degree=loess_degree,
+        tail_damping_years=tail_damping_years,
+    )
+
+    prediction_end_year = latest_available_year + int(num_additional_years)
+    model_plot_start_year = int(pair_df["year"].min())
+    pred_years = np.arange(model_plot_start_year, prediction_end_year + 1, dtype=float)
+
+    pred_df = pd.DataFrame({"year": pred_years.astype(int)})
+    pred_df["expected_log_count_baseline"] = np.interp(
+        pred_years,
+        pair_df["year"].astype(float).to_numpy(),
+        pair_df["expected_log_count_global"].astype(float).to_numpy(),
+        left=float(pair_df["expected_log_count_global"].iloc[0]),
+        right=float(pair_df["expected_log_count_global"].iloc[-1]),
+    )
+    pred_df["expected_count_baseline"] = np.clip(np.expm1(pred_df["expected_log_count_baseline"]), 0.0, None)
+
+    pred_log_count = _predict_loess_log_count_with_linear_tails(loess_fit, pred_years)
+    pred_df["predicted_log_count_loess"] = pred_log_count
+    pred_df["predicted_log_count_std"] = float(loess_fit["residual_std"])
+    pred_df["predicted_log_count_loess_lower_1std"] = pred_df["predicted_log_count_loess"] - pred_df["predicted_log_count_std"]
+    pred_df["predicted_log_count_loess_upper_1std"] = pred_df["predicted_log_count_loess"] + pred_df["predicted_log_count_std"]
+    pred_df["predicted_count_loess"] = np.clip(np.expm1(pred_df["predicted_log_count_loess"]), 0.0, None)
+    pred_df["predicted_count_loess_lower_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_lower_1std"]), 0.0, None)
+    pred_df["predicted_count_loess_upper_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_upper_1std"]), 0.0, None)
+
+    pred_df["predicted_SI"] = pred_df["predicted_log_count_loess"] - pred_df["expected_log_count_baseline"]
+    pred_df["predicted_std"] = float(loess_fit["residual_std"])
+    pred_df["lower_1std"] = pred_df["predicted_SI"] - pred_df["predicted_std"]
+    pred_df["upper_1std"] = pred_df["predicted_SI"] + pred_df["predicted_std"]
+
+    observed_window_df = pair_df.loc[
+        pair_df["year"] >= int(fit_start_year),
+        ["year", "SI", "count", "log_count", "expected_count_global", "expected_log_count_global"],
+    ].copy()
+    observed_window_df = observed_window_df.rename(
+        columns={
+            "SI": "observed_SI",
+            "count": "observed_count",
+            "log_count": "observed_log_count",
+        }
+    )
+    comparison_df = observed_window_df.merge(pred_df, on="year", how="left")
+    comparison_df["prediction_error"] = comparison_df["observed_SI"] - comparison_df["predicted_SI"]
+    comparison_df["abs_error"] = comparison_df["prediction_error"].abs()
+    comparison_df["within_1std"] = (
+        (comparison_df["observed_SI"] >= comparison_df["lower_1std"])
+        & (comparison_df["observed_SI"] <= comparison_df["upper_1std"])
+    )
+    comparison_df["count_prediction_error_loess"] = comparison_df["observed_count"] - comparison_df["predicted_count_loess"]
+    comparison_df["count_abs_error_loess"] = comparison_df["count_prediction_error_loess"].abs()
 
     return {
         "pathogen": pathogen,
@@ -412,6 +618,7 @@ def forecast_all_pair_si_loess(
     min_train_points: int = 3,
     loess_frac: float = 0.6,
     loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     save_path: str | None = None,
 ) -> pd.DataFrame:
     """Forecast SI and AMR counts for all pathogen-antibiotic pairs."""
@@ -441,6 +648,7 @@ def forecast_all_pair_si_loess(
                 min_train_points=min_train_points,
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
             )
             target_row = result["pred_df"].loc[result["pred_df"]["year"] == int(target_year)].iloc[0]
             pair_df = result["pair_df"]
@@ -456,6 +664,7 @@ def forecast_all_pair_si_loess(
                     "num_additional_years": int(num_additional_years),
                     "loess_frac": float(result["loess_fit"]["frac"]),
                     "loess_degree": int(result["loess_fit"]["degree"]),
+                    "tail_damping_years": result["loess_fit"]["tail_damping_years"],
                     "predicted_SI_mean": float(target_row["predicted_SI"]),
                     "predicted_SI_std": float(target_row["predicted_std"]),
                     "predicted_SI_lower_1std": float(target_row["lower_1std"]),
@@ -485,6 +694,11 @@ def forecast_all_pair_si_loess(
                     "num_additional_years": int(num_additional_years),
                     "loess_frac": float(loess_frac),
                     "loess_degree": int(loess_degree),
+                    "tail_damping_years": (
+                        np.nan
+                        if tail_damping_years in (_AUTO_TAIL_DAMPING, None)
+                        else float(tail_damping_years)
+                    ),
                     "predicted_SI_mean": np.nan,
                     "predicted_SI_std": np.nan,
                     "predicted_SI_lower_1std": np.nan,
@@ -529,6 +743,7 @@ def plot_si_prediction(
     figsize: tuple[int, int] = (12, 8),
     loess_frac: float = 0.6,
     loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
 ) -> dict[str, Any]:
     """Plot observed SI, smoothed SI, and smoothed AMR counts for one pair."""
     result = fit_predict_si_loess(
@@ -540,6 +755,7 @@ def plot_si_prediction(
         num_additional_years=num_additional_years,
         loess_frac=loess_frac,
         loess_degree=loess_degree,
+        tail_damping_years=tail_damping_years,
     )
 
     pair_df = result["pair_df"]
@@ -639,7 +855,7 @@ def plot_si_prediction(
     ax.axvline(fit_end_year, color="#6b7280", linestyle="--", linewidth=1.8, alpha=0.9, zorder=2)
     ax.text(
         fit_end_year + 0.2,
-        0.935,
+        0.035,
         f"fit end = {fit_end_year}",
         transform=ax.get_xaxis_transform(),
         color="#374151",
@@ -733,6 +949,223 @@ def plot_si_prediction(
     return result
 
 
+def plot_yearly_si_pair(
+    si_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    fit_start_year: int,
+    fit_end_year: int,
+    num_additional_years: int = 5,
+    *,
+    figsize: tuple[int, int] = (12, 8),
+    loess_frac: float = 0.6,
+    loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+) -> dict[str, Any]:
+    """Plot observed yearly SI, smoothed yearly SI, and smoothed yearly AMR counts for one pair."""
+    result = fit_predict_yearly_si_loess(
+        si_df=si_df,
+        pathogen=pathogen,
+        antibiotic=antibiotic,
+        fit_start_year=fit_start_year,
+        fit_end_year=fit_end_year,
+        num_additional_years=num_additional_years,
+        loess_frac=loess_frac,
+        loess_degree=loess_degree,
+        tail_damping_years=tail_damping_years,
+    )
+
+    pair_df = result["pair_df"]
+    pred_df = result["pred_df"]
+
+    fig, ax = plt.subplots(figsize=figsize, facecolor="white")
+    ax2 = ax.twinx()
+    ax.set_facecolor("#fbfbf8")
+    ax2.set_facecolor("none")
+    ax.set_zorder(2)
+    ax2.set_zorder(1)
+    ax.patch.set_alpha(0.0)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    ax2.spines["top"].set_visible(False)
+
+    count_plot_df = pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]].copy()
+    count_plot_df["count_plot"] = np.clip(count_plot_df["count"].astype(float), 1.0, None)
+    count_plot_df["bg_pathogen_plot"] = np.clip(count_plot_df["bg_pathogen_n"].astype(float), 1.0, None)
+    count_plot_df["bg_antibiotic_plot"] = np.clip(count_plot_df["bg_antibiotic_n"].astype(float), 1.0, None)
+    bar_width = 0.85
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["bg_pathogen_plot"],
+        width=bar_width,
+        color="#8fbf88",
+        alpha=0.26,
+        edgecolor="none",
+        label="Pathogen background count",
+        zorder=0,
+    )
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["bg_antibiotic_plot"],
+        width=bar_width,
+        color="#b9a7d1",
+        alpha=0.34,
+        edgecolor="none",
+        label="Antibiotic background count",
+        zorder=1,
+    )
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["count_plot"],
+        width=bar_width,
+        color="#9ecae1",
+        alpha=0.68,
+        edgecolor="none",
+        label="Per-year AMR count",
+        zorder=2,
+    )
+    ax2.set_yscale("log")
+    ax2.set_ylabel("Publication counts (log scale)", color="#4e6475")
+    ax2.tick_params(axis="y", labelcolor="#4e6475", colors="#4e6475")
+    ax2.grid(False)
+
+    observed_fit_df = pair_df.loc[pair_df["year"] <= int(fit_end_year)].copy()
+    observed_future_df = pair_df.loc[pair_df["year"] > int(fit_end_year)].copy()
+    if not observed_fit_df.empty and not observed_future_df.empty:
+        observed_future_df = pd.concat([observed_fit_df.tail(1), observed_future_df], ignore_index=True)
+
+    ax.plot(
+        observed_fit_df["year"],
+        observed_fit_df["SI"],
+        color="#111111",
+        marker="o",
+        linewidth=3.0,
+        markersize=6.5,
+        markerfacecolor="#f8fbff",
+        markeredgecolor="#111111",
+        markeredgewidth=1.8,
+        label="Observed SI (fit region)",
+        zorder=3,
+    )
+    if not observed_future_df.empty:
+        ax.plot(
+            observed_future_df["year"],
+            observed_future_df["SI"],
+            color="#111111",
+            marker="o",
+            linewidth=3.0,
+            linestyle="--",
+            markersize=6.5,
+            markerfacecolor="#f8fbff",
+            markeredgecolor="#111111",
+            markeredgewidth=1.8,
+            label="Observed SI (after fit window)",
+            zorder=3,
+        )
+
+    fit_pred_df = pred_df.loc[pred_df["year"] <= int(fit_end_year)].copy()
+    forecast_pred_df = pred_df.loc[pred_df["year"] >= int(fit_end_year)].copy()
+
+    x_min = min(pair_df["year"].min(), pred_df["year"].min()) - 0.8
+    x_max = max(pair_df["year"].max(), pred_df["year"].max()) + 0.8
+    ax.set_xlim(x_min, x_max)
+    ax.axvline(fit_end_year, color="#6b7280", linestyle="--", linewidth=1.8, alpha=0.9, zorder=2)
+    ax.text(
+        fit_end_year + 0.2,
+        0.035,
+        f"fit end = {fit_end_year}",
+        transform=ax.get_xaxis_transform(),
+        color="#374151",
+        fontsize=11,
+        fontweight="semibold",
+        va="bottom",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.92, "pad": 2.5},
+    )
+
+    ax.plot(
+        fit_pred_df["year"],
+        fit_pred_df["predicted_SI"],
+        color="#d62828",
+        linewidth=3.0,
+        label="LOESS SI (fit region)",
+        zorder=5,
+    )
+    ax.plot(
+        forecast_pred_df["year"],
+        forecast_pred_df["predicted_SI"],
+        color="#d62828",
+        linewidth=3.0,
+        linestyle="--",
+        label="LOESS SI (forecast region)",
+        zorder=5,
+    )
+    ax.fill_between(
+        pred_df["year"],
+        pred_df["lower_1std"],
+        pred_df["upper_1std"],
+        color="#f7b2b0",
+        alpha=0.28,
+        label="LOESS SI ±1 std",
+        zorder=4,
+    )
+
+    ax2.plot(
+        fit_pred_df["year"],
+        np.clip(fit_pred_df["predicted_count_loess"], 1.0, None),
+        color="#4e8fb3",
+        linewidth=2.8,
+        label="LOESS AMR count (fit region)",
+        zorder=2,
+    )
+    ax2.plot(
+        forecast_pred_df["year"],
+        np.clip(forecast_pred_df["predicted_count_loess"], 1.0, None),
+        color="#4e8fb3",
+        linewidth=2.8,
+        linestyle="--",
+        label="LOESS AMR count (forecast region)",
+        zorder=2,
+    )
+    ax2.fill_between(
+        pred_df["year"],
+        np.clip(pred_df["predicted_count_loess_lower_1std"], 1.0, None),
+        np.clip(pred_df["predicted_count_loess_upper_1std"], 1.0, None),
+        color="#bcd8e8",
+        alpha=0.22,
+        label="LOESS AMR count ±1 std",
+        zorder=1,
+    )
+
+    ax.set_xlabel("Year")
+    ax.set_ylabel("SI = fitted log-count - pooled expected log-count")
+    ax.set_title(
+        f"Yearly Scientific Interest (SI) LOESS count fit: {pathogen} vs {antibiotic}",
+        fontsize=16,
+        pad=10,
+    )
+    ax.grid(True, axis="y", color="#c7c7c7", alpha=0.45, linewidth=0.8)
+    ax.grid(False, axis="x")
+
+    handles1, labels1 = ax.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(
+        handles1 + handles2,
+        labels1 + labels2,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=3,
+        frameon=False,
+        fontsize=10.5,
+        handlelength=2.6,
+        columnspacing=1.4,
+    )
+    plt.tight_layout(rect=(0, 0.11, 1, 1))
+    plt.show()
+
+    result["figure"] = fig
+    return result
+
+
 def _slugify_plot_filename_component(value: str) -> str:
     """Return a filesystem-safe component for plot filenames."""
     slug = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_")
@@ -778,6 +1211,9 @@ def display_si_amr_pareto_front(
     }
     if "end_year" in work.columns:
         agg_spec["latest_interval_end"] = ("end_year", "max")
+    if "year" in work.columns:
+        agg_spec["n_years"] = ("year", "nunique")
+        agg_spec["latest_year"] = ("year", "max")
 
     work = (
         work.dropna(subset=["SI", "count"])
@@ -824,7 +1260,9 @@ def display_si_amr_pareto_front(
     optional_cols = [
         "total_count",
         "n_intervals",
+        "n_years",
         "latest_interval_end",
+        "latest_year",
     ]
     display_cols.extend([col for col in optional_cols if col in pareto_df.columns])
     display(pareto_df[display_cols])
@@ -840,6 +1278,7 @@ def plot_si_prediction_for_pareto_pairs(
     num_additional_years: int = 5,
     loess_frac: float = 0.7,
     loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     n_pareto_shells: int | None = None,
     save_dir: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -872,7 +1311,66 @@ def plot_si_prediction_for_pareto_pairs(
             num_additional_years=num_additional_years,
             loess_frac=loess_frac,
             loess_degree=loess_degree,
+            tail_damping_years=tail_damping_years,
         )
+        pathogen_slug = _slugify_plot_filename_component(pathogen)
+        antibiotic_slug = _slugify_plot_filename_component(antibiotic)
+        png_path = os.path.join(output_dir, f"{pathogen_slug}__{antibiotic_slug}.png")
+        result["figure"].savefig(png_path, dpi=200, bbox_inches="tight")
+        result["png_path"] = png_path
+        results.append(result)
+    print(f"Saved {len(results)} plot PNGs to {output_dir}")
+    return results
+
+
+def plot_yearly_si_prediction_for_pareto_pairs(
+    si_df: pd.DataFrame,
+    pareto_df: pd.DataFrame,
+    *,
+    fit_start_year: int,
+    fit_end_year: int,
+    num_additional_years: int = 5,
+    loess_frac: float = 0.7,
+    loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+    n_pareto_shells: int | None = None,
+    save_dir: str | None = None,
+) -> list[dict[str, Any]]:
+    """Plot yearly SI prediction charts for selected pathogen-antibiotic Pareto pairs."""
+    required_cols = {"pathogen", "antibiotic"}
+    missing = required_cols - set(pareto_df.columns)
+    if missing:
+        raise KeyError(f"pareto_df is missing required columns: {sorted(missing)}")
+
+    selected_pairs = pareto_df.copy()
+    if n_pareto_shells is not None:
+        if "pareto_shell" not in selected_pairs.columns:
+            raise KeyError("pareto_df must include 'pareto_shell' when n_pareto_shells is provided.")
+        selected_pairs = selected_pairs.loc[selected_pairs["pareto_shell"] <= int(n_pareto_shells)].copy()
+
+    selected_pairs = selected_pairs[["pathogen", "antibiotic"]].drop_duplicates().reset_index(drop=True)
+    output_dir = save_dir or _create_plot_output_dir()
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+    for pair in selected_pairs.itertuples(index=False):
+        pathogen = str(pair.pathogen)
+        antibiotic = str(pair.antibiotic)
+        print(f"Plotting {pathogen} vs {antibiotic}")
+        try:
+            result = plot_yearly_si_pair(
+                si_df=si_df,
+                pathogen=pathogen,
+                antibiotic=antibiotic,
+                fit_start_year=fit_start_year,
+                fit_end_year=fit_end_year,
+                num_additional_years=num_additional_years,
+                loess_frac=loess_frac,
+                loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
+            )
+        except Exception as exc:  # pragma: no cover - notebook-facing recovery path
+            print(f"Skipping {pathogen} vs {antibiotic}: {exc}")
+            continue
         pathogen_slug = _slugify_plot_filename_component(pathogen)
         antibiotic_slug = _slugify_plot_filename_component(antibiotic)
         png_path = os.path.join(output_dir, f"{pathogen_slug}__{antibiotic_slug}.png")
@@ -896,11 +1394,15 @@ __all__ = [
     "load_amr_background_df",
     "fit_global_pooled_si_model",
     "build_pair_si_interval_series",
+    "build_pair_si_yearly_series",
     "fit_predict_si_loess",
+    "fit_predict_yearly_si_loess",
     "forecast_all_pair_si_loess",
     "plot_si_prediction",
+    "plot_yearly_si_pair",
     "display_si_amr_pareto_front",
     "plot_si_prediction_for_pareto_pairs",
+    "plot_yearly_si_prediction_for_pareto_pairs",
     "get_pair_si_series",
     "fit_predict_si_gp",
     "forecast_si_for_all_pairs",
