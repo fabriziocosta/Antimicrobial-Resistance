@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-import warnings
+import logging
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -17,6 +17,25 @@ from sklearn.linear_model import Ridge
 from .normalisation import BackgroundNormaliseConfig, normalise_by_background
 
 _AUTO_TAIL_DAMPING = object()
+_DEFAULT_RUNTIME_LOG_PATH = "scientific_interest.log"
+
+
+def _get_runtime_logger(log_path: str = _DEFAULT_RUNTIME_LOG_PATH) -> logging.Logger:
+    logger_name = f"{__name__}:{os.path.abspath(log_path)}"
+    logger = logging.getLogger(logger_name)
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+    handler = logging.FileHandler(log_path)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+def _log_runtime_warning(message: str, *, log_path: str = _DEFAULT_RUNTIME_LOG_PATH) -> None:
+    _get_runtime_logger(log_path).warning(message)
 
 
 def load_amr_background_df(
@@ -238,6 +257,7 @@ def _fit_loess_log_count_curve(
     loess_frac: float,
     loess_degree: int,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+    log_path: str = _DEFAULT_RUNTIME_LOG_PATH,
 ) -> dict[str, Any]:
     years = np.asarray(years, dtype=float)
     log_counts = np.asarray(log_counts, dtype=float)
@@ -275,9 +295,9 @@ def _fit_loess_log_count_curve(
         linear_intercept = None
         poly_coeffs = None
     except ValueError as exc:
-        warnings.warn(
+        _log_runtime_warning(
             f"Quadratic LOESS was numerically unstable ({exc}). Falling back to linear LOESS.",
-            RuntimeWarning,
+            log_path=log_path,
         )
         try:
             fitted_log_counts = _loess_predict(years, log_counts, years, frac=loess_frac, degree=1)
@@ -287,9 +307,9 @@ def _fit_loess_log_count_curve(
             linear_intercept = None
             poly_coeffs = None
         except ValueError as fallback_exc:
-            warnings.warn(
+            _log_runtime_warning(
                 f"Linear LOESS was numerically unstable ({fallback_exc}). Falling back to quadratic polynomial fit.",
-                RuntimeWarning,
+                log_path=log_path,
             )
             try:
                 poly_coeffs = np.polyfit(years, log_counts, deg=2)
@@ -299,9 +319,9 @@ def _fit_loess_log_count_curve(
                 linear_slope = None
                 linear_intercept = None
             except np.linalg.LinAlgError as poly_exc:
-                warnings.warn(
+                _log_runtime_warning(
                     f"Quadratic polynomial fit was numerically unstable ({poly_exc}). Falling back to ordinary linear regression.",
-                    RuntimeWarning,
+                    log_path=log_path,
                 )
                 slope, intercept = np.polyfit(years, log_counts, deg=1)
                 fitted_log_counts = intercept + slope * years
@@ -590,6 +610,22 @@ def fit_predict_yearly_si_loess(
     )
     comparison_df["count_prediction_error_loess"] = comparison_df["observed_count"] - comparison_df["predicted_count_loess"]
     comparison_df["count_abs_error_loess"] = comparison_df["count_prediction_error_loess"].abs()
+    detailed_comparison_df = comparison_df.copy()
+    compact_predicted_count = np.rint(comparison_df["predicted_count_loess"]).astype(int)
+    compact_observed_count = np.rint(comparison_df["observed_count"]).astype(int)
+    compact_diff = compact_observed_count - compact_predicted_count
+    compact_pct_error = np.where(
+        compact_observed_count != 0,
+        100.0 * compact_diff / compact_observed_count,
+        np.nan,
+    )
+    comparison_df = comparison_df[
+        ["year"]
+    ].copy()
+    comparison_df["observed_count"] = compact_observed_count
+    comparison_df["predicted_count"] = compact_predicted_count
+    comparison_df["diff"] = compact_diff
+    comparison_df["pct_error"] = compact_pct_error
 
     return {
         "pathogen": pathogen,
@@ -604,6 +640,7 @@ def fit_predict_yearly_si_loess(
         "train_df": train_df,
         "pred_df": pred_df,
         "comparison_df": comparison_df,
+        "detailed_comparison_df": detailed_comparison_df,
         "loess_fit": loess_fit,
     }
 
@@ -730,6 +767,461 @@ def forecast_all_pair_si_loess(
         )
     forecast_df.to_parquet(save_path, index=False)
     return forecast_df
+
+
+def rank_yearly_pairs_by_future_si_shift(
+    si_df: pd.DataFrame,
+    *,
+    fit_start_year: int = 1970,
+    fit_end_year: int | None = None,
+    num_future_years: int = 20,
+    reference_year: int | None = None,
+    min_train_points: int = 3,
+    loess_frac: float = 0.6,
+    loess_degree: int = 2,
+    tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+    save_path: str | None = None,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Rank yearly pathogen-antibiotic pairs by current vs future predicted SI.
+
+    The current rank is defined at ``reference_year`` and the future rank at
+    ``reference_year + num_future_years``. Both values come from the yearly LOESS
+    count model with SI derived from the predicted log-count trajectory.
+
+    A positive ``rank_change`` means the pair moves up in the future ranking.
+    """
+    def _safe_pct_error(error: pd.Series, observed: pd.Series) -> pd.Series:
+        observed = pd.to_numeric(observed, errors="coerce")
+        error = pd.to_numeric(error, errors="coerce")
+        denom = observed.abs()
+        return pd.Series(
+            np.where(denom > 0, 100.0 * error / denom, np.nan),
+            index=error.index,
+            dtype=float,
+        )
+
+    required_cols = {"pathogen", "antibiotic", "year", "SI"}
+    missing = required_cols - set(si_df.columns)
+    if missing:
+        raise KeyError(f"si_df is missing required yearly SI columns: {sorted(missing)}")
+
+    if num_future_years < 0:
+        raise ValueError("num_future_years must be >= 0.")
+
+    if fit_end_year is None:
+        fit_end_year = int(pd.to_numeric(si_df["year"], errors="coerce").max())
+    if reference_year is None:
+        reference_year = int(fit_end_year)
+    if fit_end_year < fit_start_year:
+        raise ValueError("fit_end_year must be >= fit_start_year.")
+
+    reference_year = int(reference_year)
+    fit_end_year = int(fit_end_year)
+    target_year = int(reference_year + int(num_future_years))
+
+    pair_index_df = (
+        si_df[["pathogen", "antibiotic"]]
+        .drop_duplicates()
+        .sort_values(["pathogen", "antibiotic"])
+        .reset_index(drop=True)
+    )
+    total_pairs = int(len(pair_index_df))
+
+    rows: list[dict[str, Any]] = []
+    for idx, pair in enumerate(pair_index_df.itertuples(index=False), start=1):
+        pathogen = str(pair.pathogen)
+        antibiotic = str(pair.antibiotic)
+        if verbose:
+            remaining = total_pairs - idx
+            print(f"[{idx}/{total_pairs}] ranking {pathogen} vs {antibiotic} ({remaining} remaining)", flush=True)
+        try:
+            pair_df = build_pair_si_yearly_series(si_df, pathogen, antibiotic)
+            latest_available_year = int(pair_df["year"].max())
+            horizon_years = max(int(num_future_years), target_year - latest_available_year, 0)
+            result = fit_predict_yearly_si_loess(
+                si_df=si_df,
+                pathogen=pathogen,
+                antibiotic=antibiotic,
+                fit_start_year=fit_start_year,
+                fit_end_year=fit_end_year,
+                num_additional_years=horizon_years,
+                min_train_points=min_train_points,
+                loess_frac=loess_frac,
+                loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
+            )
+
+            pred_df = result["pred_df"]
+            current_row = pred_df.loc[pred_df["year"] == reference_year]
+            future_row = pred_df.loc[pred_df["year"] == target_year]
+            if current_row.empty:
+                raise ValueError(f"Missing current-year prediction for reference_year={reference_year}.")
+            if future_row.empty:
+                raise ValueError(f"Missing future-year prediction for target_year={target_year}.")
+
+            current_row = current_row.iloc[0]
+            future_row = future_row.iloc[0]
+            observed_current_df = pair_df.loc[pair_df["year"] == reference_year]
+            current_source = "observed" if not observed_current_df.empty else "predicted"
+            holdout_df = result["detailed_comparison_df"].loc[
+                result["detailed_comparison_df"]["year"] > fit_end_year
+            ].copy()
+            holdout_df["si_pct_error"] = _safe_pct_error(
+                holdout_df["prediction_error"],
+                holdout_df["observed_SI"],
+            )
+            n_holdout_years = int(len(holdout_df))
+            latest_holdout_row = holdout_df.sort_values("year").tail(1)
+            if latest_holdout_row.empty:
+                latest_holdout_year = np.nan
+                latest_observed_si = np.nan
+                latest_predicted_si = np.nan
+                latest_si_error = np.nan
+                latest_si_abs_error = np.nan
+                latest_si_pct_error = np.nan
+                post_fit_si_error_mean = np.nan
+                post_fit_si_abs_error_mean = np.nan
+                post_fit_si_pct_error_mean = np.nan
+                post_fit_si_abs_pct_error_mean = np.nan
+            else:
+                latest_holdout = latest_holdout_row.iloc[0]
+                latest_holdout_year = int(latest_holdout["year"])
+                latest_observed_si = float(latest_holdout["observed_SI"])
+                latest_predicted_si = float(latest_holdout["predicted_SI"])
+                latest_si_error = float(latest_holdout["prediction_error"])
+                latest_si_abs_error = float(latest_holdout["abs_error"])
+                latest_si_pct_error = float(latest_holdout["si_pct_error"])
+                post_fit_si_error_mean = float(holdout_df["prediction_error"].mean())
+                post_fit_si_abs_error_mean = float(holdout_df["abs_error"].mean())
+                post_fit_si_pct_error_mean = float(holdout_df["si_pct_error"].mean())
+                post_fit_si_abs_pct_error_mean = float(holdout_df["si_pct_error"].abs().mean())
+
+            rows.append(
+                {
+                    "pathogen": pathogen,
+                    "antibiotic": antibiotic,
+                    "reference_year": reference_year,
+                    "future_year": target_year,
+                    "num_future_years": int(num_future_years),
+                    "fit_start_year": fit_start_year,
+                    "fit_end_year": fit_end_year,
+                    "latest_available_year": latest_available_year,
+                    "n_pair_years": int(pair_df["year"].nunique()),
+                    "current_si_source": current_source,
+                    "observed_current_SI": (
+                        float(observed_current_df["SI"].iloc[0]) if not observed_current_df.empty else np.nan
+                    ),
+                    "current_predicted_SI": float(current_row["predicted_SI"]),
+                    "current_predicted_count": float(current_row["predicted_count_loess"]),
+                    "future_predicted_SI": float(future_row["predicted_SI"]),
+                    "future_predicted_count": float(future_row["predicted_count_loess"]),
+                    "si_change": float(future_row["predicted_SI"] - current_row["predicted_SI"]),
+                    "count_change": float(future_row["predicted_count_loess"] - current_row["predicted_count_loess"]),
+                    "n_post_fit_observed_years": n_holdout_years,
+                    "latest_post_fit_observed_year": latest_holdout_year,
+                    "latest_post_fit_observed_SI": latest_observed_si,
+                    "latest_post_fit_predicted_SI": latest_predicted_si,
+                    "latest_post_fit_si_error": latest_si_error,
+                    "latest_post_fit_si_abs_error": latest_si_abs_error,
+                    "latest_post_fit_si_pct_error": latest_si_pct_error,
+                    "post_fit_si_error_mean": post_fit_si_error_mean,
+                    "post_fit_si_abs_error_mean": post_fit_si_abs_error_mean,
+                    "post_fit_si_pct_error_mean": post_fit_si_pct_error_mean,
+                    "post_fit_si_abs_pct_error_mean": post_fit_si_abs_pct_error_mean,
+                    "loess_frac": float(result["loess_fit"]["frac"]),
+                    "loess_degree": int(result["loess_fit"]["degree"]),
+                    "tail_damping_years": result["loess_fit"]["tail_damping_years"],
+                    "status": "ok",
+                    "error": None,
+                }
+            )
+        except Exception as exc:  # pragma: no cover - notebook-facing recovery path
+            if verbose:
+                print(f"[{idx}/{total_pairs}] skipping {pathogen} vs {antibiotic}: {exc}", flush=True)
+            rows.append(
+                {
+                    "pathogen": pathogen,
+                    "antibiotic": antibiotic,
+                    "reference_year": reference_year,
+                    "future_year": target_year,
+                    "num_future_years": int(num_future_years),
+                    "fit_start_year": fit_start_year,
+                    "fit_end_year": fit_end_year,
+                    "latest_available_year": np.nan,
+                    "n_pair_years": np.nan,
+                    "current_si_source": None,
+                    "observed_current_SI": np.nan,
+                    "current_predicted_SI": np.nan,
+                    "current_predicted_count": np.nan,
+                    "future_predicted_SI": np.nan,
+                    "future_predicted_count": np.nan,
+                    "si_change": np.nan,
+                    "count_change": np.nan,
+                    "n_post_fit_observed_years": np.nan,
+                    "latest_post_fit_observed_year": np.nan,
+                    "latest_post_fit_observed_SI": np.nan,
+                    "latest_post_fit_predicted_SI": np.nan,
+                    "latest_post_fit_si_error": np.nan,
+                    "latest_post_fit_si_abs_error": np.nan,
+                    "latest_post_fit_si_pct_error": np.nan,
+                    "post_fit_si_error_mean": np.nan,
+                    "post_fit_si_abs_error_mean": np.nan,
+                    "post_fit_si_pct_error_mean": np.nan,
+                    "post_fit_si_abs_pct_error_mean": np.nan,
+                    "loess_frac": float(loess_frac),
+                    "loess_degree": int(loess_degree),
+                    "tail_damping_years": (
+                        np.nan
+                        if tail_damping_years in (_AUTO_TAIL_DAMPING, None)
+                        else float(tail_damping_years)
+                    ),
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+
+    ranking_df = pd.DataFrame(rows)
+    ok_mask = ranking_df["status"].eq("ok")
+    ranking_df.loc[ok_mask, "current_rank"] = (
+        ranking_df.loc[ok_mask, "current_predicted_SI"]
+        .rank(method="min", ascending=False)
+        .astype(int)
+    )
+    ranking_df.loc[ok_mask, "future_rank"] = (
+        ranking_df.loc[ok_mask, "future_predicted_SI"]
+        .rank(method="min", ascending=False)
+        .astype(int)
+    )
+    ranking_df["rank_change"] = ranking_df["current_rank"] - ranking_df["future_rank"]
+    ranking_df["abs_rank_change"] = ranking_df["rank_change"].abs()
+
+    preferred_cols = [
+        "pathogen",
+        "antibiotic",
+        "reference_year",
+        "current_rank",
+        "current_predicted_SI",
+        "future_year",
+        "future_rank",
+        "future_predicted_SI",
+        "rank_change",
+        "abs_rank_change",
+    ]
+    remaining_cols = [col for col in ranking_df.columns if col not in preferred_cols]
+    ranking_df = ranking_df[preferred_cols + remaining_cols]
+    ranking_df = ranking_df.sort_values(
+        ["status", "abs_rank_change", "future_predicted_SI", "current_predicted_SI"],
+        ascending=[True, False, False, False],
+        na_position="last",
+    ).reset_index(drop=True)
+
+    if save_path is None:
+        save_path = (
+            f"si_yearly_rank_shift_fit_{fit_start_year}_{fit_end_year}"
+            f"_ref_{reference_year}_future_{target_year}.parquet"
+        )
+    ranking_df.to_parquet(save_path, index=False)
+    if verbose:
+        n_ok = int(ranking_df["status"].eq("ok").sum())
+        n_failed = int(ranking_df["status"].eq("failed").sum())
+        print(
+            f"Saved yearly SI rank shifts for {n_ok} pairs"
+            f"{'' if n_failed == 0 else f' ({n_failed} failed)'} to {save_path}"
+            ,
+            flush=True,
+        )
+    return ranking_df
+
+
+def select_interesting_yearly_rank_cases(
+    rank_df: pd.DataFrame,
+    *,
+    min_current_predicted_count: float = 50.0,
+    min_future_predicted_count: float = 50.0,
+    min_si_change: float = 0.75,
+    min_post_fit_observed_years: int = 3,
+    max_post_fit_si_abs_error_mean: float = 0.5,
+    max_post_fit_si_abs_pct_error_mean: float = 50.0,
+    require_post_fit_validation: bool = True,
+    fallback_top_n: int = 50,
+    max_count_for_scoring: float = 1e4,
+    max_future_predicted_count: float | None = 1e5,
+    max_future_to_current_ratio: float | None = 100.0,
+    sort_by: str = "interest_score",
+) -> pd.DataFrame:
+    """Filter and rank interesting yearly SI cases from ``rank_df``.
+
+    The default policy keeps pairs that:
+    - have non-trivial current and future predicted AMR volume
+    - are predicted to gain SI meaningfully
+    - have acceptable post-fit SI holdout error on observed years after ``fit_end_year``
+
+    The returned frame includes:
+    - boolean pass/fail flags for each filter component
+    - ``reliability_penalty`` based on holdout SI error
+    - ``interest_score`` that rewards SI gain and predicted volume, while penalizing unreliability
+
+    If the strict filter yields no rows, the function falls back to a softer
+    score-ranked shortlist so that notebooks always return something usable.
+    """
+    required_cols = {
+        "status",
+        "current_predicted_count",
+        "future_predicted_count",
+        "si_change",
+    }
+    missing = required_cols - set(rank_df.columns)
+    if missing:
+        raise KeyError(f"rank_df is missing required columns: {sorted(missing)}")
+
+    work = rank_df.copy()
+    work = work.loc[work["status"].eq("ok")].copy()
+
+    # Backward compatibility: older rank parquet files may not include
+    # post-fit validation metrics. Fill them with NaN so callers can still
+    # use the selector with require_post_fit_validation=False.
+    for col in [
+        "post_fit_si_abs_error_mean",
+        "post_fit_si_abs_pct_error_mean",
+        "n_post_fit_observed_years",
+    ]:
+        if col not in work.columns:
+            work[col] = np.nan
+
+    work["passes_current_count"] = pd.to_numeric(
+        work["current_predicted_count"], errors="coerce"
+    ) >= float(min_current_predicted_count)
+    work["passes_future_count"] = pd.to_numeric(
+        work["future_predicted_count"], errors="coerce"
+    ) >= float(min_future_predicted_count)
+    current_count = pd.to_numeric(work["current_predicted_count"], errors="coerce")
+    future_count = pd.to_numeric(work["future_predicted_count"], errors="coerce")
+    future_to_current_ratio = future_count / current_count.where(current_count > 0)
+    work["future_to_current_ratio"] = future_to_current_ratio
+    work["passes_si_change"] = pd.to_numeric(
+        work["si_change"], errors="coerce"
+    ) >= float(min_si_change)
+    if max_future_predicted_count is None:
+        work["passes_future_count_ceiling"] = True
+    else:
+        work["passes_future_count_ceiling"] = future_count <= float(max_future_predicted_count)
+    if max_future_to_current_ratio is None:
+        work["passes_future_growth_ratio"] = True
+    else:
+        work["passes_future_growth_ratio"] = future_to_current_ratio <= float(max_future_to_current_ratio)
+    post_fit_years = pd.to_numeric(work["n_post_fit_observed_years"], errors="coerce")
+    post_fit_abs_error = pd.to_numeric(work["post_fit_si_abs_error_mean"], errors="coerce")
+    post_fit_abs_pct_error = pd.to_numeric(work["post_fit_si_abs_pct_error_mean"], errors="coerce")
+    has_post_fit_validation = (
+        post_fit_years.notna()
+        & post_fit_abs_error.notna()
+        & post_fit_abs_pct_error.notna()
+    )
+    work["has_post_fit_validation"] = has_post_fit_validation
+    work["passes_post_fit_years"] = post_fit_years >= int(min_post_fit_observed_years)
+    work["passes_post_fit_abs_error"] = post_fit_abs_error <= float(max_post_fit_si_abs_error_mean)
+    work["passes_post_fit_abs_pct_error"] = post_fit_abs_pct_error <= float(max_post_fit_si_abs_pct_error_mean)
+
+    if require_post_fit_validation:
+        work["passes_validation"] = (
+            (~work["has_post_fit_validation"])
+            | (
+                work["passes_post_fit_years"]
+                & work["passes_post_fit_abs_error"]
+                & work["passes_post_fit_abs_pct_error"]
+            )
+        )
+    else:
+        work["passes_validation"] = (
+            (~work["has_post_fit_validation"])
+            | (
+                work["passes_post_fit_abs_error"]
+                & work["passes_post_fit_abs_pct_error"]
+            )
+        )
+
+    work["is_interesting_case"] = (
+        work["passes_current_count"]
+        & work["passes_future_count"]
+        & work["passes_future_count_ceiling"]
+        & work["passes_future_growth_ratio"]
+        & work["passes_si_change"]
+        & work["passes_validation"]
+    )
+
+    abs_error = pd.to_numeric(work["post_fit_si_abs_error_mean"], errors="coerce")
+    abs_pct_error = pd.to_numeric(work["post_fit_si_abs_pct_error_mean"], errors="coerce")
+    missing_penalty = (
+        abs_error.dropna().max() if abs_error.notna().any() else float(max_post_fit_si_abs_error_mean)
+    ) + 0.01 * (
+        abs_pct_error.dropna().max()
+        if abs_pct_error.notna().any()
+        else float(max_post_fit_si_abs_pct_error_mean)
+    )
+    work["reliability_penalty"] = abs_error.fillna(missing_penalty) + 0.01 * abs_pct_error.fillna(missing_penalty)
+    future_count_for_score = pd.to_numeric(work["future_predicted_count"], errors="coerce").clip(
+        lower=0,
+        upper=float(max_count_for_scoring),
+    )
+    work["future_count_for_scoring"] = future_count_for_score
+    work["interest_score"] = (
+        pd.to_numeric(work["si_change"], errors="coerce")
+        * np.log1p(future_count_for_score)
+        / (1.0 + work["reliability_penalty"])
+    )
+    work.loc[~np.isfinite(work["interest_score"]), "interest_score"] = np.nan
+
+    interesting_df = work.loc[work["is_interesting_case"]].copy()
+    if interesting_df.empty:
+        fallback_df = work.loc[
+            work["passes_current_count"]
+            & work["passes_future_count"]
+            & work["passes_future_count_ceiling"]
+            & work["passes_future_growth_ratio"]
+            & (pd.to_numeric(work["si_change"], errors="coerce") > 0)
+        ].copy()
+        if fallback_df.empty:
+            fallback_df = work.copy()
+        interesting_df = fallback_df.sort_values(
+            ["interest_score", "si_change", "future_predicted_SI"],
+            ascending=[False, False, False],
+            na_position="last",
+        ).head(int(max(fallback_top_n, 1))).copy()
+        interesting_df["is_interesting_case"] = True
+        interesting_df["selection_mode"] = "fallback_top_n"
+    else:
+        interesting_df["selection_mode"] = "strict_filter"
+
+    if sort_by not in interesting_df.columns:
+        raise KeyError(f"sort_by={sort_by!r} is not a column in the filtered result.")
+
+    preferred_cols = [
+        "pathogen",
+        "antibiotic",
+        "selection_mode",
+        "interest_score",
+        "si_change",
+        "current_predicted_count",
+        "future_predicted_count",
+        "future_count_for_scoring",
+        "future_to_current_ratio",
+        "current_rank",
+        "future_rank",
+        "rank_change",
+        "n_post_fit_observed_years",
+        "post_fit_si_abs_error_mean",
+        "post_fit_si_abs_pct_error_mean",
+        "reliability_penalty",
+    ]
+    remaining_cols = [col for col in interesting_df.columns if col not in preferred_cols]
+    interesting_df = interesting_df[preferred_cols + remaining_cols]
+    interesting_df = interesting_df.sort_values(
+        [sort_by, "si_change", "future_predicted_SI"],
+        ascending=[False, False, False],
+        na_position="last",
+    ).reset_index(drop=True)
+    return interesting_df
 
 
 def plot_si_prediction(
@@ -1281,6 +1773,7 @@ def plot_si_prediction_for_pareto_pairs(
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     n_pareto_shells: int | None = None,
     save_dir: str | None = None,
+    verbose: bool = False,
 ) -> list[dict[str, Any]]:
     """Plot SI prediction charts for selected pathogen-antibiotic Pareto pairs."""
     required_cols = {"pathogen", "antibiotic"}
@@ -1301,7 +1794,8 @@ def plot_si_prediction_for_pareto_pairs(
     for pair in selected_pairs.itertuples(index=False):
         pathogen = str(pair.pathogen)
         antibiotic = str(pair.antibiotic)
-        print(f"Plotting {pathogen} vs {antibiotic}")
+        if verbose:
+            print(f"Plotting {pathogen} vs {antibiotic}")
         result = plot_si_prediction(
             si_df=si_df,
             pathogen=pathogen,
@@ -1319,7 +1813,8 @@ def plot_si_prediction_for_pareto_pairs(
         result["figure"].savefig(png_path, dpi=200, bbox_inches="tight")
         result["png_path"] = png_path
         results.append(result)
-    print(f"Saved {len(results)} plot PNGs to {output_dir}")
+    if verbose:
+        print(f"Saved {len(results)} plot PNGs to {output_dir}")
     return results
 
 
@@ -1335,6 +1830,7 @@ def plot_yearly_si_prediction_for_pareto_pairs(
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     n_pareto_shells: int | None = None,
     save_dir: str | None = None,
+    verbose: bool = False,
 ) -> list[dict[str, Any]]:
     """Plot yearly SI prediction charts for selected pathogen-antibiotic Pareto pairs."""
     required_cols = {"pathogen", "antibiotic"}
@@ -1355,7 +1851,8 @@ def plot_yearly_si_prediction_for_pareto_pairs(
     for pair in selected_pairs.itertuples(index=False):
         pathogen = str(pair.pathogen)
         antibiotic = str(pair.antibiotic)
-        print(f"Plotting {pathogen} vs {antibiotic}")
+        if verbose:
+            print(f"Plotting {pathogen} vs {antibiotic}")
         try:
             result = plot_yearly_si_pair(
                 si_df=si_df,
@@ -1369,7 +1866,8 @@ def plot_yearly_si_prediction_for_pareto_pairs(
                 tail_damping_years=tail_damping_years,
             )
         except Exception as exc:  # pragma: no cover - notebook-facing recovery path
-            print(f"Skipping {pathogen} vs {antibiotic}: {exc}")
+            if verbose:
+                print(f"Skipping {pathogen} vs {antibiotic}: {exc}")
             continue
         pathogen_slug = _slugify_plot_filename_component(pathogen)
         antibiotic_slug = _slugify_plot_filename_component(antibiotic)
@@ -1377,7 +1875,8 @@ def plot_yearly_si_prediction_for_pareto_pairs(
         result["figure"].savefig(png_path, dpi=200, bbox_inches="tight")
         result["png_path"] = png_path
         results.append(result)
-    print(f"Saved {len(results)} plot PNGs to {output_dir}")
+    if verbose:
+        print(f"Saved {len(results)} plot PNGs to {output_dir}")
     return results
 
 
@@ -1398,6 +1897,8 @@ __all__ = [
     "fit_predict_si_loess",
     "fit_predict_yearly_si_loess",
     "forecast_all_pair_si_loess",
+    "rank_yearly_pairs_by_future_si_shift",
+    "select_interesting_yearly_rank_cases",
     "plot_si_prediction",
     "plot_yearly_si_pair",
     "display_si_amr_pareto_front",
