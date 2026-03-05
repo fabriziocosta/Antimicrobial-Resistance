@@ -268,13 +268,27 @@ def run_refined_amr_filter(
 
 
 def build_refined_yearly_positive_dataset(
-    yearly_df: pd.DataFrame,
-    refined_df: pd.DataFrame,
+    yearly_df: pd.DataFrame | str | os.PathLike[str],
+    refined_df: pd.DataFrame | str | os.PathLike[str],
     *,
     output_path: str | None = None,
     pair_output_path: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Filter yearly positives by the refined second-pass decisions and reaggregate counts."""
+    """Filter yearly positives by refined decisions and reaggregate counts.
+
+    ``yearly_df`` and ``refined_df`` can be either DataFrames already loaded in
+    memory or parquet paths. This allows easy restart from saved artifacts.
+    """
+    if isinstance(yearly_df, (str, os.PathLike)):
+        yearly_df = pd.read_parquet(yearly_df)
+    elif not isinstance(yearly_df, pd.DataFrame):
+        raise TypeError("yearly_df must be a pandas DataFrame or a parquet file path.")
+
+    if isinstance(refined_df, (str, os.PathLike)):
+        refined_df = pd.read_parquet(refined_df)
+    elif not isinstance(refined_df, pd.DataFrame):
+        raise TypeError("refined_df must be a pandas DataFrame or a parquet file path.")
+
     required_yearly = {"pathogen", "antibiotic", "year", "pmids"}
     missing_yearly = required_yearly - set(yearly_df.columns)
     if missing_yearly:
@@ -293,8 +307,12 @@ def build_refined_yearly_positive_dataset(
     work = work.dropna(subset=["year"])
     work["year"] = work["year"].astype(int)
 
+    # Treat "uncertain" as retained evidence alongside "yes".
     keep_keys = (
-        refined_df.loc[refined_df["refined_decision"].astype(str).str.lower() == "yes", ["pmid", "pathogen", "antibiotic", "year"]]
+        refined_df.loc[
+            refined_df["refined_decision"].astype(str).str.lower().isin({"yes", "uncertain"}),
+            ["pmid", "pathogen", "antibiotic", "year"],
+        ]
         .drop_duplicates()
         .astype({"pmid": str, "pathogen": str, "antibiotic": str, "year": int})
     )

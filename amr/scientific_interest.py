@@ -20,6 +20,16 @@ _AUTO_TAIL_DAMPING = object()
 _DEFAULT_RUNTIME_LOG_PATH = "scientific_interest.log"
 
 
+def _log_transform(values: pd.Series | np.ndarray | float) -> pd.Series | np.ndarray | float:
+    """Base-10 log transform used throughout the scientific-interest workflow."""
+    return np.log10(1.0 + values)
+
+
+def _inverse_log_transform(values: pd.Series | np.ndarray | float) -> pd.Series | np.ndarray | float:
+    """Inverse of the base-10 log transform."""
+    return np.power(10.0, values) - 1.0
+
+
 def _get_runtime_logger(log_path: str = _DEFAULT_RUNTIME_LOG_PATH) -> logging.Logger:
     logger_name = f"{__name__}:{os.path.abspath(log_path)}"
     logger = logging.getLogger(logger_name)
@@ -68,9 +78,9 @@ def load_amr_background_df(
     amr_background_df["start_year"] = pd.to_datetime(amr_background_df["start_date"]).dt.year.astype(int)
     amr_background_df["end_year"] = pd.to_datetime(amr_background_df["end_date"]).dt.year.astype(int)
     amr_background_df["mid_year"] = (amr_background_df["start_year"] + amr_background_df["end_year"]) / 2.0
-    amr_background_df["log_count"] = np.log1p(pd.to_numeric(amr_background_df["count"], errors="coerce"))
-    amr_background_df["log_bg_pathogen_n"] = np.log1p(pd.to_numeric(amr_background_df["bg_pathogen_n"], errors="coerce"))
-    amr_background_df["log_bg_antibiotic_n"] = np.log1p(pd.to_numeric(amr_background_df["bg_antibiotic_n"], errors="coerce"))
+    amr_background_df["log_count"] = _log_transform(pd.to_numeric(amr_background_df["count"], errors="coerce"))
+    amr_background_df["log_bg_pathogen_n"] = _log_transform(pd.to_numeric(amr_background_df["bg_pathogen_n"], errors="coerce"))
+    amr_background_df["log_bg_antibiotic_n"] = _log_transform(pd.to_numeric(amr_background_df["bg_antibiotic_n"], errors="coerce"))
     return amr_background_df.dropna(subset=["log_count", "log_bg_pathogen_n", "log_bg_antibiotic_n"])
 
 
@@ -98,7 +108,7 @@ def fit_global_pooled_si_model(
     model.fit(design_df, response)
 
     work["expected_log_count_global"] = model.predict(design_df)
-    work["expected_count_global"] = np.clip(np.expm1(work["expected_log_count_global"]), 0.0, None)
+    work["expected_count_global"] = np.clip(_inverse_log_transform(work["expected_log_count_global"]), 0.0, None)
     work["SI"] = work["log_count"] - work["expected_log_count_global"]
     return work, model, design_df.columns.tolist()
 
@@ -146,7 +156,7 @@ def build_pair_si_interval_series(si_df: pd.DataFrame, pathogen: str, antibiotic
         .sort_values("end_year")
         .reset_index(drop=True)
     )
-    pair_df["log_count"] = np.log1p(pair_df["count"].astype(float))
+    pair_df["log_count"] = _log_transform(pair_df["count"].astype(float))
     return pair_df
 
 
@@ -204,7 +214,7 @@ def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: 
         .sort_values("year")
         .reset_index(drop=True)
     )
-    pair_df["log_count"] = np.log1p(pair_df["count"].astype(float))
+    pair_df["log_count"] = _log_transform(pair_df["count"].astype(float))
     return pair_df
 
 
@@ -463,16 +473,16 @@ def fit_predict_si_loess(
 
     pred_df = pd.DataFrame({"year": pred_years.astype(int)})
     pred_df["expected_log_count_baseline"] = _interpolate_expected_log_count_curve(pair_df, pred_years)
-    pred_df["expected_count_baseline"] = np.clip(np.expm1(pred_df["expected_log_count_baseline"]), 0.0, None)
+    pred_df["expected_count_baseline"] = np.clip(_inverse_log_transform(pred_df["expected_log_count_baseline"]), 0.0, None)
 
     pred_log_count = _predict_loess_log_count_with_linear_tails(loess_fit, pred_years)
     pred_df["predicted_log_count_loess"] = pred_log_count
     pred_df["predicted_log_count_std"] = float(loess_fit["residual_std"])
     pred_df["predicted_log_count_loess_lower_1std"] = pred_df["predicted_log_count_loess"] - pred_df["predicted_log_count_std"]
     pred_df["predicted_log_count_loess_upper_1std"] = pred_df["predicted_log_count_loess"] + pred_df["predicted_log_count_std"]
-    pred_df["predicted_count_loess"] = np.clip(np.expm1(pred_df["predicted_log_count_loess"]), 0.0, None)
-    pred_df["predicted_count_loess_lower_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_lower_1std"]), 0.0, None)
-    pred_df["predicted_count_loess_upper_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_upper_1std"]), 0.0, None)
+    pred_df["predicted_count_loess"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess"]), 0.0, None)
+    pred_df["predicted_count_loess_lower_1std"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess_lower_1std"]), 0.0, None)
+    pred_df["predicted_count_loess_upper_1std"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess_upper_1std"]), 0.0, None)
 
     pred_df["predicted_SI"] = pred_df["predicted_log_count_loess"] - pred_df["expected_log_count_baseline"]
     pred_df["predicted_std"] = float(loess_fit["residual_std"])
@@ -574,16 +584,16 @@ def fit_predict_yearly_si_loess(
         left=float(pair_df["expected_log_count_global"].iloc[0]),
         right=float(pair_df["expected_log_count_global"].iloc[-1]),
     )
-    pred_df["expected_count_baseline"] = np.clip(np.expm1(pred_df["expected_log_count_baseline"]), 0.0, None)
+    pred_df["expected_count_baseline"] = np.clip(_inverse_log_transform(pred_df["expected_log_count_baseline"]), 0.0, None)
 
     pred_log_count = _predict_loess_log_count_with_linear_tails(loess_fit, pred_years)
     pred_df["predicted_log_count_loess"] = pred_log_count
     pred_df["predicted_log_count_std"] = float(loess_fit["residual_std"])
     pred_df["predicted_log_count_loess_lower_1std"] = pred_df["predicted_log_count_loess"] - pred_df["predicted_log_count_std"]
     pred_df["predicted_log_count_loess_upper_1std"] = pred_df["predicted_log_count_loess"] + pred_df["predicted_log_count_std"]
-    pred_df["predicted_count_loess"] = np.clip(np.expm1(pred_df["predicted_log_count_loess"]), 0.0, None)
-    pred_df["predicted_count_loess_lower_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_lower_1std"]), 0.0, None)
-    pred_df["predicted_count_loess_upper_1std"] = np.clip(np.expm1(pred_df["predicted_log_count_loess_upper_1std"]), 0.0, None)
+    pred_df["predicted_count_loess"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess"]), 0.0, None)
+    pred_df["predicted_count_loess_lower_1std"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess_lower_1std"]), 0.0, None)
+    pred_df["predicted_count_loess_upper_1std"] = np.clip(_inverse_log_transform(pred_df["predicted_log_count_loess_upper_1std"]), 0.0, None)
 
     pred_df["predicted_SI"] = pred_df["predicted_log_count_loess"] - pred_df["expected_log_count_baseline"]
     pred_df["predicted_std"] = float(loess_fit["residual_std"])
@@ -1167,7 +1177,7 @@ def select_interesting_yearly_rank_cases(
     work["future_count_for_scoring"] = future_count_for_score
     work["interest_score"] = (
         pd.to_numeric(work["si_change"], errors="coerce")
-        * np.log1p(future_count_for_score)
+        * _log_transform(future_count_for_score)
         / (1.0 + work["reliability_penalty"])
     )
     work.loc[~np.isfinite(work["interest_score"]), "interest_score"] = np.nan
