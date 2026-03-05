@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable
 from xml.etree import ElementTree as ET
 
@@ -94,6 +95,65 @@ def fetch_pubmed_abstract(
                 return "", "", "network_error"
             delay = BACKOFF_FACTOR**attempt
             time.sleep(delay)
+
+
+def fetch_pubmed_abstracts_batch(
+    pmids: list[str],
+    *,
+    email: str | None = None,
+    session: requests.Session | None = None,
+) -> dict[str, tuple[str, str, str]]:
+    """Fetch title/abstract for multiple PMIDs in one efetch request.
+
+    Returns mapping ``pmid -> (title, abstract, status)``, where status is:
+    ``ok``, ``no_abstract``, or ``network_error``.
+    """
+    pmids = [str(p).strip() for p in pmids if str(p).strip()]
+    if not pmids:
+        return {}
+    sess = session or requests
+    params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"}
+    if email:
+        params["email"] = email
+
+    for attempt in range(RETRIES):
+        try:
+            resp = sess.get(PUBMED_EFETCH, params=params, timeout=60)
+            resp.raise_for_status()
+            root = ET.fromstring(resp.text)
+
+            out = {pmid: ("", "", "no_abstract") for pmid in pmids}
+            for article in root.findall(".//PubmedArticle"):
+                pmid_el = article.find(".//MedlineCitation/PMID")
+                if pmid_el is None or not pmid_el.text:
+                    continue
+                pmid = str(pmid_el.text).strip()
+                if not pmid:
+                    continue
+                article_el = article.find(".//Article")
+                if article_el is None:
+                    out[pmid] = ("", "", "no_abstract")
+                    continue
+                title_el = article_el.find("./ArticleTitle")
+                title = " ".join(title_el.itertext()).strip() if title_el is not None else ""
+                abstract_el = article_el.find(".//Abstract")
+                if abstract_el is None:
+                    out[pmid] = (title, "", "no_abstract")
+                    continue
+                parts = [" ".join(p.itertext()).strip() for p in abstract_el.findall(".//AbstractText")]
+                abstract = "\n".join([p for p in parts if p])
+                if abstract:
+                    out[pmid] = (title, abstract, "ok")
+                else:
+                    out[pmid] = (title, "", "no_abstract")
+            return out
+        except Exception as exc:
+            if attempt == RETRIES - 1:
+                print(f"PubMed batch fetch failed for {len(pmids)} PMIDs: {exc}")
+                return {pmid: ("", "", "network_error") for pmid in pmids}
+            delay = BACKOFF_FACTOR**attempt
+            time.sleep(delay)
+    return {pmid: ("", "", "network_error") for pmid in pmids}
 
 
 def build_user_prompt(pmid: str, pathogen: str, antibiotic: str, title: str, abstract: str) -> str:
@@ -235,6 +295,12 @@ def run_unified_llm_filter(
     abstract_cache_path: str | None = "pmid_abstracts.parquet",
     abstract_cache_save_every: int | None = 200,
     auto_resume_from_output: bool = True,
+    llm_max_workers: int = 1,
+    llm_batch_size: int = 8,
+    failed_retry_path: str | None = "yearly_amr_unified_failures.parquet",
+    max_failure_retries: int | None = 5,
+    abstract_fetch_batch_size: int = 200,
+    prefetch_abstracts: bool = True,
 ) -> pd.DataFrame:
     """Run the unified AMR + scientific-interest LLM screen on yearly candidates."""
     required_cols = {"pmid", "pathogen", "antibiotic", "year"}
@@ -254,12 +320,7 @@ def run_unified_llm_filter(
     existing = pd.DataFrame()
     key_cols = ["pmid", "pathogen", "antibiotic", "year"]
     seen_keys: set[tuple[str, str, str, int]] = set()
-    if (
-        auto_resume_from_output
-        and resume_from is None
-        and output_path
-        and os.path.exists(output_path)
-    ):
+    if auto_resume_from_output and resume_from is None and output_path and os.path.exists(output_path):
         try:
             resume_from = pd.read_parquet(output_path)
         except Exception as exc:
@@ -270,8 +331,30 @@ def run_unified_llm_filter(
             for row in existing[key_cols].itertuples(index=False):
                 seen_keys.add((str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year)))
 
+    # Persistent failures for flaky network-fetch rows
+    failure_cols = ["pmid", "pathogen", "antibiotic", "year", "fail_count", "last_error", "last_attempt_ts"]
+    failures_df = pd.DataFrame(columns=failure_cols)
+    if failed_retry_path and os.path.exists(failed_retry_path):
+        try:
+            failures_df = pd.read_parquet(failed_retry_path)
+        except Exception as exc:
+            _append_log(f"Failed loading retry state from {failed_retry_path}: {exc}")
+            failures_df = pd.DataFrame(columns=failure_cols)
+    for col in failure_cols:
+        if col not in failures_df.columns:
+            failures_df[col] = pd.NA
+    failure_map: dict[tuple[str, str, str, int], dict[str, object]] = {}
+    for row in failures_df[failure_cols].itertuples(index=False):
+        k = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+        failure_map[k] = {
+            "fail_count": int(pd.to_numeric(row.fail_count, errors="coerce") if pd.notna(row.fail_count) else 0),
+            "last_error": str(row.last_error) if pd.notna(row.last_error) else "",
+            "last_attempt_ts": str(row.last_attempt_ts) if pd.notna(row.last_attempt_ts) else "",
+        }
+
     abstract_cache: dict[str, tuple[str, str]] = {}
     cache_dirty = False
+    session = requests.Session()
     if abstract_cache_path and os.path.exists(abstract_cache_path):
         try:
             cache_df = pd.read_parquet(abstract_cache_path)
@@ -281,25 +364,198 @@ def run_unified_llm_filter(
         except Exception as exc:
             _append_log(f"Failed loading abstract cache from {abstract_cache_path}: {exc}")
 
+    failed_prefetch_pmids: set[str] = set()
+    if prefetch_abstracts and not dry_run:
+        candidate_pmids = pd.Index(candidate_df["pmid"].astype(str)).dropna().unique().tolist()
+        missing_pmids = [pmid for pmid in candidate_pmids if pmid not in abstract_cache]
+        if missing_pmids:
+            batch_n = max(1, int(abstract_fetch_batch_size))
+            total_batches = (len(missing_pmids) + batch_n - 1) // batch_n
+            for b_idx, start in enumerate(range(0, len(missing_pmids), batch_n), start=1):
+                batch_pmids = missing_pmids[start : start + batch_n]
+                batch_map = fetch_pubmed_abstracts_batch(batch_pmids, email=email, session=session)
+                for pmid, (title, abstract, status) in batch_map.items():
+                    if status == "network_error":
+                        failed_prefetch_pmids.add(str(pmid))
+                        continue
+                    abstract_cache[str(pmid)] = (title or "", abstract or "")
+                    cache_dirty = True
+                if verbose >= 1 and (b_idx == 1 or b_idx % 10 == 0 or b_idx == total_batches):
+                    print(f"Prefetched abstracts batch {b_idx}/{total_batches} ({len(batch_pmids)} PMIDs).")
+                time.sleep(rate_limit)
+            if abstract_cache_path and cache_dirty:
+                _append_log(f"Saving prefetched abstract cache ({len(abstract_cache)} PMIDs).")
+                # checkpoint helper declared below; call deferred via flag
+
+    def _checkpoint_results() -> None:
+        if not output_path:
+            return
+        tmp_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
+        if not tmp_df.empty:
+            tmp_df = tmp_df.drop_duplicates(subset=key_cols, keep="last")
+        tmp_df.to_parquet(output_path, index=False)
+
+    def _checkpoint_cache() -> None:
+        nonlocal cache_dirty
+        if not abstract_cache_path or not abstract_cache:
+            return
+        cache_df = pd.DataFrame([{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()])
+        cache_df.to_parquet(abstract_cache_path, index=False)
+        cache_dirty = False
+
+    def _checkpoint_failures() -> None:
+        if not failed_retry_path:
+            return
+        rows = []
+        for (pmid, pathogen, antibiotic, year), meta in failure_map.items():
+            rows.append(
+                {
+                    "pmid": pmid,
+                    "pathogen": pathogen,
+                    "antibiotic": antibiotic,
+                    "year": int(year),
+                    "fail_count": int(meta.get("fail_count", 0)),
+                    "last_error": str(meta.get("last_error", "")),
+                    "last_attempt_ts": str(meta.get("last_attempt_ts", "")),
+                }
+            )
+        pd.DataFrame(rows, columns=failure_cols).to_parquet(failed_retry_path, index=False)
+
+    def _record_result(item: dict) -> None:
+        results.append(item)
+        seen_keys.add((str(item["pmid"]), str(item["pathogen"]), str(item["antibiotic"]), int(item["year"])))
+        # clear retry state once row is successfully decided/stored
+        failure_map.pop((str(item["pmid"]), str(item["pathogen"]), str(item["antibiotic"]), int(item["year"])), None)
+
+        if output_path and save_every and len(results) % save_every == 0:
+            _checkpoint_results()
+        if abstract_cache_path and abstract_cache_save_every and cache_dirty and len(results) % int(max(1, abstract_cache_save_every)) == 0:
+            _checkpoint_cache()
+        if failed_retry_path and save_every and len(results) % save_every == 0:
+            _checkpoint_failures()
+        if verbose >= 1 and progress_every and len(results) % progress_every == 0:
+            batch_df = pd.DataFrame(results)
+            yes_n = int((batch_df["unified_decision"] == "yes").sum())
+            no_n = int((batch_df["unified_decision"] == "no").sum())
+            unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
+            _progress(f"Processed {len(results):>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6}")
+
+    def _run_llm_batch(batch: list[dict]) -> list[dict]:
+        if not batch:
+            return []
+        if dry_run:
+            return [
+                {
+                    "pmid": item["pmid"],
+                    "pathogen": item["pathogen"],
+                    "antibiotic": item["antibiotic"],
+                    "year": item["year"],
+                    "unified_decision": "uncertain",
+                    "unified_raw_decision": "dry_run",
+                    "unified_rationale": "dry_run",
+                    "title": item["title"] or "",
+                    "abstract": item["abstract"] or "",
+                }
+                for item in batch
+            ]
+
+        def _classify(item: dict) -> dict:
+            verdict = classify_abstract(
+                llm,
+                item["pmid"],
+                item["pathogen"],
+                item["antibiotic"],
+                item["title"],
+                item["abstract"],
+                system_prompt=system_prompt,
+                max_tokens=256,
+                log_path=log_path,
+            )
+            raw_decision = str(verdict.get("decision", "uncertain"))
+            return {
+                "pmid": item["pmid"],
+                "pathogen": item["pathogen"],
+                "antibiotic": item["antibiotic"],
+                "year": item["year"],
+                "unified_decision": _normalize_unified_decision(raw_decision),
+                "unified_raw_decision": raw_decision,
+                "unified_rationale": str(verdict.get("rationale", "") or "").strip(),
+                "title": item["title"] or "",
+                "abstract": item["abstract"] or "",
+            }
+
+        if int(max(1, llm_max_workers)) == 1:
+            return [_classify(item) for item in batch]
+
+        out: list[dict] = []
+        with ThreadPoolExecutor(max_workers=int(max(1, llm_max_workers))) as pool:
+            futures = [pool.submit(_classify, item) for item in batch]
+            for fut in as_completed(futures):
+                out.append(fut.result())
+        return out
+
     results: list[dict] = []
     total = len(candidate_df)
     llm_calls_used = 0
-    session = requests.Session()
-    for idx, row in enumerate(candidate_df.itertuples(index=False), start=1):
+    pending_batch: list[dict] = []
+
+    for row in candidate_df.itertuples(index=False):
         key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
         if key in seen_keys:
             continue
+
+        if max_failure_retries is not None:
+            existing_failure = failure_map.get(key)
+            if existing_failure and int(existing_failure.get("fail_count", 0)) >= int(max_failure_retries):
+                continue
+
         pmid = str(row.pmid)
         pathogen = str(row.pathogen)
         antibiotic = str(row.antibiotic)
         year = int(row.year)
 
-        if pmid in abstract_cache:
+        if dry_run:
+            _record_result(
+                {
+                    "pmid": pmid,
+                    "pathogen": pathogen,
+                    "antibiotic": antibiotic,
+                    "year": year,
+                    "unified_decision": "uncertain",
+                    "unified_raw_decision": "dry_run",
+                    "unified_rationale": "dry_run",
+                    "title": "",
+                    "abstract": "",
+                }
+            )
+            continue
+
+        if pmid in failed_prefetch_pmids:
+            now_ts = pd.Timestamp.utcnow().isoformat()
+            prev = failure_map.get(key, {"fail_count": 0, "last_error": "", "last_attempt_ts": ""})
+            failure_map[key] = {
+                "fail_count": int(prev.get("fail_count", 0)) + 1,
+                "last_error": "network_error_prefetch",
+                "last_attempt_ts": now_ts,
+            }
+            if failed_retry_path:
+                _checkpoint_failures()
+            continue
+        elif pmid in abstract_cache:
             title, abstract = abstract_cache[pmid]
         else:
             title, abstract, status = fetch_pubmed_abstract(pmid, email=email, session=session)
             if status == "network_error":
-                _append_log(f"Skipping PMID {pmid} due to network error.")
+                now_ts = pd.Timestamp.utcnow().isoformat()
+                prev = failure_map.get(key, {"fail_count": 0, "last_error": "", "last_attempt_ts": ""})
+                failure_map[key] = {
+                    "fail_count": int(prev.get("fail_count", 0)) + 1,
+                    "last_error": "network_error",
+                    "last_attempt_ts": now_ts,
+                }
+                _append_log(f"Skipping PMID {pmid} due to network error (attempt {failure_map[key]['fail_count']}).")
+                if failed_retry_path:
+                    _checkpoint_failures()
                 time.sleep(rate_limit)
                 continue
             abstract_cache[pmid] = (title, abstract)
@@ -307,73 +563,53 @@ def run_unified_llm_filter(
             time.sleep(rate_limit)
 
         if not abstract:
-            decision = "uncertain"
-            rationale = "no abstract"
-            raw_decision = "no_abstract"
-        elif dry_run:
-            decision = "uncertain"
-            rationale = "dry_run"
-            raw_decision = "dry_run"
-        else:
-            if max_llm_calls is not None and llm_calls_used >= max_llm_calls:
-                break
-            verdict = classify_abstract(
-                llm,
-                pmid,
-                pathogen,
-                antibiotic,
-                title,
-                abstract,
-                system_prompt=system_prompt,
-                max_tokens=256,
-                log_path=log_path,
+            _record_result(
+                {
+                    "pmid": pmid,
+                    "pathogen": pathogen,
+                    "antibiotic": antibiotic,
+                    "year": year,
+                    "unified_decision": "uncertain",
+                    "unified_raw_decision": "no_abstract",
+                    "unified_rationale": "no abstract",
+                    "title": title or "",
+                    "abstract": abstract or "",
+                }
             )
-            raw_decision = str(verdict.get("decision", "uncertain"))
-            decision = _normalize_unified_decision(raw_decision)
-            rationale = str(verdict.get("rationale", "") or "").strip()
-            llm_calls_used += 1
-            time.sleep(rate_limit)
+            continue
 
-        results.append(
+        if max_llm_calls is not None and llm_calls_used >= max_llm_calls:
+            break
+
+        pending_batch.append(
             {
                 "pmid": pmid,
                 "pathogen": pathogen,
                 "antibiotic": antibiotic,
                 "year": year,
-                "unified_decision": decision,
-                "unified_raw_decision": raw_decision,
-                "unified_rationale": rationale,
-                "title": title or "",
-                "abstract": abstract or "",
+                "title": title,
+                "abstract": abstract,
             }
         )
-        seen_keys.add(key)
+        if max_llm_calls is not None and (llm_calls_used + len(pending_batch)) >= max_llm_calls:
+            should_flush = True
+        else:
+            should_flush = len(pending_batch) >= int(max(1, llm_batch_size))
+        if should_flush:
+            for item in _run_llm_batch(pending_batch):
+                _record_result(item)
+                llm_calls_used += 1
+            pending_batch = []
+            time.sleep(rate_limit)
 
-        if output_path and save_every and len(results) % save_every == 0:
-            tmp_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
-            tmp_df = tmp_df.drop_duplicates(subset=key_cols, keep="last")
-            tmp_df.to_parquet(output_path, index=False)
-
-        if (
-            abstract_cache_path
-            and abstract_cache_save_every
-            and cache_dirty
-            and len(results) % int(abstract_cache_save_every) == 0
-        ):
-            cache_df = pd.DataFrame(
-                [{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()]
-            )
-            cache_df.to_parquet(abstract_cache_path, index=False)
-            cache_dirty = False
-
-        if verbose >= 1 and progress_every and len(results) % progress_every == 0:
-            batch_df = pd.DataFrame(results)
-            yes_n = int((batch_df["unified_decision"] == "yes").sum())
-            no_n = int((batch_df["unified_decision"] == "no").sum())
-            unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
-            _progress(
-                f"Processed {len(results):>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6}"
-            )
+    # Flush remaining LLM items
+    if pending_batch and (max_llm_calls is None or llm_calls_used < max_llm_calls):
+        if max_llm_calls is not None:
+            remaining = int(max_llm_calls - llm_calls_used)
+            pending_batch = pending_batch[: max(0, remaining)]
+        for item in _run_llm_batch(pending_batch):
+            _record_result(item)
+            llm_calls_used += 1
 
     out_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
     if not out_df.empty:
@@ -381,10 +617,9 @@ def run_unified_llm_filter(
     if output_path:
         out_df.to_parquet(output_path, index=False)
     if abstract_cache_path and abstract_cache:
-        cache_df = pd.DataFrame(
-            [{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()]
-        )
-        cache_df.to_parquet(abstract_cache_path, index=False)
+        _checkpoint_cache()
+    if failed_retry_path:
+        _checkpoint_failures()
     session.close()
     return out_df
 
@@ -806,6 +1041,7 @@ __all__ = [
     "UNIFIED_AMR_INTEREST_SYSTEM_PROMPT",
     "PUBMED_EFETCH",
     "fetch_pubmed_abstract",
+    "fetch_pubmed_abstracts_batch",
     "build_user_prompt",
     "classify_abstract",
     "prepare_pmids_to_review",

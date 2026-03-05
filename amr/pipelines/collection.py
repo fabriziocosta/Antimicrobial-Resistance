@@ -156,6 +156,8 @@ def fetch_pmids_intervals(
     extra_keywords: Optional[Sequence[str]] = None,
     full_fetch_threshold: int = 2000,
     summary_batch_size: int = 200,
+    verbose: int = 1,
+    progress_every: int = 200,
 ) -> pd.DataFrame:
     """Query PubMed in intervals for all pathogen/antibiotic combinations."""
     import os
@@ -194,6 +196,24 @@ def fetch_pmids_intervals(
 
     total_tasks = len(pathogens) * len(antibiotics)
     task_counter = 0
+    event_counter = 0
+    progress_every = max(1, int(progress_every))
+    event_stats = {"cached": 0, "zero": 0, "full_fetch_partitioned": 0, "new": 0}
+
+    def _log_event(kind: str, message: str) -> None:
+        nonlocal event_counter
+        event_counter += 1
+        event_stats[kind] = event_stats.get(kind, 0) + 1
+        if verbose >= 2:
+            print(message)
+        elif verbose >= 1 and event_counter % progress_every == 0:
+            print(
+                f"Progress events {event_counter}: "
+                f"cached={event_stats.get('cached',0)} "
+                f"zero={event_stats.get('zero',0)} "
+                f"full_fetch={event_stats.get('full_fetch_partitioned',0)} "
+                f"new={event_stats.get('new',0)}"
+            )
 
     for pathogen in pathogens:
         for antibiotic in antibiotics:
@@ -226,7 +246,8 @@ def fetch_pmids_intervals(
                 if mask.any():
                     entry["cached"] = True
                     entry["count"] = int(existing_df.loc[mask, "count"].iloc[0])
-                    print(
+                    _log_event(
+                        "cached",
                         f"[{task_counter:>3}/{total_tasks}] "
                         f"({task_progress:5.1f}%) | "
                         f"{pathogen:<40} | {antibiotic:<20} | "
@@ -263,7 +284,8 @@ def fetch_pmids_intervals(
                             "venue_histogram": json.dumps({}),
                         }
                     )
-                    print(
+                    _log_event(
+                        "zero",
                         f"[{task_counter:>3}/{total_tasks}] "
                         f"({task_progress:5.1f}%) | "
                         f"{pathogen:<40} | {antibiotic:<20} | "
@@ -306,7 +328,8 @@ def fetch_pmids_intervals(
                             "venue_histogram": histogram_json,
                         }
                     )
-                    print(
+                    _log_event(
+                        "full_fetch_partitioned",
                         f"[{task_counter:>3}/{total_tasks}] "
                         f"({task_progress:5.1f}%) | "
                         f"{pathogen:<40} | {antibiotic:<20} | "
@@ -354,7 +377,8 @@ def fetch_pmids_intervals(
                         "venue_histogram": histogram_json,
                     }
                 )
-                print(
+                _log_event(
+                    "new",
                     f"[{task_counter:>3}/{total_tasks}] "
                     f"({task_progress:5.1f}%) | "
                     f"{pathogen:<40} | {antibiotic:<20} | "
@@ -369,6 +393,16 @@ def fetch_pmids_intervals(
     if new_results:
         df_new = pd.DataFrame(new_results)
         existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
+
+    if verbose >= 1:
+        print(
+            "Collection summary: "
+            f"events={event_counter}, "
+            f"cached={event_stats.get('cached',0)}, "
+            f"zero={event_stats.get('zero',0)}, "
+            f"full_fetch={event_stats.get('full_fetch_partitioned',0)}, "
+            f"new={event_stats.get('new',0)}"
+        )
 
     return existing_df
 

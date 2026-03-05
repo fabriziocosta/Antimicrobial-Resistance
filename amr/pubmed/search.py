@@ -63,6 +63,7 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
     Entrez.email = email
     date_clause = f'("{year}/01/01"[Date - Publication] : "{year}/12/31"[Date - Publication])'
     term = f"({term_clause}) AND {date_clause}"
+    print(f"[esearch_count_for_year] querying year={year} with up to {RETRIES} attempts")
     for i in range(RETRIES):
         try:
             time.sleep(RATE_LIMIT_DELAY)
@@ -70,8 +71,14 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
             try:
                 record = Entrez.read(handle)
             except Exception as e:
-                print(f"Failed to parse Entrez response: {e}")
-                record = {}
+                if i == RETRIES - 1:
+                    print(f"Failed to parse Entrez response after retries: {e}")
+                    record = {}
+                else:
+                    delay = BACKOFF_FACTOR * (2**i)
+                    print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
             handle.close()
             return int(record.get("Count", 0))
         except (HTTPError, URLError) as e:
@@ -103,6 +110,7 @@ def search_pmids(
         min_date=min_date,
         max_date=max_date,
     )
+    print(f"[search_pmids] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
 
     for i in range(RETRIES):
         try:
@@ -111,8 +119,14 @@ def search_pmids(
             try:
                 record = Entrez.read(handle)
             except Exception as e:
-                print(f"Failed to parse Entrez response: {e}")
-                record = {}
+                if i == RETRIES - 1:
+                    print(f"Failed to parse Entrez response after retries: {e}")
+                    record = {}
+                else:
+                    delay = BACKOFF_FACTOR * (2**i)
+                    print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
             handle.close()
 
             total_count = int(record.get("Count", 0))
@@ -143,7 +157,9 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
     if not query or not webenv or not query_key or count == 0:
         return pmids
 
-    for start in range(0, count, batch_size):
+    total_batches = (count + batch_size - 1) // batch_size
+    for batch_idx, start in enumerate(range(0, count, batch_size), start=1):
+        print(f"[retrieve_pmids] batch {batch_idx}/{total_batches} (retstart={start})")
         for attempt in range(RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
@@ -159,8 +175,14 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
                 try:
                     record = Entrez.read(handle)
                 except Exception as e:
-                    print(f"Failed to parse Entrez record: {e}")
-                    record = {}
+                    if attempt == RETRIES - 1:
+                        print(f"Failed to parse Entrez record after retries: {e}")
+                        record = {}
+                    else:
+                        delay = BACKOFF_FACTOR * (2**attempt)
+                        print(f"Failed to parse Entrez record (attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
+                        time.sleep(delay)
+                        continue
                 handle.close()
 
                 pmids.extend(record.get("IdList", []))
@@ -182,8 +204,12 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
     date_map: Dict[str, datetime] = {}
     venue_map: Dict[str, str] = {}
 
-    for start in range(0, len(pmids), batch_size):
+    total_batches = (len(pmids) + batch_size - 1) // batch_size if len(pmids) > 0 else 0
+    if total_batches:
+        print(f"[fetch_pub_metadata] fetching metadata for {len(pmids)} PMIDs in {total_batches} batch(es)")
+    for batch_idx, start in enumerate(range(0, len(pmids), batch_size), start=1):
         batch = pmids[start : start + batch_size]
+        print(f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} ({len(batch)} PMIDs)")
         for attempt in range(RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
@@ -191,8 +217,17 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
                 try:
                     records = Entrez.read(handle)
                 except Exception as e:
-                    print(f"Failed to parse Entrez summary: {e}")
-                    records = {}
+                    if attempt == RETRIES - 1:
+                        print(f"Failed to parse Entrez summary after retries: {e}")
+                        records = {}
+                    else:
+                        delay = BACKOFF_FACTOR * (2**attempt)
+                        print(
+                            f"Failed to parse Entrez summary (batch {batch_idx}/{total_batches}, "
+                            f"attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s..."
+                        )
+                        time.sleep(delay)
+                        continue
                 handle.close()
 
                 if isinstance(records, dict):
@@ -233,4 +268,3 @@ __all__ = [
     "retrieve_pmids",
     "fetch_pub_metadata",
 ]
-

@@ -35,13 +35,14 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(len(out), 3)
         self.assertEqual(set(out["pmid"]), {"111", "222", "333"})
 
+    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
     @patch("amr.filtering.fetch_pubmed_abstract")
-    def test_run_unified_llm_filter_normalizes_decisions(self, mock_fetch: patch) -> None:
-        mock_fetch.side_effect = [
-            ("t1", "clinical resistant isolates", "ok"),
-            ("t2", "lab model assay", "ok"),
-            ("t3", "", "no_abstract"),
-        ]
+    def test_run_unified_llm_filter_normalizes_decisions(self, mock_fetch_single: patch, mock_fetch_batch: patch) -> None:
+        mock_fetch_batch.return_value = {
+            "111": ("t1", "clinical resistant isolates", "ok"),
+            "222": ("t2", "lab model assay", "ok"),
+            "333": ("t3", "", "no_abstract"),
+        }
         candidates = pd.DataFrame(
             {
                 "pmid": ["111", "222", "333"],
@@ -63,6 +64,8 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(out.loc[0, "unified_decision"], "yes")
         self.assertEqual(out.loc[1, "unified_decision"], "no")
         self.assertEqual(out.loc[2, "unified_decision"], "uncertain")
+        self.assertEqual(mock_fetch_batch.call_count, 1)
+        self.assertEqual(mock_fetch_single.call_count, 0)
 
     def test_build_yearly_screened_pairs_unique_and_counted(self) -> None:
         yearly_df = pd.DataFrame(
@@ -124,9 +127,10 @@ class UnifiedFilteringTests(unittest.TestCase):
             )
             self.assertEqual(set(out["year"]), {2020, 2021})
 
+    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
     @patch("amr.filtering.fetch_pubmed_abstract")
-    def test_run_unified_llm_filter_auto_resume_from_output(self, mock_fetch: patch) -> None:
-        mock_fetch.return_value = ("t", "clinical resistant isolates", "ok")
+    def test_run_unified_llm_filter_auto_resume_from_output(self, mock_fetch_single: patch, mock_fetch_batch: patch) -> None:
+        mock_fetch_batch.return_value = {"222": ("t", "clinical resistant isolates", "ok")}
         candidates = pd.DataFrame(
             {
                 "pmid": ["111", "222"],
@@ -161,7 +165,8 @@ class UnifiedFilteringTests(unittest.TestCase):
             )
             self.assertEqual(len(out), 2)
             # only PMID 222 should require a new abstract fetch
-            self.assertEqual(mock_fetch.call_count, 1)
+            self.assertEqual(mock_fetch_batch.call_count, 1)
+            self.assertEqual(mock_fetch_single.call_count, 0)
 
 
 if __name__ == "__main__":

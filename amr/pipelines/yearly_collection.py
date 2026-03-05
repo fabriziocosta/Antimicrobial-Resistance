@@ -29,29 +29,64 @@ def _merge_pair_pmid_frames(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> 
     return merged.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
 
 
-def _merge_yearly_pair_frames(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+def _as_pair_pmid_keyframe(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+    for col in ["pathogen", "antibiotic", "pmid"]:
+        work[col] = work[col].astype(str)
+    return work[["pathogen", "antibiotic", "pmid"]].drop_duplicates().reset_index(drop=True)
+
+
+def _extract_new_pair_pmids(existing_pair_df: pd.DataFrame, current_pair_df: pd.DataFrame) -> pd.DataFrame:
+    """Return only pair-PMID rows not present in existing storage."""
+    existing_keys = _as_pair_pmid_keyframe(existing_pair_df)
+    current_keys = _as_pair_pmid_keyframe(current_pair_df)
+    if existing_keys.empty:
+        return current_pair_df.copy()
+    merged = current_keys.merge(
+        existing_keys,
+        on=["pathogen", "antibiotic", "pmid"],
+        how="left",
+        indicator=True,
+    )
+    new_keys = merged.loc[merged["_merge"] == "left_only", ["pathogen", "antibiotic", "pmid"]]
+    if new_keys.empty:
+        return current_pair_df.iloc[0:0].copy()
+    return current_pair_df.merge(new_keys, on=["pathogen", "antibiotic", "pmid"], how="inner")
+
+
+def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.DataFrame) -> pd.DataFrame:
+    """Incrementally merge yearly pair counts by unioning PMID lists per key."""
     if existing_df.empty:
-        return new_df.copy()
-    if new_df.empty:
-        return existing_df.copy()
+        out = delta_df.copy()
+        out["pmids"] = out["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+        out["count"] = out["pmids"].apply(len)
+        return out.sort_values(["pathogen", "antibiotic", "year"]).reset_index(drop=True)
+    if delta_df.empty:
+        return existing_df.copy().sort_values(["pathogen", "antibiotic", "year"]).reset_index(drop=True)
 
     key_cols = ["pathogen", "antibiotic", "year"]
-    for frame in (existing_df, new_df):
-        frame["year"] = pd.to_numeric(frame["year"], errors="coerce").astype("Int64")
-        frame["count"] = pd.to_numeric(frame["count"], errors="coerce")
-        frame["pmids"] = frame["pmids"].apply(lambda v: v if isinstance(v, list) else [])
-
-    stacked = pd.concat([existing_df, new_df], ignore_index=True)
+    work_existing = existing_df.copy()
+    work_delta = delta_df.copy()
+    work_existing["year"] = pd.to_numeric(work_existing["year"], errors="coerce").astype("Int64")
+    work_delta["year"] = pd.to_numeric(work_delta["year"], errors="coerce").astype("Int64")
+    work_existing = work_existing.dropna(subset=["year"]).copy()
+    work_delta = work_delta.dropna(subset=["year"]).copy()
+    work_existing["year"] = work_existing["year"].astype(int)
+    work_delta["year"] = work_delta["year"].astype(int)
+    work_existing["pmids"] = work_existing["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+    work_delta["pmids"] = work_delta["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+    combined = pd.concat([work_existing, work_delta], ignore_index=True)
     merged = (
-        stacked.groupby(key_cols, as_index=False)
+        combined.groupby(key_cols, as_index=False)
         .agg(
-            count=("count", "max"),
             pmids=("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
+            count=("count", "max"),
         )
+        .sort_values(key_cols)
         .reset_index(drop=True)
     )
     merged["count"] = merged["pmids"].apply(len)
-    return merged.sort_values(key_cols).reset_index(drop=True)
+    return merged
 
 
 def collect_yearly_background_counts(
@@ -109,6 +144,8 @@ def collect_yearly_amr_dataset(
     summary_batch_size: int = 200,
     metadata_batch_size: int = 200,
     metadata_checkpoint_every_batches: int = 10,
+    collection_verbose: int = 1,
+    collection_progress_every: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build the canonical yearly pair dataset from interval PMIDs and publication dates.
 
@@ -127,27 +164,43 @@ def collect_yearly_amr_dataset(
         extra_keywords=extra_keywords,
         full_fetch_threshold=full_fetch_threshold,
         summary_batch_size=summary_batch_size,
+        verbose=collection_verbose,
+        progress_every=collection_progress_every,
     )
 
-    pair_pmid_df = explode_positive_pair_pmids(interval_df)
+    pair_pmid_df_raw = explode_positive_pair_pmids(interval_df)
     if Path(yearly_pair_pmid_output_path).exists():
         existing_pair_pmid_df = pd.read_parquet(yearly_pair_pmid_output_path)
-        pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, pair_pmid_df)
+    else:
+        existing_pair_pmid_df = pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid"])
+
+    new_pair_pmid_df = _extract_new_pair_pmids(existing_pair_pmid_df, pair_pmid_df_raw)
+    pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, new_pair_pmid_df)
     Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
     pair_pmid_df.to_parquet(yearly_pair_pmid_output_path, index=False)
 
     metadata_df = refresh_pubmed_metadata_cache(
-        pair_pmid_df["pmid"].astype(str).tolist(),
+        new_pair_pmid_df["pmid"].astype(str).tolist() if not new_pair_pmid_df.empty else [],
         cache_path=metadata_cache_path,
         email=email,
         batch_size=metadata_batch_size,
         checkpoint_every_batches=metadata_checkpoint_every_batches,
     )
-    enriched_df = attach_pubmed_metadata(pair_pmid_df, metadata_df)
-    yearly_df = aggregate_pair_counts_by_year(enriched_df)
+    enriched_df = (
+        attach_pubmed_metadata(new_pair_pmid_df, metadata_df)
+        if not new_pair_pmid_df.empty
+        else pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"])
+    )
+    yearly_delta_df = (
+        aggregate_pair_counts_by_year(enriched_df)
+        if not enriched_df.empty
+        else pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+    )
     if Path(output_path).exists():
         existing_yearly_df = pd.read_parquet(output_path)
-        yearly_df = _merge_yearly_pair_frames(existing_yearly_df, yearly_df)
+    else:
+        existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+    yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     yearly_df.to_parquet(output_path, index=False)
