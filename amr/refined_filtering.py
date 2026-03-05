@@ -1,4 +1,9 @@
-"""Second-pass AMR relevance filtering for yearly positive PubMed records."""
+"""Deprecated second-pass AMR relevance filtering for yearly PubMed records.
+
+Deprecated:
+- This module is kept for backward compatibility with legacy notebooks.
+- The active workflow now uses ``amr.filtering.run_unified_llm_filter``.
+"""
 
 from __future__ import annotations
 
@@ -74,7 +79,7 @@ def prepare_yearly_positive_candidates(
     *,
     abstract_cache_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Explode yearly positives to one row per PMID/pathogen/antibiotic/year with title/abstract text."""
+    """Deprecated: explode yearly positives for the legacy second-pass screen."""
     required_yearly = {"pathogen", "antibiotic", "year", "pmids"}
     missing_yearly = required_yearly - set(yearly_df.columns)
     if missing_yearly:
@@ -168,7 +173,7 @@ def run_refined_amr_filter(
     verbose: int = 1,
     log_path: str | None = None,
 ) -> pd.DataFrame:
-    """Run the refined second-pass AMR relevance filter with resumable checkpoints."""
+    """Deprecated: run the legacy second-pass AMR relevance screen."""
     required_cols = {"pmid", "pathogen", "antibiotic", "year", "title", "abstract"}
     missing = required_cols - set(candidate_df.columns)
     if missing:
@@ -274,7 +279,7 @@ def build_refined_yearly_positive_dataset(
     output_path: str | None = None,
     pair_output_path: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Filter yearly positives by refined decisions and reaggregate counts.
+    """Deprecated: reaggregate yearly positives after legacy second-pass decisions.
 
     ``yearly_df`` and ``refined_df`` can be either DataFrames already loaded in
     memory or parquet paths. This allows easy restart from saved artifacts.

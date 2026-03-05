@@ -23,6 +23,21 @@ Rules:
 Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one short sentence).
 """.strip()
 
+UNIFIED_AMR_INTEREST_SYSTEM_PROMPT = """
+You are screening PubMed abstracts for pathogen-antibiotic antimicrobial resistance evidence.
+
+A study should be included only when BOTH are true:
+1) The abstract explicitly reports that the specified pathogen shows resistance / reduced susceptibility / treatment failure due to resistance for the specified antibiotic.
+2) The study is scientifically relevant for real-world AMR interest (clinical, surveillance, epidemiological, environmental, food, veterinary, or naturally occurring strain contexts), and not primarily a laboratory model-system experiment where AMR is incidental.
+
+Decision labels:
+- yes: both conditions are clearly satisfied.
+- no: at least one condition is clearly not satisfied.
+- uncertain: abstract missing, ambiguous, or insufficient to judge confidently.
+
+Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one short sentence).
+""".strip()
+
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETRIES = 3
 BACKOFF_FACTOR = 2
@@ -162,6 +177,205 @@ def prepare_pmids_to_review(
     if max_pmids:
         long_df = long_df.head(max_pmids)
     return long_df.reset_index(drop=True)
+
+
+def prepare_yearly_candidate_pmids(
+    yearly_df: pd.DataFrame,
+    *,
+    exclude_pmids: set[str] | None = None,
+    max_pmids: int | None = None,
+) -> pd.DataFrame:
+    """Flatten yearly pair rows to one row per PMID/pathogen/antibiotic/year."""
+    required_cols = {"pathogen", "antibiotic", "year", "pmids"}
+    missing = required_cols - set(yearly_df.columns)
+    if missing:
+        raise KeyError(f"yearly_df missing required columns: {sorted(missing)}")
+
+    work = yearly_df.copy()
+    work = work.explode("pmids").dropna(subset=["pmids"]).copy()
+    work["pmid"] = work["pmids"].astype(str).str.extract(r"(\d+)")[0]
+    work = work.dropna(subset=["pmid"])
+    work["year"] = pd.to_numeric(work["year"], errors="coerce").astype("Int64")
+    work = work.dropna(subset=["year"])
+    work["year"] = work["year"].astype(int)
+    work = work[["pmid", "pathogen", "antibiotic", "year"]].drop_duplicates()
+    if exclude_pmids:
+        work = work[~work["pmid"].astype(str).isin(exclude_pmids)]
+    if max_pmids:
+        work = work.head(max_pmids)
+    return work.sort_values(["year", "pathogen", "antibiotic", "pmid"]).reset_index(drop=True)
+
+
+def _normalize_unified_decision(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("yes"):
+        return "yes"
+    if text.startswith("no"):
+        return "no"
+    if text.startswith("uncertain"):
+        return "uncertain"
+    return "uncertain"
+
+
+def run_unified_llm_filter(
+    candidate_df: pd.DataFrame,
+    llm,
+    *,
+    email: str | None = None,
+    rate_limit: float = 0.35,
+    system_prompt: str = UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+    output_path: str | None = None,
+    resume_from: pd.DataFrame | None = None,
+    save_every: int = 50,
+    progress_every: int = 25,
+    max_llm_calls: int | None = None,
+    dry_run: bool = False,
+    verbose: int = 1,
+    log_path: str | None = None,
+    abstract_cache_path: str | None = "pmid_abstracts.parquet",
+    abstract_cache_save_every: int | None = 200,
+) -> pd.DataFrame:
+    """Run the unified AMR + scientific-interest LLM screen on yearly candidates."""
+    required_cols = {"pmid", "pathogen", "antibiotic", "year"}
+    missing = required_cols - set(candidate_df.columns)
+    if missing:
+        raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
+
+    def _append_log(message: str) -> None:
+        if log_path:
+            _log(log_path, message)
+
+    def _progress(message: str) -> None:
+        if verbose >= 1:
+            print(message)
+        _append_log(message)
+
+    existing = pd.DataFrame()
+    key_cols = ["pmid", "pathogen", "antibiotic", "year"]
+    seen_keys: set[tuple[str, str, str, int]] = set()
+    if resume_from is not None and not resume_from.empty:
+        existing = resume_from.copy()
+        if set(key_cols).issubset(existing.columns):
+            for row in existing[key_cols].itertuples(index=False):
+                seen_keys.add((str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year)))
+
+    abstract_cache: dict[str, tuple[str, str]] = {}
+    cache_dirty = False
+    if abstract_cache_path and os.path.exists(abstract_cache_path):
+        try:
+            cache_df = pd.read_parquet(abstract_cache_path)
+            if {"pmid", "title", "abstract"}.issubset(cache_df.columns):
+                for row in cache_df[["pmid", "title", "abstract"]].itertuples(index=False):
+                    abstract_cache[str(row.pmid)] = (row.title or "", row.abstract or "")
+        except Exception as exc:
+            _append_log(f"Failed loading abstract cache from {abstract_cache_path}: {exc}")
+
+    results: list[dict] = []
+    total = len(candidate_df)
+    llm_calls_used = 0
+    session = requests.Session()
+    for idx, row in enumerate(candidate_df.itertuples(index=False), start=1):
+        key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+        if key in seen_keys:
+            continue
+        pmid = str(row.pmid)
+        pathogen = str(row.pathogen)
+        antibiotic = str(row.antibiotic)
+        year = int(row.year)
+
+        if pmid in abstract_cache:
+            title, abstract = abstract_cache[pmid]
+        else:
+            title, abstract, status = fetch_pubmed_abstract(pmid, email=email, session=session)
+            if status == "network_error":
+                _append_log(f"Skipping PMID {pmid} due to network error.")
+                time.sleep(rate_limit)
+                continue
+            abstract_cache[pmid] = (title, abstract)
+            cache_dirty = True
+            time.sleep(rate_limit)
+
+        if not abstract:
+            decision = "uncertain"
+            rationale = "no abstract"
+            raw_decision = "no_abstract"
+        elif dry_run:
+            decision = "uncertain"
+            rationale = "dry_run"
+            raw_decision = "dry_run"
+        else:
+            if max_llm_calls is not None and llm_calls_used >= max_llm_calls:
+                break
+            verdict = classify_abstract(
+                llm,
+                pmid,
+                pathogen,
+                antibiotic,
+                title,
+                abstract,
+                system_prompt=system_prompt,
+                max_tokens=256,
+                log_path=log_path,
+            )
+            raw_decision = str(verdict.get("decision", "uncertain"))
+            decision = _normalize_unified_decision(raw_decision)
+            rationale = str(verdict.get("rationale", "") or "").strip()
+            llm_calls_used += 1
+            time.sleep(rate_limit)
+
+        results.append(
+            {
+                "pmid": pmid,
+                "pathogen": pathogen,
+                "antibiotic": antibiotic,
+                "year": year,
+                "unified_decision": decision,
+                "unified_raw_decision": raw_decision,
+                "unified_rationale": rationale,
+                "title": title or "",
+                "abstract": abstract or "",
+            }
+        )
+        seen_keys.add(key)
+
+        if output_path and save_every and len(results) % save_every == 0:
+            tmp_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
+            tmp_df = tmp_df.drop_duplicates(subset=key_cols, keep="last")
+            tmp_df.to_parquet(output_path, index=False)
+
+        if (
+            abstract_cache_path
+            and abstract_cache_save_every
+            and cache_dirty
+            and len(results) % int(abstract_cache_save_every) == 0
+        ):
+            cache_df = pd.DataFrame(
+                [{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()]
+            )
+            cache_df.to_parquet(abstract_cache_path, index=False)
+            cache_dirty = False
+
+        if verbose >= 1 and progress_every and len(results) % progress_every == 0:
+            batch_df = pd.DataFrame(results)
+            yes_n = int((batch_df["unified_decision"] == "yes").sum())
+            no_n = int((batch_df["unified_decision"] == "no").sum())
+            unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
+            _progress(
+                f"Processed {len(results):>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6}"
+            )
+
+    out_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
+    if not out_df.empty:
+        out_df = out_df.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
+    if output_path:
+        out_df.to_parquet(output_path, index=False)
+    if abstract_cache_path and abstract_cache:
+        cache_df = pd.DataFrame(
+            [{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()]
+        )
+        cache_df.to_parquet(abstract_cache_path, index=False)
+    session.close()
+    return out_df
 
 
 def run_llm_filter(
@@ -431,6 +645,66 @@ def run_llm_filter(
     return df_out
 
 
+def build_yearly_screened_pairs(
+    yearly_df: pd.DataFrame,
+    unified_df: pd.DataFrame,
+    *,
+    include_decisions: Iterable[str] = ("yes", "uncertain"),
+    output_path: str | None = None,
+) -> pd.DataFrame:
+    """Filter yearly PMIDs by unified decisions and reaggregate yearly pair counts."""
+    required_yearly = {"pathogen", "antibiotic", "year", "pmids"}
+    missing_yearly = required_yearly - set(yearly_df.columns)
+    if missing_yearly:
+        raise KeyError(f"yearly_df missing required columns: {sorted(missing_yearly)}")
+
+    required_screen = {"pmid", "pathogen", "antibiotic", "year", "unified_decision"}
+    missing_screen = required_screen - set(unified_df.columns)
+    if missing_screen:
+        raise KeyError(f"unified_df missing required columns: {sorted(missing_screen)}")
+
+    include_set = {str(v).strip().lower() for v in include_decisions}
+    if not include_set:
+        raise ValueError("include_decisions cannot be empty.")
+
+    work = yearly_df.copy()
+    work = work.explode("pmids").dropna(subset=["pmids"]).copy()
+    work["pmid"] = work["pmids"].astype(str).str.extract(r"(\d+)")[0]
+    work = work.dropna(subset=["pmid"])
+    work["year"] = pd.to_numeric(work["year"], errors="coerce").astype("Int64")
+    work = work.dropna(subset=["year"])
+    work["year"] = work["year"].astype(int)
+
+    keep_keys = (
+        unified_df.loc[
+            unified_df["unified_decision"].astype(str).str.lower().isin(include_set),
+            ["pmid", "pathogen", "antibiotic", "year"],
+        ]
+        .drop_duplicates()
+        .astype({"pmid": str, "pathogen": str, "antibiotic": str, "year": int})
+    )
+    if keep_keys.empty:
+        out = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+        if output_path:
+            out.to_parquet(output_path, index=False)
+        return out
+
+    filtered = work.merge(keep_keys, on=["pmid", "pathogen", "antibiotic", "year"], how="inner")
+    filtered = filtered.drop_duplicates(subset=["pmid", "pathogen", "antibiotic", "year"])
+    out = (
+        filtered.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+        .agg(
+            count=("pmid", "nunique"),
+            pmids=("pmid", lambda values: sorted(pd.unique(values))),
+        )
+        .sort_values(["pathogen", "antibiotic", "year"])
+        .reset_index(drop=True)
+    )
+    if output_path:
+        out.to_parquet(output_path, index=False)
+    return out
+
+
 def build_positive_dataset(
     pmid_df: pd.DataFrame,
     filtered_df: pd.DataFrame,
@@ -498,11 +772,15 @@ def build_positive_dataset(
 
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
+    "UNIFIED_AMR_INTEREST_SYSTEM_PROMPT",
     "PUBMED_EFETCH",
     "fetch_pubmed_abstract",
     "build_user_prompt",
     "classify_abstract",
     "prepare_pmids_to_review",
+    "prepare_yearly_candidate_pmids",
+    "run_unified_llm_filter",
+    "build_yearly_screened_pairs",
     "run_llm_filter",
     "build_positive_dataset",
 ]
