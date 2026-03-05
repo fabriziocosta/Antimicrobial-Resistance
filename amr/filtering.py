@@ -234,6 +234,7 @@ def run_unified_llm_filter(
     log_path: str | None = None,
     abstract_cache_path: str | None = "pmid_abstracts.parquet",
     abstract_cache_save_every: int | None = 200,
+    auto_resume_from_output: bool = True,
 ) -> pd.DataFrame:
     """Run the unified AMR + scientific-interest LLM screen on yearly candidates."""
     required_cols = {"pmid", "pathogen", "antibiotic", "year"}
@@ -253,6 +254,16 @@ def run_unified_llm_filter(
     existing = pd.DataFrame()
     key_cols = ["pmid", "pathogen", "antibiotic", "year"]
     seen_keys: set[tuple[str, str, str, int]] = set()
+    if (
+        auto_resume_from_output
+        and resume_from is None
+        and output_path
+        and os.path.exists(output_path)
+    ):
+        try:
+            resume_from = pd.read_parquet(output_path)
+        except Exception as exc:
+            _append_log(f"Failed loading existing unified output from {output_path}: {exc}")
     if resume_from is not None and not resume_from.empty:
         existing = resume_from.copy()
         if set(key_cols).issubset(existing.columns):
@@ -651,6 +662,7 @@ def build_yearly_screened_pairs(
     *,
     include_decisions: Iterable[str] = ("yes", "uncertain"),
     output_path: str | None = None,
+    merge_with_existing_output: bool = True,
 ) -> pd.DataFrame:
     """Filter yearly PMIDs by unified decisions and reaggregate yearly pair counts."""
     required_yearly = {"pathogen", "antibiotic", "year", "pmids"}
@@ -700,6 +712,25 @@ def build_yearly_screened_pairs(
         .sort_values(["pathogen", "antibiotic", "year"])
         .reset_index(drop=True)
     )
+    if output_path and merge_with_existing_output and os.path.exists(output_path):
+        existing_out = pd.read_parquet(output_path)
+        existing_out = existing_out[["pathogen", "antibiotic", "year", "count", "pmids"]].copy()
+        existing_out["year"] = pd.to_numeric(existing_out["year"], errors="coerce").astype("Int64")
+        existing_out = existing_out.dropna(subset=["year"]).copy()
+        existing_out["year"] = existing_out["year"].astype(int)
+        existing_out["pmids"] = existing_out["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+        out["pmids"] = out["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+        combined = pd.concat([existing_out, out], ignore_index=True)
+        out = (
+            combined.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+            .agg(
+                pmids=("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
+                count=("count", "max"),
+            )
+            .sort_values(["pathogen", "antibiotic", "year"])
+            .reset_index(drop=True)
+        )
+        out["count"] = out["pmids"].apply(len)
     if output_path:
         out.to_parquet(output_path, index=False)
     return out

@@ -1,4 +1,5 @@
 import unittest
+from tempfile import NamedTemporaryFile
 from unittest.mock import patch
 
 import pandas as pd
@@ -85,6 +86,82 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out.loc[0, "count"], 2)
         self.assertEqual(out.loc[0, "pmids"], ["111", "222"])
+
+    def test_build_yearly_screened_pairs_merges_with_existing_output(self) -> None:
+        yearly_df = pd.DataFrame(
+            {
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2021],
+                "pmids": [["444"]],
+            }
+        )
+        unified_df = pd.DataFrame(
+            {
+                "pmid": ["444"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2021],
+                "unified_decision": ["yes"],
+            }
+        )
+        existing_out = pd.DataFrame(
+            {
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "count": [1],
+                "pmids": [["111"]],
+            }
+        )
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            existing_out.to_parquet(tmp.name, index=False)
+            out = build_yearly_screened_pairs(
+                yearly_df,
+                unified_df,
+                output_path=tmp.name,
+                merge_with_existing_output=True,
+            )
+            self.assertEqual(set(out["year"]), {2020, 2021})
+
+    @patch("amr.filtering.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_auto_resume_from_output(self, mock_fetch: patch) -> None:
+        mock_fetch.return_value = ("t", "clinical resistant isolates", "ok")
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111", "222"],
+                "pathogen": ["p1", "p1"],
+                "antibiotic": ["a1", "a1"],
+                "year": [2020, 2020],
+            }
+        )
+        existing = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "unified_decision": ["yes"],
+                "unified_raw_decision": ["yes"],
+                "unified_rationale": ["cached"],
+                "title": [""],
+                "abstract": [""],
+            }
+        )
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            existing.to_parquet(tmp.name, index=False)
+            out = run_unified_llm_filter(
+                candidates,
+                _FakeLLM(),
+                output_path=tmp.name,
+                auto_resume_from_output=True,
+                verbose=0,
+                abstract_cache_path=None,
+                progress_every=0,
+            )
+            self.assertEqual(len(out), 2)
+            # only PMID 222 should require a new abstract fetch
+            self.assertEqual(mock_fetch.call_count, 1)
 
 
 if __name__ == "__main__":

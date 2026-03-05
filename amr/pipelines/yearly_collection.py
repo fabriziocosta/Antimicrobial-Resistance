@@ -19,6 +19,40 @@ from ..pubmed.yearly import (
     refresh_pubmed_metadata_cache,
 )
 
+def _merge_pair_pmid_frames(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+    if existing_df.empty:
+        return new_df.copy()
+    if new_df.empty:
+        return existing_df.copy()
+    merged = pd.concat([existing_df, new_df], ignore_index=True)
+    key_cols = ["pathogen", "antibiotic", "pmid"]
+    return merged.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
+
+
+def _merge_yearly_pair_frames(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+    if existing_df.empty:
+        return new_df.copy()
+    if new_df.empty:
+        return existing_df.copy()
+
+    key_cols = ["pathogen", "antibiotic", "year"]
+    for frame in (existing_df, new_df):
+        frame["year"] = pd.to_numeric(frame["year"], errors="coerce").astype("Int64")
+        frame["count"] = pd.to_numeric(frame["count"], errors="coerce")
+        frame["pmids"] = frame["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+
+    stacked = pd.concat([existing_df, new_df], ignore_index=True)
+    merged = (
+        stacked.groupby(key_cols, as_index=False)
+        .agg(
+            count=("count", "max"),
+            pmids=("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
+        )
+        .reset_index(drop=True)
+    )
+    merged["count"] = merged["pmids"].apply(len)
+    return merged.sort_values(key_cols).reset_index(drop=True)
+
 
 def collect_yearly_background_counts(
     *,
@@ -96,6 +130,9 @@ def collect_yearly_amr_dataset(
     )
 
     pair_pmid_df = explode_positive_pair_pmids(interval_df)
+    if Path(yearly_pair_pmid_output_path).exists():
+        existing_pair_pmid_df = pd.read_parquet(yearly_pair_pmid_output_path)
+        pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, pair_pmid_df)
     Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
     pair_pmid_df.to_parquet(yearly_pair_pmid_output_path, index=False)
 
@@ -108,6 +145,9 @@ def collect_yearly_amr_dataset(
     )
     enriched_df = attach_pubmed_metadata(pair_pmid_df, metadata_df)
     yearly_df = aggregate_pair_counts_by_year(enriched_df)
+    if Path(output_path).exists():
+        existing_yearly_df = pd.read_parquet(output_path)
+        yearly_df = _merge_yearly_pair_frames(existing_yearly_df, yearly_df)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     yearly_df.to_parquet(output_path, index=False)
