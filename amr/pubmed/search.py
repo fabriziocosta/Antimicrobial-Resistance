@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Sequence, Tuple, List
 from urllib.error import HTTPError, URLError
 
@@ -33,6 +33,13 @@ MONTH_LOOKUP = {
     "nov": 11,
     "dec": 12,
 }
+
+
+def _format_duration_hms(seconds: float | int) -> str:
+    total_seconds = max(0, int(round(float(seconds))))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {secs}s"
 
 
 def parse_pubdate(pubdate: str | None) -> Optional[datetime]:
@@ -207,9 +214,24 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
     total_batches = (len(pmids) + batch_size - 1) // batch_size if len(pmids) > 0 else 0
     if total_batches:
         print(f"[fetch_pub_metadata] fetching metadata for {len(pmids)} PMIDs in {total_batches} batch(es)")
+    start_time = time.time()
     for batch_idx, start in enumerate(range(0, len(pmids), batch_size), start=1):
         batch = pmids[start : start + batch_size]
-        print(f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} ({len(batch)} PMIDs)")
+        completed_batches = batch_idx - 1
+        if completed_batches > 0:
+            elapsed = time.time() - start_time
+            avg_batch_seconds = elapsed / completed_batches
+            remaining_batches = total_batches - completed_batches
+            eta_seconds = avg_batch_seconds * remaining_batches
+            eta_text = _format_duration_hms(eta_seconds)
+            est_finish = (datetime.now() + timedelta(seconds=eta_seconds)).strftime("%H:%M:%S")
+        else:
+            eta_text = "estimating"
+            est_finish = "--:--:--"
+        print(
+            f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} "
+            f"({len(batch)} PMIDs) | ETA {eta_text} | est finish {est_finish}"
+        )
         for attempt in range(RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)

@@ -6,6 +6,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from typing import Iterable
 from xml.etree import ElementTree as ET
 
@@ -54,6 +55,13 @@ def _log(log_path: str | None, message: str) -> None:
     if log_path:
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(stamped + "\n")
+
+
+def _format_hms(seconds: float | int) -> str:
+    total_seconds = max(0, int(round(float(seconds))))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {secs}s"
 
 
 def fetch_pubmed_abstract(
@@ -438,7 +446,21 @@ def run_unified_llm_filter(
             yes_n = int((batch_df["unified_decision"] == "yes").sum())
             no_n = int((batch_df["unified_decision"] == "no").sum())
             unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
-            _progress(f"Processed {len(results):>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6}")
+            completed = len(results)
+            if completed > 0 and total > 0:
+                elapsed_s = time.time() - run_started_at
+                avg_s_per_item = elapsed_s / completed
+                remaining_items = max(0, total - completed)
+                eta_s = avg_s_per_item * remaining_items
+                eta_text = _format_hms(eta_s)
+                est_finish = (datetime.now() + timedelta(seconds=eta_s)).strftime("%H:%M:%S")
+            else:
+                eta_text = "estimating"
+                est_finish = "--:--:--"
+            _progress(
+                f"Processed {completed:>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6} "
+                f"| ETA {eta_text} | est finish {est_finish}"
+            )
 
     def _run_llm_batch(batch: list[dict]) -> list[dict]:
         if not batch:
@@ -498,6 +520,9 @@ def run_unified_llm_filter(
     total = len(candidate_df)
     llm_calls_used = 0
     pending_batch: list[dict] = []
+    run_started_at = time.time()
+    if verbose >= 1:
+        _progress(f"[unified_filter] starting run for {total} candidate rows")
 
     for row in candidate_df.itertuples(index=False):
         key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))

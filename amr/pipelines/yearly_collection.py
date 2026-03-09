@@ -89,6 +89,105 @@ def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.Dat
     return merged
 
 
+def build_collection_preflight_summary(
+    *,
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
+    min_date: str,
+    max_date: str,
+    interval_year_gap: int,
+    intervals_output_path: str | Path,
+    yearly_pair_pmid_path: str | Path,
+    yearly_output_path: str | Path,
+    pathogen_bg_path: str | Path,
+    antibiotic_bg_path: str | Path,
+    background_start_year: int,
+    background_end_year: int,
+) -> dict[str, object]:
+    """Summarize cached yearly-collection artifacts for a given run window."""
+    overall_start_dt = pd.to_datetime(min_date, format="%Y/%m/%d")
+    overall_end_dt = pd.to_datetime(max_date, format="%Y/%m/%d")
+
+    intervals: list[tuple[str, str]] = []
+    current = overall_start_dt
+    while current <= overall_end_dt:
+        end = pd.Timestamp(min(current.year + interval_year_gap - 1, overall_end_dt.year), 12, 31)
+        if end > overall_end_dt:
+            end = overall_end_dt
+        intervals.append((current.strftime("%Y/%m/%d"), end.strftime("%Y/%m/%d")))
+        current = pd.Timestamp(end.year + 1, 1, 1)
+
+    expected_interval_rows = len(pathogens) * len(antibiotics) * len(intervals)
+
+    interval_rows = 0
+    interval_unique_pairs = 0
+    interval_unique_pathogens = 0
+    interval_unique_antibiotics = 0
+    interval_missing_rows = expected_interval_rows
+    intervals_output_path = Path(intervals_output_path)
+    if intervals_output_path.exists():
+        interval_df = pd.read_parquet(
+            intervals_output_path,
+            columns=["pathogen", "antibiotic", "start_date", "end_date"],
+        )
+        target_intervals = pd.DataFrame(intervals, columns=["start_date", "end_date"])
+        interval_df = interval_df.merge(target_intervals, on=["start_date", "end_date"], how="inner")
+        interval_rows = len(interval_df)
+        interval_unique_pairs = interval_df[["pathogen", "antibiotic"]].drop_duplicates().shape[0]
+        interval_unique_pathogens = interval_df["pathogen"].astype(str).nunique()
+        interval_unique_antibiotics = interval_df["antibiotic"].astype(str).nunique()
+        interval_missing_rows = max(expected_interval_rows - interval_rows, 0)
+
+    yearly_rows = 0
+    yearly_year_min = None
+    yearly_year_max = None
+    yearly_output_path = Path(yearly_output_path)
+    if yearly_output_path.exists():
+        yearly_df = pd.read_parquet(yearly_output_path, columns=["year"])
+        yearly_rows = len(yearly_df)
+        if not yearly_df.empty:
+            years = pd.to_numeric(yearly_df["year"], errors="coerce").dropna().astype(int)
+            if not years.empty:
+                yearly_year_min = int(years.min())
+                yearly_year_max = int(years.max())
+
+    yearly_pair_pmid_rows = 0
+    yearly_pair_pmid_path = Path(yearly_pair_pmid_path)
+    if yearly_pair_pmid_path.exists():
+        yearly_pair_pmid_rows = len(pd.read_parquet(yearly_pair_pmid_path, columns=["pmid"]))
+
+    expected_pathogen_bg = len(pathogens) * (background_end_year - background_start_year + 1)
+    pathogen_bg_rows = 0
+    pathogen_bg_path = Path(pathogen_bg_path)
+    if pathogen_bg_path.exists():
+        pathogen_bg_rows = len(pd.read_parquet(pathogen_bg_path, columns=["pathogen", "year"]))
+
+    expected_antibiotic_bg = len(antibiotics) * (background_end_year - background_start_year + 1)
+    antibiotic_bg_rows = 0
+    antibiotic_bg_path = Path(antibiotic_bg_path)
+    if antibiotic_bg_path.exists():
+        antibiotic_bg_rows = len(pd.read_parquet(antibiotic_bg_path, columns=["antibiotic", "year"]))
+
+    return {
+        "intervals": intervals,
+        "expected_interval_rows": expected_interval_rows,
+        "cached_interval_rows": interval_rows,
+        "missing_interval_rows": interval_missing_rows,
+        "cached_interval_pct": (interval_rows / expected_interval_rows * 100) if expected_interval_rows else 100.0,
+        "cached_unique_pairs": interval_unique_pairs,
+        "cached_unique_pathogens": interval_unique_pathogens,
+        "cached_unique_antibiotics": interval_unique_antibiotics,
+        "yearly_rows": yearly_rows,
+        "yearly_year_min": yearly_year_min,
+        "yearly_year_max": yearly_year_max,
+        "yearly_pair_pmid_rows": yearly_pair_pmid_rows,
+        "pathogen_bg_rows": pathogen_bg_rows,
+        "expected_pathogen_bg_rows": expected_pathogen_bg,
+        "antibiotic_bg_rows": antibiotic_bg_rows,
+        "expected_antibiotic_bg_rows": expected_antibiotic_bg,
+    }
+
+
 def collect_yearly_background_counts(
     *,
     pathogens: Sequence[str],
@@ -208,6 +307,7 @@ def collect_yearly_amr_dataset(
 
 
 __all__ = [
+    "build_collection_preflight_summary",
     "collect_yearly_background_counts",
     "collect_yearly_amr_dataset",
 ]
