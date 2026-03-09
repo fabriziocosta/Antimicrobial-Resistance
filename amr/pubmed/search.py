@@ -98,6 +98,56 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
     return 0
 
 
+def search_term_clause(
+    term_clause: str,
+    *,
+    min_date: str,
+    max_date: str,
+    email: str,
+) -> Tuple[str, int, Optional[str], Optional[str]]:
+    """Search PubMed for an arbitrary term clause constrained to a publication-date window."""
+    Entrez.email = email
+    query = f'({term_clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
+    print(f"[search_term_clause] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
+
+    for i in range(RETRIES):
+        try:
+            time.sleep(RATE_LIMIT_DELAY)
+            handle = Entrez.esearch(db="pubmed", term=query, usehistory="y", retmax=0)
+            try:
+                record = Entrez.read(handle)
+            except Exception as e:
+                if i == RETRIES - 1:
+                    print(f"Failed to parse Entrez response after retries: {e}")
+                    record = {}
+                else:
+                    delay = BACKOFF_FACTOR * (2**i)
+                    print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+            handle.close()
+
+            total_count = int(record.get("Count", 0))
+            webenv = record.get("WebEnv")
+            query_key = record.get("QueryKey")
+            if total_count == 0:
+                return query, 0, None, None
+            if not webenv or not query_key:
+                print("Warning: missing WebEnv or QueryKey — skipping retrieval.")
+                return query, 0, None, None
+            return query, total_count, webenv, query_key
+        except (HTTPError, URLError) as e:
+            delay = BACKOFF_FACTOR * (2**i)
+            print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay} seconds...")
+            time.sleep(delay)
+        except Exception as e:  # pragma: no cover - defensive
+            print(f"Unexpected error during Entrez search: {e}")
+            break
+
+    print(f"Failed to connect to Entrez after {RETRIES} retries.")
+    return query, 0, None, None
+
+
 def search_pmids(
     antibiotic: str,
     pathogen: str,

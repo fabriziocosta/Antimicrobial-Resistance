@@ -15,6 +15,7 @@ from amr.pubmed.queries import (
 )
 from amr.pubmed.search import (
     esearch_count_for_year,
+    search_term_clause,
     search_pmids,
     retrieve_pmids,
 )
@@ -415,36 +416,105 @@ __all__ = [
 ]
 
 
-def count_pmids_per_year_for_pathogens_resumable(
-    pathogens: Sequence[str],
-    bacteria_synonym_df: pd.DataFrame,
-    *,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    email: str = "your_email@example.com",
-    output_path: str = "pathogen_tiab_counts.parquet",
-    save_every: int = 200,
-    progress_every: int = 50,
-) -> pd.DataFrame:
-    """Resumable variant of yearly PMID counts per pathogen (TIAB + synonyms).
+def _year_count_rows(entity_col: str, entity_value: str, start_year: int, end_year: int, year_to_count: dict[int, int]) -> list[dict]:
+    return [
+        {entity_col: entity_value, "year": year, "count": int(year_to_count.get(year, 0))}
+        for year in range(start_year, end_year + 1)
+    ]
 
-    - Skips (pathogen, year) pairs already present in ``output_path``.
-    - Periodically merges and saves results; safe to interrupt and resume.
-    - Deduplicates on (pathogen, year) when saving.
-    """
+
+def _count_pmids_per_year_via_windows(
+    *,
+    entity_value: str,
+    entity_col: str,
+    clause: str,
+    start_year: int,
+    end_year: int,
+    email: str,
+    metadata_cache: dict[str, dict],
+    fetch_threshold: int,
+    metadata_batch_size: int,
+) -> list[dict]:
+    """Count yearly PMIDs by recursively querying date windows and partitioning locally when feasible."""
+    if start_year > end_year:
+        return []
+
+    min_date = f"{start_year}/01/01"
+    max_date = f"{end_year}/12/31"
+    _, total_count, webenv, query_key = search_term_clause(
+        clause,
+        min_date=min_date,
+        max_date=max_date,
+        email=email,
+    )
+
+    if total_count == 0:
+        return _year_count_rows(entity_col, entity_value, start_year, end_year, {})
+
+    if start_year == end_year:
+        return [{entity_col: entity_value, "year": start_year, "count": int(total_count)}]
+
+    if total_count <= fetch_threshold and webenv and query_key:
+        query = f'({clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
+        pmids_all = list(dict.fromkeys(retrieve_pmids(query, webenv, query_key, total_count)))
+        update_metadata_cache(pmids_all, metadata_cache, email=email, batch_size=metadata_batch_size)
+        year_to_count: dict[int, int] = {}
+        for pmid in pmids_all:
+            meta = get_metadata(pmid, metadata_cache)
+            pub_date = meta["date"]
+            if not pub_date:
+                continue
+            pub_year = int(pub_date.year)
+            if start_year <= pub_year <= end_year:
+                year_to_count[pub_year] = year_to_count.get(pub_year, 0) + 1
+        return _year_count_rows(entity_col, entity_value, start_year, end_year, year_to_count)
+
+    mid_year = (start_year + end_year) // 2
+    left_rows = _count_pmids_per_year_via_windows(
+        entity_value=entity_value,
+        entity_col=entity_col,
+        clause=clause,
+        start_year=start_year,
+        end_year=mid_year,
+        email=email,
+        metadata_cache=metadata_cache,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
+    right_rows = _count_pmids_per_year_via_windows(
+        entity_value=entity_value,
+        entity_col=entity_col,
+        clause=clause,
+        start_year=mid_year + 1,
+        end_year=end_year,
+        email=email,
+        metadata_cache=metadata_cache,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
+    return left_rows + right_rows
+
+
+def _count_pmids_per_year_resumable(
+    *,
+    entity_values: Sequence[str],
+    entity_col: str,
+    clause_builder,
+    output_path: str,
+    start_year: int,
+    end_year: int,
+    email: str,
+    save_every: int,
+    progress_every: int,
+    fetch_threshold: int,
+    metadata_batch_size: int,
+) -> pd.DataFrame:
     import os
 
-    # Coerce inputs
-    pathogens = list(pathogens)
-    if len(pathogens) == 0:
-        return pd.DataFrame(columns=["pathogen", "year", "count"])
+    entity_values = [str(v) for v in entity_values]
+    if len(entity_values) == 0:
+        return pd.DataFrame(columns=[entity_col, "year", "count"])
 
-    if start_year is None:
-        start_year = 1950
-    if end_year is None:
-        end_year = datetime.now().year
-
-    # Load existing partial results if present
     if os.path.exists(output_path):
         try:
             existing = pd.read_parquet(output_path)
@@ -452,53 +522,71 @@ def count_pmids_per_year_for_pathogens_resumable(
             try:
                 existing = pd.read_csv(output_path)
             except Exception:
-                existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+                existing = pd.DataFrame(columns=[entity_col, "year", "count"])
     else:
-        existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+        existing = pd.DataFrame(columns=[entity_col, "year", "count"])
 
-    if not {"pathogen", "year", "count"}.issubset(existing.columns):
-        existing = pd.DataFrame(columns=["pathogen", "year", "count"])
+    if not {entity_col, "year", "count"}.issubset(existing.columns):
+        existing = pd.DataFrame(columns=[entity_col, "year", "count"])
 
-    existing["pathogen"] = existing["pathogen"].astype(str)
+    existing[entity_col] = existing[entity_col].astype(str)
     existing["year"] = pd.to_numeric(existing["year"], errors="coerce").astype("Int64")
-    done_pairs = set(zip(existing["pathogen"].astype(str), existing["year"].astype(int, errors="ignore")))
 
-    # Build task list of missing (pathogen, year)
+    tasks: list[tuple[str, int, int]] = []
     years = list(range(start_year, end_year + 1))
-    tasks: list[tuple[str, int]] = []
-    for p in pathogens:
-        p_str = str(p)
-        for y in years:
-            if (p_str, y) not in done_pairs:
-                tasks.append((p_str, y))
+    for entity_value in entity_values:
+        completed_years = set(
+            existing.loc[existing[entity_col] == entity_value, "year"].dropna().astype(int).tolist()
+        )
+        missing_years = [year for year in years if year not in completed_years]
+        if not missing_years:
+            continue
+        window_start = missing_years[0]
+        prev_year = missing_years[0]
+        for year in missing_years[1:]:
+            if year == prev_year + 1:
+                prev_year = year
+                continue
+            tasks.append((entity_value, window_start, prev_year))
+            window_start = year
+            prev_year = year
+        tasks.append((entity_value, window_start, prev_year))
 
     total = len(tasks)
     if total == 0:
-        return existing.sort_values(["pathogen", "year"]).reset_index(drop=True)
+        return existing.sort_values([entity_col, "year"]).reset_index(drop=True)
 
     results: list[dict] = []
+    metadata_cache: dict[str, dict] = {}
 
     import time
     from collections import deque
-    start_ts = time.time()
-    # Use only recent runtime throughput for ETA, ignoring idle delays
-    RECENT_WINDOW_SEC = 900  # 15 minutes
-    recent_progress = deque()  # (timestamp, idx)
+
+    recent_progress = deque()
+    RECENT_WINDOW_SEC = 900
 
     try:
-        for idx, (p, y) in enumerate(tasks, start=1):
-            clause = build_pathogen_tiab_query(p, bacteria_synonym_df)
-            cnt = esearch_count_for_year(clause, y, email=email)
-            results.append({"pathogen": p, "year": y, "count": int(cnt)})
+        for idx, (entity_value, window_start, window_end) in enumerate(tasks, start=1):
+            clause = clause_builder(entity_value)
+            window_rows = _count_pmids_per_year_via_windows(
+                entity_value=entity_value,
+                entity_col=entity_col,
+                clause=clause,
+                start_year=window_start,
+                end_year=window_end,
+                email=email,
+                metadata_cache=metadata_cache,
+                fetch_threshold=fetch_threshold,
+                metadata_batch_size=metadata_batch_size,
+            )
+            results.extend(window_rows)
 
             if progress_every and (idx % progress_every == 0):
                 now = time.time()
                 recent_progress.append((now, idx))
-                # Drop samples outside the recent window
                 cutoff = now - RECENT_WINDOW_SEC
                 while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
                     recent_progress.popleft()
-                # Compute recent rate
                 eta_str = "[ETA --]"
                 if len(recent_progress) >= 2:
                     dt = recent_progress[-1][0] - recent_progress[0][0]
@@ -510,12 +598,15 @@ def count_pmids_per_year_for_pathogens_resumable(
                         eta_h = int(eta_sec // 3600)
                         eta_m = int((eta_sec % 3600) // 60)
                         eta_str = f"[ETA {eta_h}h {eta_m} min]"
-                print(f"Progress: {idx}/{total} pairs processed… {eta_str}")
+                print(
+                    f"Progress: {idx}/{total} windows processed… {eta_str} | "
+                    f"{entity_col}={entity_value} | years={window_start}-{window_end}"
+                )
 
             if save_every and (len(results) >= save_every):
                 batch_df = pd.DataFrame(results)
                 combined = pd.concat([existing, batch_df], ignore_index=True)
-                combined = combined.drop_duplicates(subset=["pathogen", "year"], keep="last")
+                combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
                 combined.to_parquet(output_path, index=False)
                 existing = combined
                 results = []
@@ -525,14 +616,57 @@ def count_pmids_per_year_for_pathogens_resumable(
         if results:
             batch_df = pd.DataFrame(results)
             combined = pd.concat([existing, batch_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=["pathogen", "year"], keep="last")
+            combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
             try:
                 combined.to_parquet(output_path, index=False)
             except Exception:
                 combined.to_csv(output_path, index=False)
             existing = combined
 
-    return existing.sort_values(["pathogen", "year"]).reset_index(drop=True)
+    return existing.sort_values([entity_col, "year"]).reset_index(drop=True)
+
+
+def count_pmids_per_year_for_pathogens_resumable(
+    pathogens: Sequence[str],
+    bacteria_synonym_df: pd.DataFrame,
+    *,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    email: str = "your_email@example.com",
+    output_path: str = "pathogen_tiab_counts.parquet",
+    save_every: int = 200,
+    progress_every: int = 50,
+    fetch_threshold: int = 2000,
+    metadata_batch_size: int = 200,
+) -> pd.DataFrame:
+    """Resumable variant of yearly PMID counts per pathogen (TIAB + synonyms).
+
+    - Skips (pathogen, year) pairs already present in ``output_path``.
+    - Periodically merges and saves results; safe to interrupt and resume.
+    - Deduplicates on (pathogen, year) when saving.
+    """
+    pathogens = list(pathogens)
+    if len(pathogens) == 0:
+        return pd.DataFrame(columns=["pathogen", "year", "count"])
+
+    if start_year is None:
+        start_year = 1950
+    if end_year is None:
+        end_year = datetime.now().year
+
+    return _count_pmids_per_year_resumable(
+        entity_values=pathogens,
+        entity_col="pathogen",
+        clause_builder=lambda pathogen: build_pathogen_tiab_query(pathogen, bacteria_synonym_df),
+        output_path=output_path,
+        start_year=start_year,
+        end_year=end_year,
+        email=email,
+        save_every=save_every,
+        progress_every=progress_every,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
 
 
 def count_pmids_per_year_for_antibiotics_resumable(
@@ -544,6 +678,8 @@ def count_pmids_per_year_for_antibiotics_resumable(
     output_path: str = "antibiotic_tiab_counts.parquet",
     save_every: int = 200,
     progress_every: int = 50,
+    fetch_threshold: int = 2000,
+    metadata_batch_size: int = 200,
 ) -> pd.DataFrame:
     """Resumable yearly PMID counts per antibiotic (Title/Abstract; hyphen/slash variants).
 
@@ -551,8 +687,6 @@ def count_pmids_per_year_for_antibiotics_resumable(
     - Skips already-processed (antibiotic, year) pairs from ``output_path``.
     - Saves incrementally and resumes safely after interruption.
     """
-    import os
-
     antibiotics = list(antibiotics)
     if len(antibiotics) == 0:
         return pd.DataFrame(columns=["antibiotic", "year", "count"])
@@ -562,91 +696,16 @@ def count_pmids_per_year_for_antibiotics_resumable(
     if end_year is None:
         end_year = datetime.now().year
 
-    # Load existing
-    if os.path.exists(output_path):
-        try:
-            existing = pd.read_parquet(output_path)
-        except Exception:
-            try:
-                existing = pd.read_csv(output_path)
-            except Exception:
-                existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
-    else:
-        existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
-
-    if not {"antibiotic", "year", "count"}.issubset(existing.columns):
-        existing = pd.DataFrame(columns=["antibiotic", "year", "count"])
-
-    existing["antibiotic"] = existing["antibiotic"].astype(str)
-    existing["year"] = pd.to_numeric(existing["year"], errors="coerce").astype("Int64")
-    done_pairs = set(zip(existing["antibiotic"].astype(str), existing["year"].astype(int, errors="ignore")))
-
-    years = list(range(start_year, end_year + 1))
-    tasks: list[tuple[str, int]] = []
-    for ab in antibiotics:
-        ab_str = str(ab)
-        for y in years:
-            if (ab_str, y) not in done_pairs:
-                tasks.append((ab_str, y))
-
-    total = len(tasks)
-    if total == 0:
-        return existing.sort_values(["antibiotic", "year"]).reset_index(drop=True)
-
-    results: list[dict] = []
-
-    import time
-    from collections import deque
-    start_ts = time.time()
-    # Use only recent runtime throughput for ETA, ignoring idle delays
-    RECENT_WINDOW_SEC = 900  # 15 minutes
-    recent_progress = deque()  # (timestamp, idx)
-
-    try:
-        for idx, (ab, y) in enumerate(tasks, start=1):
-            clause = prepare_antibiotic_pubmed_query_tiab(ab)
-            cnt = esearch_count_for_year(clause, y, email=email)
-            results.append({"antibiotic": ab, "year": y, "count": int(cnt)})
-
-            if progress_every and (idx % progress_every == 0):
-                now = time.time()
-                recent_progress.append((now, idx))
-                # Drop samples outside the recent window
-                cutoff = now - RECENT_WINDOW_SEC
-                while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
-                    recent_progress.popleft()
-                # Compute recent rate
-                eta_str = "[ETA --]"
-                if len(recent_progress) >= 2:
-                    dt = recent_progress[-1][0] - recent_progress[0][0]
-                    dp = recent_progress[-1][1] - recent_progress[0][1]
-                    if dt > 0 and dp > 0:
-                        rate = dp / dt
-                        remaining = max(0, total - idx)
-                        eta_sec = remaining / rate if rate > 0 else 0
-                        eta_h = int(eta_sec // 3600)
-                        eta_m = int((eta_sec % 3600) // 60)
-                        eta_str = f"[ETA {eta_h}h {eta_m} min]"
-                print(f"Progress: {idx}/{total} pairs processed… {eta_str}")
-
-            if save_every and (len(results) >= save_every):
-                batch_df = pd.DataFrame(results)
-                combined = pd.concat([existing, batch_df], ignore_index=True)
-                combined = combined.drop_duplicates(subset=["antibiotic", "year"], keep="last")
-                combined.to_parquet(output_path, index=False)
-                existing = combined
-                results = []
-    except KeyboardInterrupt:
-        print("Interrupted. Saving partial results…")
-    finally:
-        if results:
-            batch_df = pd.DataFrame(results)
-            combined = pd.concat([existing, batch_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=["antibiotic", "year"], keep="last")
-            try:
-                combined.to_parquet(output_path, index=False)
-            except Exception:
-                combined.to_csv(output_path, index=False)
-            existing = combined
-
-    return existing.sort_values(["antibiotic", "year"]).reset_index(drop=True)
+    return _count_pmids_per_year_resumable(
+        entity_values=antibiotics,
+        entity_col="antibiotic",
+        clause_builder=prepare_antibiotic_pubmed_query_tiab,
+        output_path=output_path,
+        start_year=start_year,
+        end_year=end_year,
+        email=email,
+        save_every=save_every,
+        progress_every=progress_every,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
