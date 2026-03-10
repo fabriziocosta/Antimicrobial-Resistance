@@ -13,6 +13,8 @@ from xml.etree import ElementTree as ET
 import pandas as pd
 import requests
 
+from amr.config import EUTILS_API_KEY
+
 DEFAULT_SYSTEM_PROMPT = """
 You are a careful biomedical evidence reviewer. Given a title and abstract, decide whether the authors explicitly state or conclude that the specified pathogen is showing clinically meaningful resistance to the specified antibiotic.
 
@@ -81,6 +83,8 @@ def fetch_pubmed_abstract(
     params = {"db": "pubmed", "id": pmid, "retmode": "xml"}
     if email:
         params["email"] = email
+    if EUTILS_API_KEY:
+        params["api_key"] = EUTILS_API_KEY
     for attempt in range(RETRIES):
         try:
             resp = sess.get(PUBMED_EFETCH, params=params, timeout=30)
@@ -123,6 +127,8 @@ def fetch_pubmed_abstracts_batch(
     params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"}
     if email:
         params["email"] = email
+    if EUTILS_API_KEY:
+        params["api_key"] = EUTILS_API_KEY
 
     for attempt in range(RETRIES):
         try:

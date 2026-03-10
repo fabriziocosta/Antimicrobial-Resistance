@@ -12,6 +12,7 @@ import pandas as pd
 from Bio import Entrez
 
 from amr.config import (
+    EUTILS_API_KEY as API_KEY,
     EUTILS_RETRIES as RETRIES,
     EUTILS_BACKOFF_FACTOR as BACKOFF_FACTOR,
     EUTILS_RATE_LIMIT_DELAY as RATE_LIMIT_DELAY,
@@ -33,6 +34,12 @@ MONTH_LOOKUP = {
     "nov": 11,
     "dec": 12,
 }
+
+
+def _configure_entrez(email: str) -> None:
+    Entrez.email = email
+    if API_KEY:
+        Entrez.api_key = API_KEY
 
 
 def _format_duration_hms(seconds: float | int) -> str:
@@ -67,7 +74,7 @@ def parse_pubdate(pubdate: str | None) -> Optional[datetime]:
 
 def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
     """Return PubMed count for `term_clause` limited to a single publication year."""
-    Entrez.email = email
+    _configure_entrez(email)
     date_clause = f'("{year}/01/01"[Date - Publication] : "{year}/12/31"[Date - Publication])'
     term = f"({term_clause}) AND {date_clause}"
     print(f"[esearch_count_for_year] querying year={year} with up to {RETRIES} attempts")
@@ -106,7 +113,7 @@ def search_term_clause(
     email: str,
 ) -> Tuple[str, int, Optional[str], Optional[str]]:
     """Search PubMed for an arbitrary term clause constrained to a publication-date window."""
-    Entrez.email = email
+    _configure_entrez(email)
     query = f'({term_clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
     print(f"[search_term_clause] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
 
@@ -158,7 +165,7 @@ def search_pmids(
     email: str,
 ) -> Tuple[str, int, Optional[str], Optional[str]]:
     """Search PubMed for PMIDs with retries and exponential backoff."""
-    Entrez.email = email
+    _configure_entrez(email)
     query = build_antibiotic_pathogen_query(
         antibiotic,
         pathogen,
@@ -257,7 +264,7 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
 
 def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.com", batch_size: int = 200):
     """Fetch publication dates and venues for a list of PMIDs."""
-    Entrez.email = email
+    _configure_entrez(email)
     date_map: Dict[str, datetime] = {}
     venue_map: Dict[str, str] = {}
 

@@ -536,6 +536,9 @@ def rank_yearly_pairs_by_future_si_shift(
 
             observed_current_df = pair_df.loc[pair_df["year"] == reference_year]
             current_source = "observed" if not observed_current_df.empty else "predicted"
+            current_count = (
+                float(observed_current_df["count"].iloc[0]) if not observed_current_df.empty and "count" in observed_current_df.columns else np.nan
+            )
             holdout_df = result["detailed_comparison_df"].loc[result["detailed_comparison_df"]["year"] > fit_end_year].copy()
             holdout_df["si_pct_error"] = _safe_pct_error(holdout_df["prediction_error"], holdout_df["observed_SI"])
             n_holdout_years = int(len(holdout_df))
@@ -576,6 +579,7 @@ def rank_yearly_pairs_by_future_si_shift(
                     "latest_available_year": latest_available_year,
                     "n_pair_years": int(pair_df["year"].nunique()),
                     "current_si_source": current_source,
+                    "current_count": current_count,
                     "observed_current_SI": float(observed_current_df["SI"].iloc[0]) if not observed_current_df.empty else np.nan,
                     "current_predicted_SI": float(current_row["predicted_SI"]),
                     "current_predicted_count": float(current_row["predicted_count_loess"]),

@@ -636,7 +636,7 @@ def count_pmids_per_year_for_pathogens_resumable(
     output_path: str = "pathogen_tiab_counts.parquet",
     save_every: int = 200,
     progress_every: int = 50,
-    fetch_threshold: int = 2000,
+    fetch_threshold: int = 9500,
     metadata_batch_size: int = 200,
 ) -> pd.DataFrame:
     """Resumable variant of yearly PMID counts per pathogen (TIAB + synonyms).
@@ -678,7 +678,7 @@ def count_pmids_per_year_for_antibiotics_resumable(
     output_path: str = "antibiotic_tiab_counts.parquet",
     save_every: int = 200,
     progress_every: int = 50,
-    fetch_threshold: int = 2000,
+    fetch_threshold: int = 9500,
     metadata_batch_size: int = 200,
 ) -> pd.DataFrame:
     """Resumable yearly PMID counts per antibiotic (Title/Abstract; hyphen/slash variants).

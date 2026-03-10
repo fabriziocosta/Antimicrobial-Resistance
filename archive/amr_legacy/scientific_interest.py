@@ -48,6 +48,14 @@ def _log_runtime_warning(message: str, *, log_path: str = _DEFAULT_RUNTIME_LOG_P
     _get_runtime_logger(log_path).warning(message)
 
 
+def _configure_plotly_inline_renderer(pio: Any) -> None:
+    """Prefer an inline Plotly renderer when running from notebooks."""
+    current = (getattr(pio.renderers, "default", "") or "").strip()
+    if current and current != "browser":
+        return
+    pio.renderers.default = "plotly_mimetype+notebook_connected"
+
+
 def load_amr_background_df(
     *,
     alpha: float = 1.0,
@@ -796,8 +804,9 @@ def rank_yearly_pairs_by_future_si_shift(
     """Rank yearly pathogen-antibiotic pairs by current vs future predicted SI.
 
     The current rank is defined at ``reference_year`` and the future rank at
-    ``reference_year + num_future_years``. Both values come from the yearly LOESS
-    count model with SI derived from the predicted log-count trajectory.
+    ``latest_available_year + num_future_years`` for each pair. Both values come
+    from the yearly LOESS count model with SI derived from the predicted
+    log-count trajectory.
 
     A positive ``rank_change`` means the pair moves up in the future ranking.
     """
@@ -828,17 +837,90 @@ def rank_yearly_pairs_by_future_si_shift(
 
     reference_year = int(reference_year)
     fit_end_year = int(fit_end_year)
-    target_year = int(reference_year + int(num_future_years))
-
-    pair_index_df = (
-        si_df[["pathogen", "antibiotic"]]
-        .drop_duplicates()
+    year_num = pd.to_numeric(si_df["year"], errors="coerce")
+    train_window_mask = year_num.between(int(fit_start_year), int(fit_end_year))
+    pair_stats_df = (
+        si_df.loc[:, ["pathogen", "antibiotic"]].copy()
+        .assign(year_num=year_num, in_train_window=train_window_mask)
+        .groupby(["pathogen", "antibiotic"], as_index=False)
+        .agg(
+            n_pair_years=("year_num", lambda s: int(pd.Series(s).dropna().nunique())),
+            n_train_years=(
+                "year_num",
+                lambda s: int(pd.Series(s[train_window_mask.loc[s.index]]).dropna().nunique()),
+            ),
+            latest_available_year=("year_num", lambda s: float(pd.Series(s).dropna().max()) if pd.Series(s).notna().any() else np.nan),
+        )
         .sort_values(["pathogen", "antibiotic"])
         .reset_index(drop=True)
     )
+    eligible_pair_df = pair_stats_df.loc[pair_stats_df["n_train_years"] >= int(min_train_points)].copy()
+    prefiltered_pair_df = pair_stats_df.loc[pair_stats_df["n_train_years"] < int(min_train_points)].copy()
+    pair_index_df = eligible_pair_df[["pathogen", "antibiotic"]].reset_index(drop=True)
     total_pairs = int(len(pair_index_df))
 
     rows: list[dict[str, Any]] = []
+    if not prefiltered_pair_df.empty:
+        if verbose:
+            print(
+                "Prefilter removed "
+                f"{len(prefiltered_pair_df)} pairs with fewer than {min_train_points} observed years "
+                f"between {fit_start_year} and {fit_end_year}.",
+                flush=True,
+            )
+        prefilter_error = (
+            f"Need at least {min_train_points} observed years between {fit_start_year} and {fit_end_year}."
+        )
+        for pair in prefiltered_pair_df.itertuples(index=False):
+            pair_future_year = (
+                int(pair.latest_available_year) + int(num_future_years)
+                if pd.notna(pair.latest_available_year)
+                else np.nan
+            )
+            rows.append(
+                {
+                    "pathogen": str(pair.pathogen),
+                    "antibiotic": str(pair.antibiotic),
+                    "reference_year": reference_year,
+                    "future_year": pair_future_year,
+                    "num_future_years": int(num_future_years),
+                    "fit_start_year": fit_start_year,
+                    "fit_end_year": fit_end_year,
+                    "latest_available_year": (
+                        int(pair.latest_available_year) if pd.notna(pair.latest_available_year) else np.nan
+                    ),
+                    "n_pair_years": int(pair.n_pair_years),
+                    "current_si_source": None,
+                    "observed_current_SI": np.nan,
+                    "current_predicted_SI": np.nan,
+                    "current_predicted_count": np.nan,
+                    "future_predicted_SI": np.nan,
+                    "future_predicted_count": np.nan,
+                    "si_change": np.nan,
+                    "count_change": np.nan,
+                    "n_post_fit_observed_years": np.nan,
+                    "latest_post_fit_observed_year": np.nan,
+                    "latest_post_fit_observed_SI": np.nan,
+                    "latest_post_fit_predicted_SI": np.nan,
+                    "latest_post_fit_si_error": np.nan,
+                    "latest_post_fit_si_abs_error": np.nan,
+                    "latest_post_fit_si_pct_error": np.nan,
+                    "post_fit_si_error_mean": np.nan,
+                    "post_fit_si_abs_error_mean": np.nan,
+                    "post_fit_si_pct_error_mean": np.nan,
+                    "post_fit_si_abs_pct_error_mean": np.nan,
+                    "loess_frac": float(loess_frac),
+                    "loess_degree": int(loess_degree),
+                    "tail_damping_years": (
+                        np.nan
+                        if tail_damping_years in (_AUTO_TAIL_DAMPING, None)
+                        else float(tail_damping_years)
+                    ),
+                    "status": "failed",
+                    "error": f"{prefilter_error} Found {int(pair.n_train_years)}.",
+                }
+            )
+
     for idx, pair in enumerate(pair_index_df.itertuples(index=False), start=1):
         pathogen = str(pair.pathogen)
         antibiotic = str(pair.antibiotic)
@@ -848,7 +930,8 @@ def rank_yearly_pairs_by_future_si_shift(
         try:
             pair_df = build_pair_si_yearly_series(si_df, pathogen, antibiotic)
             latest_available_year = int(pair_df["year"].max())
-            horizon_years = max(int(num_future_years), target_year - latest_available_year, 0)
+            future_year = int(latest_available_year + int(num_future_years))
+            horizon_years = int(num_future_years)
             result = fit_predict_yearly_si_loess(
                 si_df=si_df,
                 pathogen=pathogen,
@@ -864,16 +947,43 @@ def rank_yearly_pairs_by_future_si_shift(
 
             pred_df = result["pred_df"]
             current_row = pred_df.loc[pred_df["year"] == reference_year]
-            future_row = pred_df.loc[pred_df["year"] == target_year]
+            future_row = pred_df.loc[pred_df["year"] == future_year]
             if current_row.empty:
                 raise ValueError(f"Missing current-year prediction for reference_year={reference_year}.")
             if future_row.empty:
-                raise ValueError(f"Missing future-year prediction for target_year={target_year}.")
+                raise ValueError(f"Missing future-year prediction for future_year={future_year}.")
 
             current_row = current_row.iloc[0]
             future_row = future_row.iloc[0]
             observed_current_df = pair_df.loc[pair_df["year"] == reference_year]
             current_source = "observed" if not observed_current_df.empty else "predicted"
+            current_count = (
+                float(observed_current_df["count"].iloc[0])
+                if not observed_current_df.empty and "count" in observed_current_df.columns
+                else np.nan
+            )
+            latest_available_df = pair_df.loc[pair_df["year"] == latest_available_year]
+            latest_available_count = (
+                float(latest_available_df["count"].iloc[0])
+                if not latest_available_df.empty and "count" in latest_available_df.columns
+                else np.nan
+            )
+            latest_available_si = (
+                float(latest_available_df["SI"].iloc[0])
+                if not latest_available_df.empty and "SI" in latest_available_df.columns
+                else np.nan
+            )
+            latest_available_pred_df = pred_df.loc[pred_df["year"] == latest_available_year]
+            latest_available_predicted_count = (
+                float(latest_available_pred_df["predicted_count_loess"].iloc[0])
+                if not latest_available_pred_df.empty
+                else np.nan
+            )
+            latest_available_predicted_si = (
+                float(latest_available_pred_df["predicted_SI"].iloc[0])
+                if not latest_available_pred_df.empty
+                else np.nan
+            )
             holdout_df = result["detailed_comparison_df"].loc[
                 result["detailed_comparison_df"]["year"] > fit_end_year
             ].copy()
@@ -881,6 +991,27 @@ def rank_yearly_pairs_by_future_si_shift(
                 holdout_df["prediction_error"],
                 holdout_df["observed_SI"],
             )
+            count_error_df = result["detailed_comparison_df"].loc[
+                result["detailed_comparison_df"]["year"].between(fit_end_year, latest_available_year)
+            ].copy()
+            count_error_df["count_pct_error_loess"] = _safe_pct_error(
+                count_error_df["count_prediction_error_loess"],
+                count_error_df["observed_count"],
+            )
+            count_error_df["count_abs_pct_error_loess"] = count_error_df["count_pct_error_loess"].abs()
+            n_count_error_years = int(len(count_error_df))
+            latest_count_error_row = count_error_df.sort_values("year").tail(1)
+            if latest_count_error_row.empty:
+                latest_count_pct_error = np.nan
+                latest_count_abs_pct_error = np.nan
+                post_fit_count_pct_error_mean = np.nan
+                post_fit_count_abs_pct_error_mean = np.nan
+            else:
+                latest_count_error = latest_count_error_row.iloc[0]
+                latest_count_pct_error = float(latest_count_error["count_pct_error_loess"])
+                latest_count_abs_pct_error = float(latest_count_error["count_abs_pct_error_loess"])
+                post_fit_count_pct_error_mean = float(count_error_df["count_pct_error_loess"].mean())
+                post_fit_count_abs_pct_error_mean = float(count_error_df["count_abs_pct_error_loess"].mean())
             n_holdout_years = int(len(holdout_df))
             latest_holdout_row = holdout_df.sort_values("year").tail(1)
             if latest_holdout_row.empty:
@@ -912,13 +1043,18 @@ def rank_yearly_pairs_by_future_si_shift(
                     "pathogen": pathogen,
                     "antibiotic": antibiotic,
                     "reference_year": reference_year,
-                    "future_year": target_year,
+                    "future_year": future_year,
                     "num_future_years": int(num_future_years),
                     "fit_start_year": fit_start_year,
                     "fit_end_year": fit_end_year,
                     "latest_available_year": latest_available_year,
                     "n_pair_years": int(pair_df["year"].nunique()),
                     "current_si_source": current_source,
+                    "current_count": current_count,
+                    "latest_available_count": latest_available_count,
+                    "latest_available_SI": latest_available_si,
+                    "latest_available_predicted_count": latest_available_predicted_count,
+                    "latest_available_predicted_SI": latest_available_predicted_si,
                     "observed_current_SI": (
                         float(observed_current_df["SI"].iloc[0]) if not observed_current_df.empty else np.nan
                     ),
@@ -927,7 +1063,13 @@ def rank_yearly_pairs_by_future_si_shift(
                     "future_predicted_SI": float(future_row["predicted_SI"]),
                     "future_predicted_count": float(future_row["predicted_count_loess"]),
                     "si_change": float(future_row["predicted_SI"] - current_row["predicted_SI"]),
+                    "future_minus_latest_SI": float(future_row["predicted_SI"] - latest_available_si),
                     "count_change": float(future_row["predicted_count_loess"] - current_row["predicted_count_loess"]),
+                    "n_count_error_years": n_count_error_years,
+                    "latest_count_pct_error": latest_count_pct_error,
+                    "latest_count_abs_pct_error": latest_count_abs_pct_error,
+                    "post_fit_count_pct_error_mean": post_fit_count_pct_error_mean,
+                    "post_fit_count_abs_pct_error_mean": post_fit_count_abs_pct_error_mean,
                     "n_post_fit_observed_years": n_holdout_years,
                     "latest_post_fit_observed_year": latest_holdout_year,
                     "latest_post_fit_observed_SI": latest_observed_si,
@@ -954,20 +1096,31 @@ def rank_yearly_pairs_by_future_si_shift(
                     "pathogen": pathogen,
                     "antibiotic": antibiotic,
                     "reference_year": reference_year,
-                    "future_year": target_year,
+                    "future_year": np.nan,
                     "num_future_years": int(num_future_years),
                     "fit_start_year": fit_start_year,
                     "fit_end_year": fit_end_year,
                     "latest_available_year": np.nan,
                     "n_pair_years": np.nan,
                     "current_si_source": None,
+                    "current_count": np.nan,
+                    "latest_available_count": np.nan,
+                    "latest_available_SI": np.nan,
+                    "latest_available_predicted_count": np.nan,
+                    "latest_available_predicted_SI": np.nan,
                     "observed_current_SI": np.nan,
                     "current_predicted_SI": np.nan,
                     "current_predicted_count": np.nan,
                     "future_predicted_SI": np.nan,
                     "future_predicted_count": np.nan,
                     "si_change": np.nan,
+                    "future_minus_latest_SI": np.nan,
                     "count_change": np.nan,
+                    "n_count_error_years": np.nan,
+                    "latest_count_pct_error": np.nan,
+                    "latest_count_abs_pct_error": np.nan,
+                    "post_fit_count_pct_error_mean": np.nan,
+                    "post_fit_count_abs_pct_error_mean": np.nan,
                     "n_post_fit_observed_years": np.nan,
                     "latest_post_fit_observed_year": np.nan,
                     "latest_post_fit_observed_SI": np.nan,
@@ -1029,7 +1182,7 @@ def rank_yearly_pairs_by_future_si_shift(
     if save_path is None:
         save_path = (
             f"si_yearly_rank_shift_fit_{fit_start_year}_{fit_end_year}"
-            f"_ref_{reference_year}_future_{target_year}.parquet"
+            f"_ref_{reference_year}_future_plus_{int(num_future_years)}y.parquet"
         )
     ranking_df.to_parquet(save_path, index=False)
     if verbose:
@@ -1890,6 +2043,399 @@ def plot_yearly_si_prediction_for_pareto_pairs(
     return results
 
 
+def plot_interactive_yearly_rank_shift(
+    rank_df: pd.DataFrame,
+    *,
+    show: bool = True,
+    display_name: bool = False,
+    title: str = "Current to future predicted AMR count vs scientific interest",
+    width: int = 1400,
+    height: int = 950,
+    current_color: str = "#1f77b4",
+    future_color: str = "#ff7f0e",
+    arrow_color_up: str = "rgba(31, 119, 180, 0.8)",
+    arrow_color_down: str = "rgba(214, 39, 40, 0.8)",
+):
+    """Plot an interactive current-to-future AMR-count vs SI arrow chart for ranked pairs."""
+    def _signed_log10(values: pd.Series | np.ndarray) -> np.ndarray:
+        arr = np.asarray(values, dtype=float)
+        return np.sign(arr) * np.log10(1.0 + np.abs(arr))
+
+    required_cols = {
+        "pathogen",
+        "antibiotic",
+        "current_predicted_count",
+        "future_predicted_count",
+        "current_predicted_SI",
+        "future_predicted_SI",
+    }
+    missing = required_cols - set(rank_df.columns)
+    if missing:
+        raise KeyError(f"rank_df is missing required columns: {sorted(missing)}")
+
+    try:
+        import plotly.io as pio
+        import plotly.graph_objects as go
+    except ImportError as exc:  # pragma: no cover - optional notebook dependency
+        raise ImportError("plotly is required for interactive SI plots.") from exc
+
+    selected_cols = [
+        "pathogen",
+        "antibiotic",
+        "current_predicted_count",
+        "future_predicted_count",
+        "current_predicted_SI",
+        "future_predicted_SI",
+    ]
+    optional_plot_cols = [
+        col for col in ["plot_current_predicted_count", "plot_future_predicted_count"] if col in rank_df.columns
+    ]
+    plot_df = rank_df[selected_cols + optional_plot_cols].copy()
+    plot_df = plot_df.dropna(
+        subset=[
+            "current_predicted_count",
+            "future_predicted_count",
+            "current_predicted_SI",
+            "future_predicted_SI",
+        ]
+    ).reset_index(drop=True)
+    if plot_df.empty:
+        raise ValueError("No rows remain after dropping missing current/future prediction values.")
+
+    if "plot_current_predicted_count" not in plot_df.columns:
+        plot_df["plot_current_predicted_count"] = plot_df["current_predicted_count"]
+    if "plot_future_predicted_count" not in plot_df.columns:
+        plot_df["plot_future_predicted_count"] = plot_df["future_predicted_count"]
+
+    plot_df = plot_df.loc[
+        (pd.to_numeric(plot_df["plot_current_predicted_count"], errors="coerce") > 0)
+        & (pd.to_numeric(plot_df["plot_future_predicted_count"], errors="coerce") > 0)
+    ].reset_index(drop=True)
+    if plot_df.empty:
+        raise ValueError("No rows remain with strictly positive current/future predicted counts for log-x plotting.")
+
+    plot_df["label"] = plot_df.apply(
+        lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
+        axis=1,
+    )
+    plot_df["current_predicted_SI_signed_log10"] = _signed_log10(plot_df["current_predicted_SI"])
+    plot_df["future_predicted_SI_signed_log10"] = _signed_log10(plot_df["future_predicted_SI"])
+    si_delta = plot_df["future_predicted_SI"] - plot_df["current_predicted_SI"]
+    si_scale = plot_df["current_predicted_SI"].abs().clip(lower=1e-6)
+    plot_df["relative_si_change"] = (si_delta / si_scale).abs()
+    max_relative_si_change = float(plot_df["relative_si_change"].max()) if not plot_df.empty else 0.0
+    plot_df["edge_change_group"] = np.where(
+        plot_df["future_predicted_SI"] > plot_df["current_predicted_SI"],
+        "Up",
+        "Down",
+    )
+
+    fig = go.Figure()
+
+    edge_styles = [
+        ("Up", arrow_color_up),
+        ("Down", arrow_color_down),
+    ]
+    for group_name, group_color in edge_styles:
+        group_df = plot_df.loc[plot_df["edge_change_group"] == group_name]
+        if group_df.empty:
+            continue
+        for idx, row in enumerate(group_df.itertuples(index=False)):
+            if max_relative_si_change > 0:
+                line_width = 1.0 + 5.0 * (float(row.relative_si_change) / max_relative_si_change)
+            else:
+                line_width = 1.5
+            fig.add_trace(
+                go.Scatter(
+                    x=[float(row.plot_current_predicted_count), float(row.plot_future_predicted_count)],
+                    y=[
+                        float(row.current_predicted_SI_signed_log10),
+                        float(row.future_predicted_SI_signed_log10),
+                    ],
+                    mode="lines",
+                    line=dict(color=group_color, width=line_width),
+                    hoverinfo="skip",
+                    name=group_name,
+                    showlegend=idx == 0,
+                )
+            )
+
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df["plot_current_predicted_count"],
+            y=plot_df["current_predicted_SI_signed_log10"],
+            mode="markers+text" if display_name else "markers",
+            text=plot_df["label"] if display_name else None,
+            textposition="middle center" if display_name else None,
+            marker=dict(color=current_color, size=8),
+            customdata=plot_df[
+                [
+                    "pathogen",
+                    "antibiotic",
+                    "current_predicted_count",
+                    "current_predicted_SI",
+                    "future_predicted_count",
+                    "future_predicted_SI",
+                ]
+            ].to_numpy(),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Antibiotic: %{customdata[1]}<br>"
+                "nAMR: %{customdata[2]:.0f} -> %{customdata[4]:.0f}<br>"
+                "SI: %{customdata[3]:.3f} -> %{customdata[5]:.3f}<extra></extra>"
+            ),
+            name="Current",
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df["plot_future_predicted_count"],
+            y=plot_df["future_predicted_SI_signed_log10"],
+            mode="markers",
+            marker=dict(color=future_color, size=9, symbol="diamond"),
+            customdata=plot_df[
+                [
+                    "pathogen",
+                    "antibiotic",
+                    "current_predicted_count",
+                    "current_predicted_SI",
+                    "future_predicted_count",
+                    "future_predicted_SI",
+                ]
+            ].to_numpy(),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "Antibiotic: %{customdata[1]}<br>"
+                "nAMR: %{customdata[2]:.0f} -> %{customdata[4]:.0f}<br>"
+                "SI: %{customdata[3]:.3f} -> %{customdata[5]:.3f}<extra></extra>"
+            ),
+            name="Future",
+        )
+    )
+
+    si_tick_vals = np.array([-100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 100.0], dtype=float)
+    si_tick_text = [f"{value:g}" for value in si_tick_vals]
+    si_tick_positions = _signed_log10(si_tick_vals)
+
+    fig.update_layout(
+        title=title,
+        dragmode="pan",
+        xaxis_title="Number of AMR publications",
+        yaxis=dict(
+            title="Scientific interest (signed log10 scale)",
+            tickmode="array",
+            tickvals=si_tick_positions.tolist(),
+            ticktext=si_tick_text,
+        ),
+        template="plotly_white",
+        width=int(width),
+        height=int(height),
+    )
+    fig.update_xaxes(type="log")
+    if show:
+        _configure_plotly_inline_renderer(pio)
+        fig.show()
+    return fig
+
+
+def plot_interactive_latest_observed_count_vs_future_si_shift(
+    rank_df: pd.DataFrame,
+    *,
+    min_last_available_count: float = 10.0,
+    min_counts_background: float = 100.0,
+    max_count_abs_pct_error_mean: float = 10.0,
+    sample_n: int | None = None,
+    random_state: int | None = None,
+    show: bool = True,
+    display_name: bool = False,
+    title: str | None = None,
+    width: int = 1400,
+    height: int = 900,
+    marker_color: str = "#1f77b4",
+) -> dict[str, Any]:
+    """Plot latest observed AMR count against future-minus-latest SI shift using precomputed rank rows."""
+    required_cols = {
+        "pathogen",
+        "antibiotic",
+        "latest_available_year",
+        "future_year",
+        "latest_available_count",
+        "latest_available_SI",
+        "future_predicted_SI",
+        "future_minus_latest_SI",
+        "post_fit_count_abs_pct_error_mean",
+        "n_count_error_years",
+        "status",
+    }
+    missing = required_cols - set(rank_df.columns)
+    if missing:
+        raise KeyError(f"rank_df is missing required columns: {sorted(missing)}")
+
+    try:
+        import plotly.io as pio
+        import plotly.graph_objects as go
+    except ImportError as exc:  # pragma: no cover - optional notebook dependency
+        raise ImportError("plotly is required for interactive SI plots.") from exc
+
+    plot_df = rank_df.copy()
+    plot_df = plot_df.loc[plot_df["status"].eq("ok")].copy()
+    if plot_df.empty:
+        raise ValueError("No successful ranking rows are available for plotting.")
+
+    plot_df = plot_df.dropna(
+        subset=[
+            "latest_available_count",
+            "latest_available_SI",
+            "future_predicted_SI",
+            "future_minus_latest_SI",
+            "post_fit_count_abs_pct_error_mean",
+        ]
+    )
+    plot_df = plot_df.loc[
+        (pd.to_numeric(plot_df["latest_available_count"], errors="coerce") >= float(min_last_available_count))
+        & (pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce") <= float(max_count_abs_pct_error_mean))
+    ].reset_index(drop=True)
+    if plot_df.empty:
+        raise ValueError(
+            "No rows remain after filtering by minimum last-available count and maximum mean count percentage error."
+        )
+
+    if sample_n is not None and int(sample_n) > 0 and len(plot_df) > int(sample_n):
+        plot_df = plot_df.sample(int(sample_n), random_state=random_state).reset_index(drop=True)
+
+    plot_df["label"] = plot_df.apply(
+        lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
+        axis=1,
+    )
+
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=plot_df["latest_available_count"],
+                y=plot_df["future_minus_latest_SI"],
+                mode="markers+text" if display_name else "markers",
+                text=plot_df["label"] if display_name else None,
+                textposition="top center" if display_name else None,
+                marker=dict(
+                    color=pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
+                    colorscale=[[0.0, "#b30000"], [1.0, "#ffffff"]],
+                    cmin=0.0,
+                    cmax=float(max_count_abs_pct_error_mean),
+                    size=13,
+                    opacity=0.8,
+                    line=dict(color="#000000", width=1.2),
+                    colorbar=dict(title="Mean abs count % error"),
+                ),
+                customdata=plot_df[
+                    [
+                        "pathogen",
+                        "antibiotic",
+                        "latest_available_year",
+                        "future_year",
+                        "latest_available_count",
+                        "latest_available_SI",
+                        "future_predicted_count",
+                        "future_predicted_SI",
+                        "future_minus_latest_SI",
+                        "post_fit_count_abs_pct_error_mean",
+                        "n_count_error_years",
+                    ]
+                ].to_numpy(),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "<b>%{customdata[1]}</b><br>"
+                    "Years: %{customdata[2]} -> %{customdata[3]}<br>"
+                    "Count: %{customdata[4]:.0f} -> %{customdata[6]:.0f}<br>"
+                    "SI: %{customdata[5]:.3f} -> %{customdata[7]:.3f}<br>"
+                    "Error (pc): %{customdata[9]:.2f}<extra></extra>"
+                ),
+                name="Pairs",
+            )
+        ]
+    )
+
+    if title is None:
+        title = (
+            f"Latest observed AMR count vs predicted SI shift "
+            f"(mean abs count error <= {max_count_abs_pct_error_mean:g}%)"
+        )
+
+    x_min = float(pd.to_numeric(plot_df["latest_available_count"], errors="coerce").min())
+    x_max = float(pd.to_numeric(plot_df["latest_available_count"], errors="coerce").max())
+    background_threshold = float(min_counts_background)
+    x_axis_min = max(min(x_min, background_threshold) / 1.15, 1e-3)
+    x_axis_max = max(x_max * 1.08, x_axis_min * 1.01)
+
+    y_min = float(pd.to_numeric(plot_df["future_minus_latest_SI"], errors="coerce").min())
+    y_max = float(pd.to_numeric(plot_df["future_minus_latest_SI"], errors="coerce").max())
+    y_span = max(y_max - y_min, 1e-6)
+    y_axis_min = y_min - 0.08 * y_span
+    y_axis_max = y_max + 0.08 * y_span
+
+    fig.update_layout(
+        title=title,
+        dragmode="pan",
+        xaxis_title="AMR publications in latest available year",
+        yaxis_title="Predicted future SI - observed SI at latest available year",
+        template="plotly_white",
+        width=int(width),
+        height=int(height),
+        margin=dict(l=150, r=180, t=110, b=95),
+    )
+    fig.update_xaxes(type="log", range=[np.log10(x_axis_min), np.log10(x_axis_max)])
+    fig.update_yaxes(range=[y_axis_min, y_axis_max])
+
+    if x_axis_min < background_threshold:
+        fig.add_shape(
+            type="rect",
+            x0=x_axis_min,
+            x1=min(background_threshold, x_axis_max),
+            xref="x",
+            fillcolor="#f3f3f3",
+            opacity=1.0,
+            line_width=0,
+            layer="below",
+            yref="paper",
+            y0=0.0,
+            y1=1.0,
+        )
+    if background_threshold < x_axis_max:
+        fig.add_shape(
+            type="rect",
+            x0=max(background_threshold, x_axis_min),
+            x1=x_axis_max,
+            xref="x",
+            fillcolor="#ffffff",
+            opacity=1.0,
+            line_width=0,
+            layer="below",
+            yref="paper",
+            y0=0.0,
+            y1=1.0,
+        )
+    fig.add_shape(
+        type="rect",
+        y0=y_axis_min,
+        y1=0.0,
+        yref="y",
+        fillcolor="rgba(160, 160, 160, 0.18)",
+        opacity=1.0,
+        line_width=0,
+        layer="below",
+        xref="paper",
+        x0=0.0,
+        x1=1.0,
+    )
+    fig.add_hline(y=0.0, line_dash="dash", line_color="gray", opacity=0.7)
+
+    if show:
+        _configure_plotly_inline_renderer(pio)
+        fig.show()
+
+    return {"figure": fig, "plot_df": plot_df}
+
+
 # Backward-compatible aliases for earlier notebook cells / exports.
 get_pair_si_series = build_pair_si_interval_series
 _interpolate_expected_log_count_baseline = _interpolate_expected_log_count_curve
@@ -1914,6 +2460,8 @@ __all__ = [
     "display_si_amr_pareto_front",
     "plot_si_prediction_for_pareto_pairs",
     "plot_yearly_si_prediction_for_pareto_pairs",
+    "plot_interactive_yearly_rank_shift",
+    "plot_interactive_latest_observed_count_vs_future_si_shift",
     "get_pair_si_series",
     "fit_predict_si_gp",
     "forecast_si_for_all_pairs",

@@ -360,7 +360,7 @@ def collect_yearly_background_counts(
     antibiotic_output_path: str | Path = "antibiotic_tiab_counts.parquet",
     save_every: int = 200,
     progress_every: int = 50,
-    fetch_threshold: int = 2000,
+    fetch_threshold: int = 9500,
     metadata_batch_size: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Collect yearly background publication counts for pathogens and antibiotics."""
