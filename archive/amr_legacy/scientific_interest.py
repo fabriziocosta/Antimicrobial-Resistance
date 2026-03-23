@@ -2242,9 +2242,13 @@ def plot_interactive_yearly_rank_shift(
 def plot_interactive_latest_observed_count_vs_future_si_shift(
     rank_df: pd.DataFrame,
     *,
+    GLASS_pairs_df: pd.DataFrame | None = None,
     min_last_available_count: float = 10.0,
     min_counts_background: float = 100.0,
+    min_count_abs_pct_error_mean: float = 0.0,
     max_count_abs_pct_error_mean: float = 10.0,
+    min_abs_delta_si: float = 0.05,
+    min_si_delta: float | None = None,
     sample_n: int | None = None,
     random_state: int | None = None,
     show: bool = True,
@@ -2253,17 +2257,24 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     width: int = 1400,
     height: int = 900,
     marker_color: str = "#1f77b4",
+    pdf_path: str | None = None,
 ) -> dict[str, Any]:
-    """Plot latest observed AMR count against future-minus-latest SI shift using precomputed rank rows."""
+    """Plot latest available AMR count against future-minus-latest-smoothed SI shift using precomputed rank rows."""
+    def _signed_log10(values: pd.Series | np.ndarray) -> np.ndarray:
+        arr = np.asarray(values, dtype=float)
+        return np.sign(arr) * np.log10(1.0 + np.abs(arr))
+
+    def _normalize_text(values: pd.Series) -> pd.Series:
+        return values.astype(str).str.strip()
+
     required_cols = {
         "pathogen",
         "antibiotic",
         "latest_available_year",
         "future_year",
         "latest_available_count",
-        "latest_available_SI",
+        "latest_available_predicted_SI",
         "future_predicted_SI",
-        "future_minus_latest_SI",
         "post_fit_count_abs_pct_error_mean",
         "n_count_error_years",
         "status",
@@ -2286,23 +2297,82 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     plot_df = plot_df.dropna(
         subset=[
             "latest_available_count",
-            "latest_available_SI",
+            "latest_available_predicted_SI",
             "future_predicted_SI",
-            "future_minus_latest_SI",
             "post_fit_count_abs_pct_error_mean",
         ]
     )
     plot_df = plot_df.loc[
         (pd.to_numeric(plot_df["latest_available_count"], errors="coerce") >= float(min_last_available_count))
+        & (pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce") >= float(min_count_abs_pct_error_mean))
         & (pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce") <= float(max_count_abs_pct_error_mean))
     ].reset_index(drop=True)
     if plot_df.empty:
         raise ValueError(
-            "No rows remain after filtering by minimum last-available count and maximum mean count percentage error."
+            "No rows remain after filtering by minimum last-available count and mean count percentage error bounds."
         )
 
     if sample_n is not None and int(sample_n) > 0 and len(plot_df) > int(sample_n):
         plot_df = plot_df.sample(int(sample_n), random_state=random_state).reset_index(drop=True)
+
+    plot_df["latest_smoothed_SI"] = pd.to_numeric(plot_df["latest_available_predicted_SI"], errors="coerce")
+    plot_df["future_minus_latest_smoothed_SI"] = (
+        pd.to_numeric(plot_df["future_predicted_SI"], errors="coerce")
+        - plot_df["latest_smoothed_SI"]
+    )
+    if min_si_delta is not None:
+        plot_df = plot_df.loc[
+            pd.to_numeric(plot_df["future_minus_latest_smoothed_SI"], errors="coerce") >= float(min_si_delta)
+        ].reset_index(drop=True)
+    if plot_df.empty:
+        raise ValueError("No rows remain after applying the displayed SI-delta filter.")
+
+    plot_df["is_glass_pair"] = False
+    plot_df["glass_group_column"] = None
+    if GLASS_pairs_df is not None and not GLASS_pairs_df.empty:
+        glass_required_cols = {"pathogen"}
+        missing_glass = glass_required_cols - set(GLASS_pairs_df.columns)
+        if missing_glass:
+            raise KeyError(f"GLASS_pairs_df is missing required columns: {sorted(missing_glass)}")
+
+        glass_work = GLASS_pairs_df.copy()
+        glass_work["pathogen"] = _normalize_text(glass_work["pathogen"])
+
+        rank_antibiotics = set(_normalize_text(plot_df["antibiotic"]).dropna().unique())
+        glass_candidate_cols = [
+            col
+            for col in ["antibiotic", "Class", "Simplified categories", "High level categories"]
+            if col in glass_work.columns
+        ]
+        selected_glass_col = None
+        best_overlap = -1
+        for candidate_col in glass_candidate_cols:
+            candidate_values = set(_normalize_text(glass_work[candidate_col].dropna()).unique())
+            overlap = len(rank_antibiotics & candidate_values)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                selected_glass_col = candidate_col
+
+        if selected_glass_col is not None and best_overlap > 0:
+            glass_pairs = glass_work[["pathogen", selected_glass_col]].copy()
+            glass_pairs = glass_pairs.dropna(subset=[selected_glass_col]).drop_duplicates()
+            glass_pairs = glass_pairs.rename(columns={selected_glass_col: "antibiotic"})
+            glass_pairs["pathogen"] = _normalize_text(glass_pairs["pathogen"])
+            glass_pairs["antibiotic"] = _normalize_text(glass_pairs["antibiotic"])
+
+            plot_pairs = pd.DataFrame(
+                {
+                    "pathogen": _normalize_text(plot_df["pathogen"]),
+                    "antibiotic": _normalize_text(plot_df["antibiotic"]),
+                }
+            )
+            plot_df["is_glass_pair"] = plot_pairs.merge(
+                glass_pairs.assign(is_glass_pair=True),
+                on=["pathogen", "antibiotic"],
+                how="left",
+            )["is_glass_pair"].fillna(False).astype(bool)
+            plot_df["glass_group_column"] = selected_glass_col
+    plot_df["appears_in_GLASS"] = np.where(plot_df["is_glass_pair"], "yes", "no")
 
     plot_df["label"] = plot_df.apply(
         lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
@@ -2313,7 +2383,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
         data=[
             go.Scatter(
                 x=plot_df["latest_available_count"],
-                y=plot_df["future_minus_latest_SI"],
+                y=plot_df["future_minus_latest_smoothed_SI"],
                 mode="markers+text" if display_name else "markers",
                 text=plot_df["label"] if display_name else None,
                 textposition="top center" if display_name else None,
@@ -2324,7 +2394,10 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                     cmax=float(max_count_abs_pct_error_mean),
                     size=13,
                     opacity=0.8,
-                    line=dict(color="#000000", width=1.2),
+                    line=dict(
+                        color=["#000000" if is_glass else "#000000" for is_glass in plot_df["is_glass_pair"]],
+                        width=[3.8 if is_glass else 1.2 for is_glass in plot_df["is_glass_pair"]],
+                    ),
                     colorbar=dict(title="Mean abs count % error"),
                 ),
                 customdata=plot_df[
@@ -2334,21 +2407,26 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                         "latest_available_year",
                         "future_year",
                         "latest_available_count",
-                        "latest_available_SI",
-                        "future_predicted_count",
+                        "latest_smoothed_SI",
                         "future_predicted_SI",
-                        "future_minus_latest_SI",
+                        "latest_available_count",
+                        "future_predicted_count",
+                        "future_minus_latest_smoothed_SI",
                         "post_fit_count_abs_pct_error_mean",
                         "n_count_error_years",
+                        "appears_in_GLASS",
+                        "glass_group_column",
                     ]
                 ].to_numpy(),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "<b>%{customdata[1]}</b><br>"
                     "Years: %{customdata[2]} -> %{customdata[3]}<br>"
-                    "Count: %{customdata[4]:.0f} -> %{customdata[6]:.0f}<br>"
-                    "SI: %{customdata[5]:.3f} -> %{customdata[7]:.3f}<br>"
-                    "Error (pc): %{customdata[9]:.2f}<extra></extra>"
+                    "Counts: %{customdata[4]:.0f} -> %{customdata[8]:.0f}<br>"
+                    "Smoothed SI: %{customdata[5]:.3f} -> %{customdata[6]:.3f}<br>"
+                    "Delta SI: %{customdata[9]:.3f}<br>"
+                    "Error (pc): %{customdata[10]:.2f}<br>"
+                    "GLASS: %{customdata[11]}<extra></extra>"
                 ),
                 name="Pairs",
             )
@@ -2357,8 +2435,8 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
 
     if title is None:
         title = (
-            f"Latest observed AMR count vs predicted SI shift "
-            f"(mean abs count error <= {max_count_abs_pct_error_mean:g}%)"
+            f"Latest available AMR count vs predicted SI shift from latest smoothed SI "
+            f"(mean abs count error {min_count_abs_pct_error_mean:g}% to {max_count_abs_pct_error_mean:g}%)"
         )
 
     x_min = float(pd.to_numeric(plot_df["latest_available_count"], errors="coerce").min())
@@ -2367,8 +2445,8 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     x_axis_min = max(min(x_min, background_threshold) / 1.15, 1e-3)
     x_axis_max = max(x_max * 1.08, x_axis_min * 1.01)
 
-    y_min = float(pd.to_numeric(plot_df["future_minus_latest_SI"], errors="coerce").min())
-    y_max = float(pd.to_numeric(plot_df["future_minus_latest_SI"], errors="coerce").max())
+    y_min = float(pd.to_numeric(plot_df["future_minus_latest_smoothed_SI"], errors="coerce").min())
+    y_max = float(pd.to_numeric(plot_df["future_minus_latest_smoothed_SI"], errors="coerce").max())
     y_span = max(y_max - y_min, 1e-6)
     y_axis_min = y_min - 0.08 * y_span
     y_axis_max = y_max + 0.08 * y_span
@@ -2377,7 +2455,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
         title=title,
         dragmode="pan",
         xaxis_title="AMR publications in latest available year",
-        yaxis_title="Predicted future SI - observed SI at latest available year",
+        yaxis_title="Predicted future SI - smoothed SI at latest available year",
         template="plotly_white",
         width=int(width),
         height=int(height),
@@ -2414,26 +2492,39 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
             y0=0.0,
             y1=1.0,
         )
-    fig.add_shape(
-        type="rect",
-        y0=y_axis_min,
-        y1=0.0,
-        yref="y",
-        fillcolor="rgba(160, 160, 160, 0.18)",
-        opacity=1.0,
-        line_width=0,
-        layer="below",
-        xref="paper",
-        x0=0.0,
-        x1=1.0,
-    )
+    delta_si = abs(float(min_abs_delta_si))
+    if delta_si > 0.0:
+        fig.add_shape(
+            type="rect",
+            y0=max(-delta_si, y_axis_min),
+            y1=min(delta_si, y_axis_max),
+            yref="y",
+            fillcolor="rgba(160, 160, 160, 0.22)",
+            opacity=1.0,
+            line_width=0,
+            layer="below",
+            xref="paper",
+            x0=0.0,
+            x1=1.0,
+        )
+        fig.add_hline(y=-delta_si, line_dash="dot", line_color="gray", opacity=0.7)
+        fig.add_hline(y=delta_si, line_dash="dot", line_color="gray", opacity=0.7)
     fig.add_hline(y=0.0, line_dash="dash", line_color="gray", opacity=0.7)
+
+    resolved_pdf_path = os.path.abspath(pdf_path or "latest_observed_count_vs_future_si_shift.pdf")
+    try:
+        fig.write_image(resolved_pdf_path)
+    except Exception as exc:  # pragma: no cover - optional notebook dependency
+        raise RuntimeError(
+            "Failed to save Plotly figure as PDF. Ensure the Plotly static image backend is installed."
+        ) from exc
+    print(resolved_pdf_path)
 
     if show:
         _configure_plotly_inline_renderer(pio)
         fig.show()
 
-    return {"figure": fig, "plot_df": plot_df}
+    return {"figure": fig, "plot_df": plot_df, "pdf_path": resolved_pdf_path}
 
 
 # Backward-compatible aliases for earlier notebook cells / exports.

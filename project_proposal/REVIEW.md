@@ -1,175 +1,190 @@
-# Adversarial Review of the Current Proposal
+# Proposal Review
 
-## Overall judgment
+## Summary judgment
 
-The proposal is now much more coherent than earlier versions. It clearly states that the current implemented experiment is to predict future background-adjusted scientific interest (SI) from past SI or past pair-count trajectories, and that the proposed novelty is to show that additional literature-derived signals act as leading predictors of future SI. That is a substantial improvement.
+This is a strong proposal if it is judged as a scientometric prediction
+project and a more vulnerable proposal if it is judged as a direct AMR
+forecasting project. Its core idea is clear: model future
+background-adjusted scientific interest for antibiotic-pathogen pairs
+and test whether richer literature-derived signals improve that
+prediction. That is a real and defensible research question.
 
-The proposal is also more credible because it now emphasizes short-horizon forecasting, uses concrete dataset counts, includes an archived dense example, and explicitly allows antibiotic-class modeling when individual-drug series are too sparse. These changes resolve several earlier weaknesses.
+The proposal is less convincing when it leans too close to claiming that
+future scientific salience is already a proxy for future AMR burden. The
+project may eventually support that broader interpretation, but the
+proposal as written does not yet establish it.
 
-Even so, a skeptical reviewer would still see this as a stronger scientometric forecasting proposal than a strong AMR early-warning proposal. The central remaining issue is not internal coherence anymore. It is external validity.
+## Major strengths
 
-## Main strengths
+### 1. The proposal has a real target, not a vague ML objective
 
-- The target variable is now explicit and technically grounded: pair-level, background-adjusted SI.
-- The current baseline is clearly defined as future-SI prediction from past SI.
-- The novelty claim is much sharper: the contribution is to test whether external literature-derived signals improve prediction beyond that baseline.
-- The proposal no longer depends on naive document-level co-occurrence; the LLM pair-disambiguation step is clearly explained.
-- The forecasting scope is now credible because it prioritizes one-year to five-year horizons.
-- The proposal now gives concrete scale numbers for PMIDs, pairs, pair-years, and usable trajectory counts.
-- Antibiotic-class aggregation is a sensible and pragmatic answer to sparsity.
+Many proposals in this space collapse into a generic ambition to “apply
+AI to the literature.” This one does not. It defines a target variable,
+scientific interest, in a precise way and grounds it in a
+background-adjusted residual rather than raw publication volume. That is
+important because it turns the problem into a coherent prediction task
+instead of a loosely defined bibliometric exercise.
 
-## Major concerns
+### 2. The data-construction workflow is serious
 
-### 1. The proposal still predicts scientific salience, not real-world AMR dynamics
+The proposal is strongest where it treats measurement as part of the
+scientific problem. The use of pair-specific LLM adjudication after
+broad retrieval is a good example. It directly addresses the fact that
+simple co-mention is not enough and that the quality of the pair-level
+signal depends on a credible screening step.
 
-The proposal now says this much more carefully, but the same basic limitation remains. It predicts future SI, which is a bibliometric quantity, not resistance prevalence, treatment failure burden, outbreak frequency, or surveillance-confirmed AMR emergence.
+This gives the project a more defensible foundation than a naive
+document-counting pipeline would have had.
 
-A skeptical reviewer will therefore say that the proposal is best understood as forecasting future scientific salience in AMR, not forecasting AMR in the epidemiological or clinical sense. The draft hints at this distinction, but it still leans on the language of “early warning” enough that the causal and public-health implications can sound overstated.
+### 3. The proposal is realistic about sparsity
 
-### 2. The external-validation problem remains unresolved
+The dataset section is one of the strongest parts of the document. It
+shows counts, filtered trajectory lengths, and a practical fallback to
+class-level aggregation. That matters because the proposal’s credibility
+depends heavily on whether it appears to understand its own data regime.
 
-The proposal is now internally better defended, but it still does not show why improved future-SI prediction should matter beyond the literature itself. A reviewer will ask a simple question: if the model predicts that the literature will pay more attention to a pair in five years, why should that be considered useful unless it also connects to external AMR outcomes?
+It does.
 
-Without at least one validation layer against surveillance data, curated priority lists, or observed resistance trends, the proposal remains vulnerable to the critique that it models scientific attention as an end in itself.
+### 4. The signal design is more concrete than in most literature-mining proposals
 
-### 3. “Causal predictors” is still a risky phrase
+The concept-extraction stage now has identifiable signal families rather
+than generic promises about latent NLP features. Treatment failure,
+resistance mechanisms, epidemiological spread, surveillance signals, and
+diagnostic signals are concrete enough that a reviewer can understand
+what is being measured and why those variables might matter.
 
-The proposal now uses Granger causality more carefully, but the causal language is still fragile. Granger causality identifies temporally ordered predictive relationships, not mechanistic causes. A hostile reviewer will push back if the proposal overinterprets these results as evidence of real causal drivers.
+The same is true of the semantic-embedding section, which now gives a
+clear reason for embeddings beyond feature inflation: they are intended
+to support similarity-based generalization across related pathogens,
+related antibiotics, and sparse pairs.
 
-The safest version of the claim is that the project seeks leading predictors or temporally preceding predictive signals of future SI. If the text continues to imply more than that, reviewers will likely target it.
+### 5. The modeling section is much more disciplined than a transformer-first pitch
 
-### 4. The candidate predictors may still be too endogenous to the target
+The proposal’s decision to move from simpler models to more expressive
+ones is good. Starting from linear or additive models, then considering
+convolutional sequence models, and only using transformer-style models
+if they are actually supported by the data is the right posture.
 
-Even with the sharper framing, a skeptical reviewer can still argue that the candidate predictors and the target all come from the same literature stream:
+This also improves the proposal’s scientific tone, because it frames
+model choice as something to be earned through evidence rather than
+announced in advance.
 
-- SI is derived from screened publication counts.
-- concept signals are extracted from those same screened abstracts.
-- semantic signals are embeddings of those same screened abstracts.
+## Main weaknesses
 
-This means the project may be learning richer encodings of publication dynamics rather than discovering genuinely separate sources of predictive information. The proposal needs to show not only that these signals precede SI, but that they add information not already recoverable from the history of SI itself.
+### 1. The project’s external meaning remains the largest unresolved issue
 
-### 5. Granger analysis may still be statistically unstable at the pair level
+The proposal is clear that the immediate target is future scientific
+interest. That is good. But the wider motivation still depends on the
+idea that forecasting future scientific interest says something useful
+about future AMR concern in the world, not just in the literature.
 
-The proposal now gives the right trajectory counts, which helps. But those numbers also expose the problem:
+That bridge is plausible, but not yet demonstrated. Without an external
+benchmark of some kind, the proposal remains vulnerable to a simple
+criticism: that it forecasts the future attention of researchers rather
+than the future trajectory of resistance itself.
 
-- median years per pair is only 2
-- only 2,078 pairs have at least 5 yearly observations
-- only 1,120 pairs have at least 10 yearly observations
+This is not a fatal flaw, but it is the central one.
 
-This is enough to support forecasting work, but it raises a serious question about the Granger component. Many pair-level series are simply too short for reliable lag-based inference. A reviewer will want to know:
+### 2. The Granger stage is still the shakiest part of the methodology
 
-- which subset of pairs are eligible for Granger testing
-- what lag structure is feasible
-- how stationarity and differencing will be handled
-- how multiplicity will be controlled across many pair-signal tests
+The proposal is persuasive when it uses Granger analysis as an
+interpretability tool and signal-prioritization device. It is less
+persuasive when it treats Granger analysis as if it were straightforward
+to defend on short, filtered, noisy yearly series.
 
-As written, the proposal presents Granger analysis as central, but it still reads as more statistically fragile than the forecasting baseline.
+A reviewer is likely to ask:
 
-### 6. The transformer is more defensible now, but still not fully justified
+- how many time points are truly required
+- what lag structure is searched
+- whether the analysis is run on SI levels or differences
+- how zero-heavy or unstable trajectories are excluded
+- how multiple testing is controlled
 
-The short-horizon framing and class-level aggregation both help the transformer case, but they do not eliminate the concern. A skeptical reviewer will still ask why a sequence transformer is the right next model for annual trajectories that are often short and heterogeneous.
+The proposal points in the right direction, but it still needs more
+hard-edged operational detail here than it currently provides.
 
-The proposal should still expect this challenge:
+### 3. The distinction between individual-drug and class-level analyses needs sharper scientific framing
 
-- why a transformer rather than a smaller temporal model, boosted trees, or structured panel regressions?
-- what is the effective sample size after horizon filtering, eligibility rules, and train/validation splits?
-- how will the model avoid overfitting on a limited number of dense trajectories?
+The class-level fallback is practical and probably necessary, but it
+changes the meaning of the task. Predicting future salience for a single
+antibiotic-pathogen pair is not the same scientific question as
+predicting future salience for an antibiotic class against a pathogen.
 
-The current draft improves the situation by making the transformer a later-stage extension rather than the starting point. That was the right move. But the justification is not yet complete.
+The proposal knows that class-level aggregation helps with sparsity. It
+does not yet say clearly enough what is gained scientifically and what
+is lost when this switch happens.
 
-### 7. The role of `uncertain` examples remains underexplained
+### 4. The screening-rule sensitivity problem remains important
 
-The proposal now reports both `yes`-only and `yes + uncertain` counts, which is useful. But the default pipeline still retains `uncertain` rows in the screened yearly dataset, and that deserves a stronger defense.
+Including `uncertain` rows may be reasonable, but it is not a neutral
+choice. It changes the evidence base from which SI is constructed. The
+proposal is right to include a sensitivity plan, but this issue is
+important enough that it should be framed as central to the validity of
+the measurement model, not merely as a robustness check.
 
-A reviewer will ask:
+### 5. The proposal still relies on a few interpretive leaps
 
-- why should `uncertain` publications contribute to SI?
-- how sensitive are results to excluding them?
-- is the broader dataset worth the added label noise?
+The strongest sections are concrete and operational. The weaker sections
+move too quickly from:
 
-This is now measurable, but the proposal does not yet say how this sensitivity will be tested.
+- literature-derived signal
+- to rising scientific salience
+- to future AMR concern
 
-## Secondary concerns
+Those links may all be reasonable, but they are not equivalent, and the
+proposal is best when it keeps those distinctions explicit.
 
-### 8. The dense figure is persuasive, but also selective
+## What would most improve the proposal
 
-The proposal now includes a strong simplified-category penicillins figure to show that not all series are sparse. That is helpful. But a reviewer may note that the example is intentionally dense and class-aggregated, whereas the median pair still has only 2 years of support.
+### 1. Add one external validation target
 
-The figure works best as an existence proof, not as evidence that density is typical.
+This would improve the proposal more than any increase in model
+complexity. Even a modest external anchor would help establish why
+future-SI prediction matters.
 
-### 9. The class-level fallback is pragmatic, but it dilutes specificity
+Examples could include:
 
-Allowing antibiotic classes is sensible and likely necessary. However, it also weakens the specificity of the target. The project’s attraction partly comes from its pair-level granularity. Moving to broad classes improves density, but risks collapsing clinically distinct antibiotic behaviors into one signal.
+- surveillance trend data
+- external AMR priority lists
+- curated historical resistance escalations
 
-A reviewer may therefore ask when the unit of analysis is:
+### 2. Make eligibility rules explicit and numerical
 
-- individual antibiotic
-- antibiotic class
-- simplified category
+The proposal should state concrete thresholds for:
 
-and what scientific question each level is meant to answer.
+- minimum yearly observations
+- minimum publication support
+- acceptable holdout error
+- Granger eligibility
+- when to switch from individual drugs to class-level models
 
-### 10. The proposal still mixes “implemented now” and “future extension” quite often
+That would turn the proposal from a plausible design into a much more
+reviewable one.
 
-This is much better than before, but the distinction still appears repeatedly throughout the draft. That repetition is understandable, because the proposal is trying to be precise. Still, the text occasionally reads as if it is justifying itself section by section rather than presenting one smooth argument.
+### 3. Treat ablation as a central result, not a supplementary check
 
-## What the proposal now answers well
+The proposal is right to commit to comparisons between:
 
-Compared with earlier drafts, the proposal now has strong answers to several reviewer questions:
+- past-SI-only and multi-signal models
+- `yes`-only and `yes + uncertain`
+- individual-drug and class-level analyses
+- linear, convolutional, and transformer-style models
 
-- How many usable training examples remain after filtering and LLM disambiguation?
-- Is the current experiment really future-SI-from-past-SI?
-- Why is long-horizon forecasting not the main claim?
-- How can the method cope with sparse individual-drug trajectories?
-- Is there any evidence that some trajectories are genuinely dense?
+Those comparisons should be framed as core outputs of the project
+because they determine whether the richer modeling actually adds value
+or merely adds flexibility.
 
-Those were important gaps, and they are now handled much better.
+## Final view
 
-## What would make the proposal substantially stronger now
+This proposal has genuine substance. It has a coherent target, a
+credible measurement workflow, a realistic view of sparsity, and a more
+disciplined modeling strategy than many proposals in this area.
 
-### 1. Add one explicit external validation target
+Its main challenge is not that it lacks technical ideas. Its main
+challenge is that the broader meaning of success still depends on an
+external connection that the current design only argues for, rather
+than directly demonstrates.
 
-Even a modest external benchmark would help enormously. For example:
-
-- resistance trend datasets
-- curated WHO/CDC/ECDC priority organisms or watchlists
-- known historical AMR concern escalations
-
-Without this, the project remains internally interesting but externally vulnerable.
-
-### 2. Add a sensitivity analysis for `yes` versus `yes + uncertain`
-
-The proposal already gives the counts. It should now state that core forecasting and SI analyses will be repeated for both variants.
-
-That would directly address the label-noise concern.
-
-### 3. Define eligibility thresholds for each stage
-
-The proposal should state explicitly something like:
-
-- forecasting baseline: pairs with at least `k` yearly observations
-- Granger analysis: pairs with at least `m` yearly observations
-- transformer stage: pairs or classes meeting a denser threshold
-
-This would make the modeling pipeline more concrete and statistically credible.
-
-### 4. Narrow the causal rhetoric further
-
-If the draft says “leading predictors” more often than “causal predictors,” it will be safer under review. The Granger framing can remain, but it should be handled conservatively.
-
-### 5. Clarify the scientific role of class-level models
-
-The proposal should explicitly state whether class-level forecasting is:
-
-- a robustness analysis
-- a fallback for sparse drugs
-- a parallel modeling target
-- or all three
-
-Right now it is presented as sensible, but not yet fully operationalized.
-
-## Bottom line
-
-The current proposal is now credible as a thoughtful, technically grounded scientometric forecasting project for AMR literature. It is much improved over earlier versions, especially in its honesty about the baseline experiment, its use of real dataset counts, and its move to short-horizon forecasting.
-
-Its main remaining weakness is no longer conceptual confusion. It is that the external meaning of the forecast is still underdetermined. Until the project shows why improved future-SI prediction connects to real-world AMR emergence, the strongest defensible interpretation is that it forecasts future scientific salience and investigates which literature-derived signals lead that salience.
+If the project adds one external validation layer and tightens the
+eligibility rules for the more fragile stages, it becomes a much more
+compelling proposal.

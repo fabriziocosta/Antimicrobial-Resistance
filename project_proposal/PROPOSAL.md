@@ -228,20 +228,11 @@ One practical reviewer question is how many usable examples remain after pair-le
 
 The current SI workflow is built on the `yes` + `uncertain` screened dataset, which yields 9,330 pathogen-antibiotic pairs across 41,278 valid SI pair-years after background merging.
 
-#### Table 2. Usable SI trajectory volume for forecasting
+#### Figure 2. Trajectory density after a minimum support filter
 
-| Criterion | Count |
-| --- | ---: |
-| Total pairs in yearly SI dataset | 9,330 |
-| Median observed years per pair | 2 |
-| Mean observed years per pair | 4.42 |
-| Pairs with at least 2 yearly observations | 4,732 |
-| Pairs with at least 3 yearly observations | 3,296 |
-| Pairs with at least 5 yearly observations | 2,078 |
-| Pairs with at least 10 yearly observations | 1,120 |
-| Pairs with at least 20 yearly observations | 456 |
+![Histogram of observed years per pathogen-group pair after filtering to mean yearly count >= 2](../archive/legacy_assets/simplified_categories_pair_trajectory_histogram_min_avg_count_2.png)
 
-These counts show that the full corpus is broad, but long trajectories are concentrated in a smaller subset of pairs. This matters for model choice, evaluation design, and interpretation of Granger-style dependency tests.
+Figure 2 shows the trajectory-length distribution after filtering to pathogen-group pairs with an average yearly publication count of at least 2. Under this criterion, 756 simplified-category pairs remain, with a median trajectory length of 9 years and a mean trajectory length of 15.31 years; 425 pairs have at least 5 yearly observations, 368 have at least 10, and 275 have at least 20. This is a more relevant view of the modeling regime than the full unfiltered panel because it focuses attention on pairs with enough support to be plausible candidates for short-horizon forecasting, Granger-style dependency analysis, and class-level robustness studies.
 
 The archive also contains short-horizon rank-shift outputs for a five-year forecasting setting, for example `si_yearly_rank_shift_simplified_categories_fit_1970_2020_ref_2020_future_2025.parquet`. This is a more credible evaluation regime than 20-year extrapolation and reinforces the case for emphasizing one-year to five-year prediction windows in the proposal.
 
@@ -492,7 +483,7 @@ Such findings would support the broader goal of the project: developing a data-d
 9. Wang. *A bibliometric model for identifying emerging research topics*. https://asistdl.onlinelibrary.wiley.com/doi/10.1002/asi.23930
 10. Liang et al. *Combining deep neural network and bibliometric indicator for emerging research topic prediction*. https://www.sciencedirect.com/science/article/pii/S0306457321001072
 11. Min, Bu, Sun. *Predicting scientific breakthroughs based on knowledge structure variations*. https://www.sciencedirect.com/science/article/pii/S0040162520313287
-12. Forecasting the future of library and information science with bibliometric time-series analysis. https://pmc.ncbi.nlm.nih.gov/articles/PMC7745590/
+12. Taşkin, Z. et al. *Forecasting the future of library and information science and its sub-fields*. *Scientometrics* (2021). https://doi.org/10.1007/s11192-020-03800-2
 13. Porter et al. *Emergence scoring to identify frontier R&D topics and key players*. https://www.sciencedirect.com/science/article/pii/S0040162517314804
 14. Xu et al. *Multidimensional scientometric indicators for the detection of emerging research topics*. https://www.sciencedirect.com/science/article/pii/S0040162520313160
 15. Huang et al. *Tracking the dynamics of co-word networks for emerging topic identification*. https://www.sciencedirect.com/science/article/pii/S0040162521003760
@@ -501,7 +492,6 @@ Such findings would support the broader goal of the project: developing a data-d
 18. Lee J. et al. *BioBERT: a pre-trained biomedical language representation model for biomedical text mining*. https://doi.org/10.1093/bioinformatics/btz682
 19. Vaswani A. et al. *Attention Is All You Need*. https://arxiv.org/abs/1706.03762
 20. National Center for Biotechnology Information (NCBI). *PubMed database*. https://pubmed.ncbi.nlm.nih.gov
-21. Taşkin Z. et al. *Forecasting publication trends using time series analysis*. https://doi.org/10.1007/s11192-020-03410-3
-22. Cleveland W.S. *Robust locally weighted regression and smoothing scatterplots*. https://doi.org/10.1080/01621459.1979.10481038
-23. Granger C.W.J. *Investigating causal relations by econometric models and cross-spectral methods*. https://doi.org/10.2307/1912791
-24. Sims C.A. *Macroeconomics and reality*. https://doi.org/10.2307/1912017
+21. Cleveland W.S. *Robust locally weighted regression and smoothing scatterplots*. https://doi.org/10.1080/01621459.1979.10481038
+22. Granger C.W.J. *Investigating causal relations by econometric models and cross-spectral methods*. https://doi.org/10.2307/1912791
+23. Sims C.A. *Macroeconomics and reality*. https://doi.org/10.2307/1912017

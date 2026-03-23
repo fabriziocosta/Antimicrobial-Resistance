@@ -76,6 +76,7 @@
 \newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
 \usepackage{longtable,booktabs,array}
 \usepackage{calc} % for calculating minipage widths
+\usepackage{float}
 % Correct order of tables after \paragraph or \subparagraph
 \usepackage{etoolbox}
 \makeatletter
@@ -241,7 +242,7 @@ The relevant literature falls into three main blocks: AMR bibliometrics,
 scientometric work on emergence and research fronts, and predictive
 bibliometrics.
 
-\subsubsection{1. AMR bibliometrics exists, but it is mostly
+\subsubsection{AMR bibliometrics exists, but it is mostly
 descriptive}\label{1-amr-bibliometrics-exists-but-it-is-mostly-descriptive}
 
 There are many recent AMR bibliometric studies, but they are
@@ -274,7 +275,7 @@ characterize growth, collaboration, and thematic structure rather than
 predicting future attention trajectories for a concrete
 antibiotic-pathogen pair.
 
-\subsubsection{2. Scientometrics has a mature literature on emergence
+\subsubsection{Scientometrics has a mature literature on emergence
 and research
 fronts}\label{2-scientometrics-has-a-mature-literature-on-emergence-and-research-fronts}
 
@@ -308,7 +309,7 @@ identification. Collectively, these papers show that scientometrics
 already supports a move from purely descriptive mapping toward
 formalized detection of emergence.
 
-\subsubsection{3. There is a smaller but real line of work on
+\subsubsection{There is a smaller but real line of work on
 prediction, including ML-based
 prediction}\label{3-there-is-a-smaller-but-real-line-of-work-on-prediction-including-ml-based-prediction}
 
@@ -369,7 +370,7 @@ These studies provide methodological support for the claim that
 bibliometric signals can be used not only to summarize a field, but also
 to infer and predict emergence.
 
-\subsubsection{Apparent novelty of the proposed AMR
+\subsubsection{Novelty of the proposed AMR
 setup}\label{apparent-novelty-of-the-proposed-amr-setup}
 
 The novelty claim here is an inference from the literature summarized
@@ -397,89 +398,15 @@ literature dynamics as an early-warning proxy for emerging AMR concern.
 Conceptually, that places the project closer to scientometric emergence
 detection than to conventional AMR bibliometrics.
 
-\subsubsection{Positioning the project}\label{positioning-the-project}
-
-A defensible related-work narrative is:
-
-\begin{enumerate}
-\def\labelenumi{\arabic{enumi}.}
-\tightlist
-\item
-  AMR bibliometrics is already established as a valid way to quantify
-  and visualize the AMR research landscape.
-\item
-  Scientometrics has already moved beyond description toward formal
-  detection of emerging topics and, in some cases, prediction of future
-  salience.
-\item
-  What remains missing is evidence that pair-level AMR scientific
-  interest can be predicted better by using external literature-derived
-  signals than by using past SI alone. In particular, the gap is to show
-  that abstract-derived concepts, semantic context, and related features
-  behave as leading predictors of future background-adjusted SI.
-\end{enumerate}
-
-\subsubsection{Compact bibliography for related
-work}\label{compact-bibliography-for-related-work}
-
-For methodological precedent:
-
-\begin{itemize}
-\tightlist
-\item
-  Chen, \emph{CiteSpace II: Detecting and visualizing emerging trends
-  and transient patterns in scientific literature}.
-\item
-  Rotolo, Hicks, and Martin, \emph{What Is an Emerging Technology?}
-\item
-  Wang, \emph{A bibliometric model for identifying emerging research
-  topics}.
-\item
-  Porter et al., \emph{Emergence scoring to identify frontier R\&D
-  topics and key players}.
-\item
-  Xu et al., \emph{Multidimensional scientometric indicators for the
-  detection of emerging research topics}.
-\item
-  Liang et al., \emph{Combining deep neural network and bibliometric
-  indicator for emerging research topic prediction}.
-\item
-  Huang et al., \emph{Tracking the dynamics of co-word networks for
-  emerging topic identification}.
-\item
-  Min et al., \emph{Predicting scientific breakthroughs based on
-  knowledge structure variations}.
-\end{itemize}
-
-For AMR-domain precedent:
-
-\begin{itemize}
-\tightlist
-\item
-  Sweileh et al., \emph{Bibliometric analysis of peer-reviewed
-  literature on antimicrobial stewardship}.
-\item
-  Zhong et al., \emph{Bibliometric analysis of carbapenem-resistant
-  Enterobacteriaceae research, 2010-2020}.
-\item
-  Maimaiti et al., \emph{Global trends and hotspots of phage therapy for
-  bacterial infection}.
-\item
-  Lin et al., \emph{Global insights into MRSA bacteremia: a bibliometric
-  analysis and future outlook}.
-\item
-  Borromeo et al., \emph{Southeast-Asian landscape of antimicrobial
-  resistance research}.
-\end{itemize}
 
 \subsection{Research Objectives}\label{research-objectives}
 
-This proposal is organized around a clear distinction between the
-current implemented baseline and the proposed methodological extension.
-The current codebase already supports pair extraction, LLM-based
-disambiguation, yearly SI construction, and LOESS-based SI forecasting.
-The proposed project extends that baseline with richer abstract-derived
-signals, stronger predictive models, and causal-dependency analysis.
+This proposal builds on preliminary methodological work that has
+already established the feasibility of pair extraction, LLM-based
+disambiguation, yearly SI construction, and short-horizon LOESS-based
+SI forecasting. The proposed research uses those preliminary results as
+prior work and extends them with richer abstract-derived signals,
+stronger predictive models, and causal-dependency analysis.
 
 The overarching goal of this project is to develop a predictive
 framework that leverages signals embedded in the biomedical literature
@@ -505,7 +432,7 @@ predictors of future SI.
 To investigate this hypothesis, the project pursues five specific
 objectives.
 
-\subsubsection{Objective 1. Quantify scientific attention toward
+\subsubsection{Quantify scientific attention toward
 antibiotic-pathogen
 pairs}\label{objective-1-quantify-scientific-attention-toward-antibiotic-pathogen-pairs}
 
@@ -516,8 +443,9 @@ knowledge production.
 
 For each antibiotic-pathogen pair, the project will extract yearly
 publication counts and related bibliometric indicators from the
-biomedical literature. Using the currently implemented pipeline, these
-counts will be background-adjusted using yearly pathogen and antibiotic
+biomedical literature. Building on the preliminary pipeline developed
+for this project, these counts will be background-adjusted using yearly
+pathogen and antibiotic
 marginal publication volumes to estimate an expected log count for each
 pair-year. Scientific interest will then be defined as the difference
 between observed and expected log counts. This SI series will serve as
@@ -526,21 +454,39 @@ are too sparse or fragmented, the same framework can also be applied at
 a coarser level by aggregating antibiotics into broader therapeutic
 classes.
 
-\subsubsection{Objective 2. Extract conceptual AMR signals from
+\subsubsection{Extract conceptual AMR signals from
 scientific
 abstracts}\label{objective-2-extract-conceptual-amr-signals-from-scientific-abstracts}
 
 Scientific abstracts often contain early indicators of emerging
-resistance concerns, such as mentions of treatment failure, newly
-discovered resistance mechanisms, epidemiological spread, or diagnostic
-challenges.
+resistance concerns. In this proposal, five concrete indicator types are
+prioritized:
 
-Using large language models and expert-defined concept categories, the
-project will extract graded signals representing the presence of such
-concepts in each abstract. These conceptual signals will be aggregated
-into time-series indicators for each antibiotic-pathogen pair.
+\begin{itemize}
+\tightlist
+\item
+  documented treatment failure or reduced clinical efficacy for the
+  focal antibiotic-pathogen pair
+\item
+  identification of a resistance mechanism, such as a resistance gene,
+  enzyme, mutation, or efflux process
+\item
+  reports of epidemiological spread, outbreaks, or geographic expansion
+  of resistant strains
+\item
+  surveillance or prevalence evidence indicating increasing resistance
+  frequency in isolates or cohorts
+\item
+  diagnostic or susceptibility-testing signals indicating newly
+  recognized resistance phenotypes
+\end{itemize}
 
-\subsubsection{Objective 3. Model semantic context of pathogens and
+Using large language models and expert-defined prompts, the project
+will assign graded scores for these five indicator types in each
+abstract. These scores will then be aggregated into yearly,
+pair-specific time-series indicators for each antibiotic-pathogen pair.
+
+\subsubsection{Model semantic context of pathogens and
 antibiotics}\label{objective-3-model-semantic-context-of-pathogens-and-antibiotics}
 
 The language used to describe pathogens and antibiotics evolves over
@@ -550,30 +496,52 @@ high-dimensional semantic vectors capturing contextual meaning.
 
 The project will construct semantic embeddings summarizing how specific
 pathogens and antibiotics are discussed in the literature over time.
-These representations provide contextual signals beyond simple
-publication counts.
+These representations are valuable not only as contextual signals
+beyond simple publication counts, but also because they support
+similarity operations in the learned feature space. That matters for the
+scientific goal of generalization: if two antibiotics are discussed in
+similar mechanistic, clinical, or resistance-related contexts, or if two
+pathogens occupy similar semantic neighborhoods in the literature, the
+model should be able to transfer information between them rather than
+treating every pair as completely isolated. In practice, this means the
+embedding space can be used to identify related antibiotics, related
+pathogens, and related pair contexts, allowing the predictive model to
+generalize more effectively to sparse pairs by borrowing structure from
+semantically similar ones.
 
-\subsubsection{Objective 4. Develop multi-signal temporal prediction
+\subsubsection{Develop multi-signal temporal prediction
 models}\label{objective-4-develop-multi-signal-temporal-prediction-models}
 
-The extracted signals will be integrated into machine-learning models
-designed to predict future scientific attention.
+The extracted signals will be integrated into a staged family of
+predictive models designed to predict future scientific attention. The
+modeling plan is intentionally gradual. It will begin with linear
+regression and related additive baselines, then examine whether
+convolutional sequence models provide better integration of local
+temporal patterns across signals, and finally consider
+sequence-transformer models if the available data and validation results
+support the additional complexity. The goal is not to commit in advance
+to a single architecture, but to study how these different signal types
+are best incorporated and to retain only those modeling choices that
+are supported by the data and by improved predictive performance.
 
-The existing codebase already contains a baseline forecasting system
-that fits LOESS curves to yearly log publication counts for each pair,
-extrapolates future counts, and then converts those forecasts into
-future SI by subtracting the interpolated expected-count baseline.
-Functionally, this is a past-SI or past-counts baseline for future-SI
-prediction. The proposed project extends this baseline in two stages.
-First, Granger-causality analysis is used to identify which
-literature-derived signals consistently precede changes in scientific
-attention or SI. Second, those prioritized signals are used in a
-sequence-transformer model designed to predict future publication
-activity and future SI for antibiotic-pathogen pairs. The emphasis is on
-short-horizon forecasting, especially one-year to five-year prediction,
-rather than distant extrapolation over multiple decades.
+Preliminary work for this project has already produced a baseline
+forecasting system that fits LOESS curves to yearly log publication
+counts for each pair, extrapolates future counts, and then converts
+those forecasts into future SI by subtracting the interpolated
+expected-count baseline. Functionally, this is a past-SI or past-counts
+baseline for future-SI prediction. The proposed research extends this
+baseline in two stages.
+First, Granger-causality analysis is used to provide a transparent and
+interpretable view of which literature-derived signals tend to precede
+changes in scientific attention or SI. Second, machine-learning models
+are used to integrate all available sources more flexibly, so that the
+predictive system can learn when different combinations of signals are
+most useful for forecasting, even if that integration is less
+transparent than the Granger stage. The emphasis is on short-horizon
+forecasting, especially one-year to five-year prediction, rather than
+distant extrapolation over multiple decades.
 
-\subsubsection{Objective 5. Evaluate predictive value and early-warning
+\subsubsection{Evaluate predictive value and early-warning
 capability}\label{objective-5-evaluate-predictive-value-and-early-warning-capability}
 
 The final objective is to assess whether literature-derived signals
@@ -597,17 +565,16 @@ analyses.
 
 \subsection{Methodology}\label{methodology}
 
-The methodology combines an implemented baseline workflow with a
-proposed set of extensions. The implemented workflow defines the data,
-the screened pair-construction process, the SI target, and the current
-forecasting benchmark. That current benchmark is a future-SI prediction
-experiment based on past SI or past pair-count trajectories alone. The
-proposed extensions add concept-level features, semantic
-representations, Granger-based dependency analysis, and a stronger
-sequence-transformer predictor to test whether external signals improve
-on that baseline.
+The methodology combines prior methodological work with a proposed set
+of extensions. The preliminary work defines the data, the screened
+pair-construction process, the SI target, and the baseline forecasting
+benchmark. That benchmark is a future-SI prediction experiment based on
+past SI or past pair-count trajectories alone. The proposed research
+adds concept-level features, semantic representations, Granger-based
+dependency analysis, and a stronger sequence predictor to test whether
+external signals improve on that baseline.
 
-\subsubsection{4.1 Data sources and corpus
+\subsubsection{Data sources and corpus
 construction}\label{41-data-sources-and-corpus-construction}
 
 The primary data source for the project will be the biomedical
@@ -652,7 +619,7 @@ applied to coarser antibiotic abstractions such as classes or simplified
 categories. This provides an important fallback when individual-drug
 trajectories are too sparse for stable inference.
 
-\subsubsection{4.1.1 Pair disambiguation and LLM-based
+\subsubsection{Pair disambiguation and LLM-based
 screening}\label{411-pair-disambiguation-and-llm-based-screening}
 
 Because co-mention in PubMed does not guarantee that a paper actually
@@ -735,83 +702,99 @@ of the measurement model for scientific interest: it determines which
 publications count toward a pair\textquotesingle s AMR-relevant
 attention trajectory in the first place.
 
-\subsubsection{4.1.2 Dataset scale after pair-level
+\subsubsection{Dataset scale after pair-level
 filtering}\label{412-dataset-scale-after-pair-level-filtering}
 
-One practical reviewer question is how many usable examples remain after
-pair-level filtering and LLM disambiguation. The current archived and
-refactored outputs are consistent on this point. Using the unified
-decision table and the yearly screened pair tables, the post-screening
-dataset has the following scale.
+One practical question is how many usable examples remain after
+pair-level filtering and LLM disambiguation. Using the unified decision
+table and the yearly screened pair tables, the post-screening dataset
+has the scale summarized in
+Table~\ref{table-1-corpus-size-after-llm-pair-disambiguation}.
 
-\paragraph{Table 1. Corpus size after LLM pair
-disambiguation}\label{table-1-corpus-size-after-llm-pair-disambiguation}
-
-\begin{longtable}[]{@{}lrrrrrr@{}}
-\toprule\noalign{}
+\begin{table}[htbp]
+\centering
+\caption{Corpus size after LLM pair disambiguation}
+\label{table-1-corpus-size-after-llm-pair-disambiguation}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
 Inclusion rule & Unique PMIDs & Pathogens & Antibiotics & Unique pairs &
 Pair-years & Pair-PMID-year rows \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
+\midrule
 \texttt{yes} only & 50,583 & 566 & 210 & 8,915 & 38,507 & 128,794 \\
-\texttt{yes} + \texttt{uncertain} (current default) & 55,980 & 577 & 210
-& 9,330 & 41,284 & 142,883 \\
-\end{longtable}
+\texttt{yes} + \texttt{uncertain} (current default) & 55,980 & 577 & 210 &
+9,330 & 41,284 & 142,883 \\
+\bottomrule
+\end{tabular}%
+}
+\normalsize
+\end{table}
 
 The current SI workflow is built on the \texttt{yes} +
 \texttt{uncertain} screened dataset, which yields 9,330
 pathogen-antibiotic pairs across 41,278 valid SI pair-years after
 background merging.
 
-\paragraph{Table 2. Usable SI trajectory volume for
-forecasting}\label{table-2-usable-si-trajectory-volume-for-forecasting}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{../archive/legacy_assets/simplified_categories_pair_trajectory_histogram_min_avg_count_2.png}
+\caption{Trajectory density after a minimum support filter}
+\label{fig:trajectory-density-filtered}
+\end{figure}
 
-\begin{longtable}[]{@{}lr@{}}
-\toprule\noalign{}
-Criterion & Count \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
-Total pairs in yearly SI dataset & 9,330 \\
-Median observed years per pair & 2 \\
-Mean observed years per pair & 4.42 \\
-Pairs with at least 2 yearly observations & 4,732 \\
-Pairs with at least 3 yearly observations & 3,296 \\
-Pairs with at least 5 yearly observations & 2,078 \\
-Pairs with at least 10 yearly observations & 1,120 \\
-Pairs with at least 20 yearly observations & 456 \\
-\end{longtable}
-
-These counts show that the full corpus is broad, but long trajectories
-are concentrated in a smaller subset of pairs. This matters for model
-choice, evaluation design, and interpretation of Granger-style
-dependency tests.
+Figure~\ref{fig:trajectory-density-filtered} shows the trajectory-length distribution after filtering to
+pathogen-group pairs with an average yearly publication count of at
+least 2. Under this criterion, 756 simplified-category pairs remain,
+with a median trajectory length of 9 years and a mean trajectory length
+of 15.31 years; 425 pairs have at least 5 yearly observations, 368 have
+at least 10, and 275 have at least 20. This is a more relevant view of
+the modeling regime than the full unfiltered panel because it focuses
+attention on pairs with enough support to be plausible candidates for
+short-horizon forecasting, Granger-style dependency analysis, and
+class-level robustness studies.
 
 The archive also contains short-horizon rank-shift outputs for a
-five-year forecasting setting, for example
-\texttt{si\_yearly\_rank\_shift\_simplified\_categories\_fit\_1970\_2020\_ref\_2020\_future\_2025.parquet}.
-This is a more credible evaluation regime than 20-year extrapolation and
+five-year forecasting setting. This is a more credible evaluation regime than 20-year extrapolation and
 reinforces the case for emphasizing one-year to five-year prediction
 windows in the proposal.
 
-\paragraph{Table 3. Approximate supervised training examples from yearly
-SI
-trajectories}\label{table-3-approximate-supervised-training-examples-from-yearly-si-trajectories}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../archive/legacy_notebooks/latest_observed_count_vs_future_si_shift.pdf}
+\caption{Five-year SI-shift candidates after support and backtest filtering}
+\label{fig:latest-count-vs-future-shift}
+\end{figure}
 
-\begin{longtable}[]{@{}lr@{}}
-\toprule\noalign{}
+Figure~\ref{fig:latest-count-vs-future-shift} makes the next-stage selection logic more explicit. It plots
+the latest observed publication count for each eligible pair against the
+predicted five-year increase in scientific interest, after filtering to
+pairs that have enough observed publication support and low
+holdout-period count prediction error. Pair-level Granger analysis is
+therefore restricted to a filtered subset rather than applied across the
+full sparse panel. The proposal uses the
+forecasting baseline as a triage device: candidate pairs for the
+leading-signal analysis are those that (i) have enough literature
+support to define a usable yearly trajectory, (ii) can be forecast with
+acceptable accuracy when the last five years are withheld, and (iii)
+show a materially positive predicted SI shift. In other words, the
+Granger stage is restricted to the part of the panel where both signal
+density and baseline predictability are defensible.
+
+\begin{table}[htbp]
+\centering
+\caption{Approximate supervised training examples from yearly SI trajectories}
+\label{table-3-approximate-supervised-training-examples-from-yearly-si-trajectories}
+\begin{tabular}{@{}lr@{}}
+\toprule
 Forecast setup & Approximate examples \\
-\midrule\noalign{}
-\endhead
-\bottomrule\noalign{}
-\endlastfoot
+\midrule
 1-year-ahead future-SI examples & 31,948 \\
 3-year-ahead future-SI examples & 23,920 \\
 5-year-ahead future-SI examples & 19,301 \\
-\end{longtable}
+\bottomrule
+\end{tabular}
+\end{table}
 
 These counts should be interpreted as pair-year training opportunities
 derived from the screened yearly SI panel, not as independent biological
@@ -819,10 +802,12 @@ events. They provide an upper bound on the supervised examples available
 before additional splitting constraints, rolling validation windows, or
 feature-availability filters are applied.
 
-\paragraph{Figure 1. Example of a dense yearly SI
-trajectory}\label{figure-1-example-of-a-dense-yearly-si-trajectory}
-
-\includegraphics{../archive/legacy_assets/interesting_yearly_si_pngs_simplified_categories/Escherichia_coli__Penicillins.png}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{../archive/legacy_assets/interesting_yearly_si_pngs_simplified_categories/Escherichia_coli__Penicillins.png}
+\caption{Example of a dense yearly SI trajectory}
+\label{fig:dense-si-trajectory}
+\end{figure}
 
 The archived simplified-category SI plot for \emph{Escherichia coli} and
 Penicillins is a useful counterexample to the concern that all
@@ -834,7 +819,7 @@ exactly why the proposal treats antibiotic-class modeling as a credible
 companion to individual-antibiotic prediction, especially for
 short-horizon forecasting and robustness analysis.
 
-\subsubsection{4.2 Scientific interest time-series
+\subsubsection{Scientific interest time-series
 construction}\label{42-scientific-interest-time-series-construction}
 
 For each antibiotic-pathogen pair, the project will compute yearly
@@ -861,20 +846,25 @@ log-transformed counts using:
 \begin{itemize}
 \tightlist
 \item
-  \texttt{log10(1\ +\ bg\_pathogen\_n)}
+  \(\log_{10}(1 + n_{\mathrm{pathogen},t}^{\mathrm{bg}})\)
 \item
-  \texttt{log10(1\ +\ bg\_antibiotic\_n)}
+  \(\log_{10}(1 + n_{\mathrm{antibiotic},t}^{\mathrm{bg}})\)
 \item
-  Pathogen dummy variables
+  pathogen indicator variables
 \item
-  Antibiotic dummy variables
+  antibiotic indicator variables
 \end{itemize}
 
 This yields an expected log pair count,
-\texttt{expected\_log\_count\_global}, and scientific interest is
+\( \widehat{\ell}_{\mathrm{pair},t}^{\mathrm{global}} \), and
+scientific interest is
 defined as:
 
-\textbf{SI = log10(1 + pair count) - expected\_log\_count\_global}
+\[
+\mathrm{SI}_t
+= \log_{10}(1 + n_{\mathrm{pair},t})
+- \widehat{\ell}_{\mathrm{pair},t}^{\mathrm{global}}.
+\]
 
 These SI values form the baseline time series used for forecasting
 future attention dynamics. This definition is important because it
@@ -883,31 +873,34 @@ prominence, not just absolute publication volume. The same construction
 can also be applied to broader antibiotic classes when a coarser and
 denser representation is preferable to individual-drug modeling.
 
-\subsubsection{4.3 Concept extraction from
+\subsubsection{Concept extraction from
 abstracts}\label{43-concept-extraction-from-abstracts}
 
 To capture higher-level AMR signals, the project will identify
 conceptual indicators within scientific abstracts.
 
-Examples of conceptual categories include:
+The first concept layer will focus on five concrete indicator types:
 
 \begin{itemize}
 \tightlist
 \item
-  Clinical treatment failure.
+  documented treatment failure or reduced clinical efficacy for the
+  focal antibiotic-pathogen pair
 \item
-  Emergence of resistance mechanisms.
+  identification of a resistance mechanism, such as a resistance gene,
+  enzyme, mutation, or efflux process
 \item
-  Epidemiological spread.
+  reports of epidemiological spread, outbreaks, or geographic expansion
+  of resistant strains
 \item
-  Diagnostic innovation.
+  surveillance or prevalence evidence indicating increasing resistance
+  frequency in isolates or cohorts
 \item
-  Therapeutic development.
-\item
-  Surveillance and public health alerts.
+  diagnostic or susceptibility-testing signals indicating newly
+  recognized resistance phenotypes
 \end{itemize}
 
-A language model will evaluate the presence of each concept in an
+A language model will evaluate the presence of each indicator type in an
 abstract and assign a graded score representing the strength of
 association. Scores will be aggregated annually to produce
 concept-specific time-series signals.
@@ -923,13 +916,12 @@ AMR-relevant abstracts, reducing contamination from papers that merely
 mention the antibiotic and pathogen without asserting a relevant
 resistance relationship.
 
-This is also an important answer to a likely reviewer criticism. The
-project is not based on naive document-level co-mention counts. Instead,
-it uses broad retrieval for recall and then applies pair-specific LLM
-adjudication to decide whether a paper contributes evidence to the focal
-antibiotic-pathogen trajectory.
+The project is therefore not based on naive document-level co-mention
+counts. Instead, it uses broad retrieval for recall and then applies
+pair-specific LLM adjudication to decide whether a paper contributes
+evidence to the focal antibiotic-pathogen trajectory.
 
-\subsubsection{4.4 Semantic representation of literature
+\subsubsection{Semantic representation of literature
 context}\label{44-semantic-representation-of-literature-context}
 
 In addition to explicit conceptual signals, the project will model
@@ -943,35 +935,41 @@ surrounding each entity.
 These semantic signals may capture subtle changes in scientific
 narratives that precede increases in publication activity.
 
-\subsubsection{4.5 Predictive modeling}\label{45-predictive-modeling}
+\subsubsection{Predictive modeling}\label{45-predictive-modeling}
 
 The extracted signals will be integrated within a predictive modeling
-framework with two layers: a current benchmark model and a proposed
-multi-signal extension.
+framework that moves from simple baselines to more expressive sequence
+models only when the data support that progression.
 
-The current implemented baseline is simpler. It fits a LOESS curve to
-yearly log counts for each antibiotic-pathogen pair, uses damped linear
-tails for extrapolation when forecasting beyond the observed range, and
-then derives predicted SI by subtracting the interpolated expected
-log-count baseline from the predicted log count. This provides a
-concrete, already operational benchmark for future work.
+A preliminary baseline already fits a LOESS curve to yearly log counts
+for each antibiotic-pathogen pair, uses damped linear tails for
+extrapolation when forecasting beyond the observed range, and then
+derives predicted SI by subtracting the interpolated expected log-count
+baseline from the predicted log count. This provides a concrete
+benchmark for future work.
 
 The proposed extension is to move beyond this count-only forecasting
 baseline in a staged way. Granger-causality analysis is first used to
 identify signals that show consistent predictive temporal relationships
-with future attention or SI. These results then inform feature
-prioritization for a sequence-transformer model that can integrate
-heterogeneous signals over longer temporal contexts than the current
-baseline.
-
-Sequence transformers are well suited to this setting because they can
-model long-range dependencies across multiple signal streams, support
-flexible conditioning on heterogeneous features, and provide a natural
-framework for learning interactions among attention dynamics,
-abstract-derived concepts, semantic context, and biological descriptors.
-In this sense, the proposal should be understood as an extension of an
-existing SI-forecasting pipeline rather than as a fully greenfield
-modeling effort.
+with future attention or SI. In this role, Granger analysis provides a
+transparent and interpretable account of which signals appear to lead
+the target and therefore offers a principled first view of the temporal
+structure in the data. Those same signals can then be integrated into
+progressively richer predictive models whose purpose is different: not
+primarily interpretability, but stronger prediction through automatic
+learning of when different combinations of signals are useful. The
+first stage will examine linear regression and related additive models
+that provide transparent baselines for multi-signal integration. The
+next stage will evaluate convolutional sequence models to test whether
+short-range temporal motifs across signals improve prediction. A
+sequence transformer remains a candidate later-stage model for settings
+where the available data are sufficiently rich and where validation
+results show that a more expressive architecture materially improves
+performance. Model selection is therefore empirical rather than
+doctrinal: the final predictive architecture should be whichever level
+of complexity is best supported by the data and by out-of-sample
+predictive gain, even if the most powerful model is less transparent
+than the earlier Granger-based analysis.
 
 Conceptually, the model integrates:
 
@@ -996,7 +994,7 @@ serving as a later-stage, more expressive model. For pairs with limited
 support, the same short-horizon prediction task can also be defined at
 the antibiotic-class level to improve density and robustness.
 
-\subsubsection{4.6 Evaluation and
+\subsubsection{Evaluation and
 benchmarking}\label{46-evaluation-and-benchmarking}
 
 The predictive framework will be evaluated using retrospective
@@ -1033,6 +1031,30 @@ predictors in the literature that improve future-SI prediction beyond
 past-SI-only models. Evaluation should prioritize short horizons of one
 to five years, where the forecasting task is most credible, and can be
 repeated at both the individual-antibiotic and antibiotic-class levels.
+
+The evaluation design will therefore include an explicit ablation and
+sensitivity framework rather than treating these comparisons as optional
+side analyses. At minimum, the proposal commits to comparing:
+
+\begin{itemize}
+\tightlist
+\item
+  past-SI-only models versus multi-signal models
+\item
+  \texttt{yes}-only screening versus \texttt{yes} +
+  \texttt{uncertain} screening
+\item
+  individual-antibiotic prediction versus antibiotic-class aggregation
+\item
+  linear models versus convolutional sequence models versus
+  transformer-style models
+\end{itemize}
+
+These comparisons are central to the credibility of the design because
+they test whether the proposed gains actually come from richer signals,
+broader inclusion rules, coarser aggregation levels, or increased model
+complexity. Without these ablations, it would be much harder to
+interpret any performance improvement.
 
 \subsubsection{Expected methodological
 contribution}\label{expected-methodological-contribution}
@@ -1075,7 +1097,7 @@ To address this question, the project will employ Granger causality
 analysis, a statistical framework for identifying predictive
 dependencies between time series.
 
-\subsubsection{5.1 Conceptual overview}\label{51-conceptual-overview}
+\subsubsection{Conceptual overview}\label{51-conceptual-overview}
 
 Granger causality provides a formal method for testing whether past
 values of one time series improve the prediction of another time series
@@ -1095,7 +1117,7 @@ determine whether certain signals extracted from the literature
 systematically precede increases in scientific attention or increases in
 background-adjusted scientific interest.
 
-\subsubsection{5.2 Application to literature-derived
+\subsubsection{Application to literature-derived
 signals}\label{52-application-to-literature-derived-signals}
 
 The project will construct several types of time-series signals for each
@@ -1121,6 +1143,33 @@ antibiotic-pathogen pair:
 Granger causality tests can be used to evaluate whether any of these
 signals consistently precede increases in scientific attention or SI.
 
+To make this stage reviewable, Granger analysis will not be applied to
+all screened pairs. A pair will be eligible only if it satisfies a
+three-part filter derived from the existing forecasting pipeline.
+First, it must have enough publication support to define a meaningful
+yearly series, operationalized as a minimum average yearly publication
+count and at least 8 to 10 yearly observations after screening.
+Second, the baseline SI/count forecaster must remain accurate under a
+rolling five-year holdout test, so that the pair is not being analyzed
+in a regime where even the target trajectory is unstable or dominated by
+noise. Third, the pair must show a sufficiently large predicted future
+increase in SI to justify treating it as an impending rise in
+scientific salience rather than a negligible fluctuation. This means the
+Granger question is narrowed from ``which auxiliary signals lead any
+pair whatsoever?'' to ``which auxiliary signals lead the subset of
+pairs with adequate support, demonstrable forecastability, and a large
+expected rise in SI?''
+
+This filtering also clarifies how the main statistical objections will
+be handled. The target of the Granger analysis will be the yearly SI
+series or its differenced form rather than raw sparse publication
+counts, which reduces nonstationarity driven by long-run background
+growth. Zero inflation is handled upstream by excluding extremely
+low-support pairs and by requiring successful holdout prediction before
+Granger testing is attempted. Multiple testing will be controlled using
+false-discovery-rate correction across the family of pair-signal tests
+within each analysis stage.
+
 In practical terms, this involves comparing two models:
 
 \begin{enumerate}
@@ -1140,7 +1189,7 @@ context of this proposal, that comparison formalizes the central novelty
 claim: whether signals other than past SI provide additional predictive
 value for future SI.
 
-\subsubsection{5.3 Example 1. Resistance mechanism discovery preceding
+\subsubsection{Resistance mechanism discovery preceding
 research
 attention}\label{53-example-1-resistance-mechanism-discovery-preceding-research-attention}
 
@@ -1152,31 +1201,29 @@ Let:
 \begin{itemize}
 \tightlist
 \item
-  \texttt{A\_t} represent scientific attention or SI for a specific
-  antibiotic-pathogen pair at year \texttt{t}.
+  \(A_t\) represent scientific attention or SI for a specific
+  antibiotic-pathogen pair at year \(t\).
 \item
-  \texttt{M\_t} represent the frequency of abstracts describing new
+  \(M_t\) represent the frequency of abstracts describing new
   resistance mechanisms.
 \end{itemize}
 
-If increases in \texttt{M\_t} systematically occur before increases in
-\texttt{A\_t}, the following regression model may reveal a
+If increases in \(M_t\) systematically occur before increases in
+\(A_t\), the following regression model may reveal a
 Granger-causal relationship:
 
-\begin{Shaded}
-\begin{Highlighting}[]
-\NormalTok{A\_t = alpha + sum(beta\_i * A\_\{t{-}i\}) + sum(gamma\_i * M\_\{t{-}i\}) + epsilon\_t}
-\end{Highlighting}
-\end{Shaded}
+\[
+A_t = \alpha + \sum_i \beta_i A_{t-i} + \sum_i \gamma_i M_{t-i} + \varepsilon_t
+\]
 
-If the coefficients on the lagged \texttt{M} terms are statistically
+If the coefficients on the lagged \(M\) terms are statistically
 significant, this suggests that discoveries of resistance mechanisms
 tend to precede increases in scientific attention.
 
 This would provide quantitative evidence that mechanistic discoveries
 act as early signals of emerging AMR concerns.
 
-\subsubsection{5.4 Example 2. Epidemiological signals predicting
+\subsubsection{Epidemiological signals predicting
 research
 activity}\label{54-example-2-epidemiological-signals-predicting-research-activity}
 
@@ -1188,19 +1235,19 @@ Let:
 \begin{itemize}
 \tightlist
 \item
-  \texttt{E\_t} represent the frequency of abstracts describing
+  \(E_t\) represent the frequency of abstracts describing
   epidemiological spread.
 \end{itemize}
 
 If epidemiological mentions precede increased publication activity or
-increased SI, a Granger test may detect that lagged values of \texttt{E}
+increased SI, a Granger test may detect that lagged values of \(E\)
 improve prediction of the attention signal.
 
 Such a result would support the hypothesis that clinical or
 public-health observations drive subsequent increases in research
 activity.
 
-\subsubsection{5.5 Example 3. Semantic shifts in scientific
+\subsubsection{Semantic shifts in scientific
 discourse}\label{55-example-3-semantic-shifts-in-scientific-discourse}
 
 Semantic embeddings allow detection of changes in how pathogens or
@@ -1228,7 +1275,7 @@ This approach enables detection of latent narrative changes in the
 literature before they manifest as large increases in publication
 counts.
 
-\subsubsection{5.6 Multi-variable Granger
+\subsubsection{Multi-variable Granger
 analysis}\label{56-multi-variable-granger-analysis}
 
 Beyond pairwise testing, the project will explore multivariate Granger
@@ -1260,7 +1307,7 @@ This analysis can reveal predictive pathways in the evolution of
 scientific attention, helping to identify which signals consistently act
 as early indicators.
 
-\subsubsection{5.7 Relationship with the predictive
+\subsubsection{Relationship with the predictive
 model}\label{57-relationship-with-the-predictive-model}
 
 Granger causality analysis serves two complementary roles in the
@@ -1280,7 +1327,7 @@ the methodology. In this way, Granger analysis acts as an
 interpretability and feature-selection bridge between the current LOESS
 benchmark and the more powerful transformer-based predictor.
 
-\subsubsection{5.8 Expected insights}\label{58-expected-insights}
+\subsubsection{Expected insights}\label{58-expected-insights}
 
 Applying Granger causality in this context can help answer questions
 such as:
@@ -1309,5 +1356,9 @@ a data-driven early-warning system based on the dynamics of scientific
 attention.
 
 \input{bib.tex}
+
+\appendix
+\clearpage
+\input{review.tex}
 
 \end{document}
