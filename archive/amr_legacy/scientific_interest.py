@@ -2253,9 +2253,11 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     random_state: int | None = None,
     show: bool = True,
     display_name: bool = False,
+    max_text_labels: int | None = None,
+    always_label_glass: bool = True,
     title: str | None = None,
-    width: int = 1400,
-    height: int = 900,
+    width: int = 2200,
+    height: int = 1600,
     marker_color: str = "#1f77b4",
     pdf_path: str | None = None,
 ) -> dict[str, Any]:
@@ -2378,27 +2380,57 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
         lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
         axis=1,
     )
+    plot_df["display_label"] = ""
+    plot_df["text_position"] = "middle right"
+    if display_name:
+        if max_text_labels is None:
+            label_mask = pd.Series(True, index=plot_df.index)
+        else:
+            label_mask = pd.Series(False, index=plot_df.index)
+            if always_label_glass and "is_glass_pair" in plot_df.columns:
+                label_mask = label_mask | plot_df["is_glass_pair"].fillna(False)
+            remaining_label_slots = max(int(max_text_labels) - int(label_mask.sum()), 0)
+            if remaining_label_slots > 0:
+                extra_label_index = (
+                    plot_df.loc[~label_mask]
+                    .sort_values(
+                        ["future_minus_latest_smoothed_SI", "latest_available_count"],
+                        ascending=[False, False],
+                    )
+                    .head(remaining_label_slots)
+                    .index
+                )
+                label_mask.loc[extra_label_index] = True
+        plot_df.loc[label_mask, "display_label"] = plot_df.loc[label_mask, "label"]
+    show_text = display_name and plot_df["display_label"].astype(str).str.len().gt(0).any()
 
     fig = go.Figure(
         data=[
             go.Scatter(
                 x=plot_df["latest_available_count"],
                 y=plot_df["future_minus_latest_smoothed_SI"],
-                mode="markers+text" if display_name else "markers",
-                text=plot_df["label"] if display_name else None,
-                textposition="top center" if display_name else None,
+                mode="markers+text" if show_text else "markers",
+                text=plot_df["display_label"] if show_text else None,
+                textposition=plot_df["text_position"] if show_text else None,
+                textfont=dict(size=8),
                 marker=dict(
                     color=pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
                     colorscale=[[0.0, "#b30000"], [1.0, "#ffffff"]],
                     cmin=0.0,
                     cmax=float(max_count_abs_pct_error_mean),
-                    size=13,
-                    opacity=0.8,
+                    size=10,
+                    opacity=0.72,
                     line=dict(
                         color=["#000000" if is_glass else "#000000" for is_glass in plot_df["is_glass_pair"]],
                         width=[3.8 if is_glass else 1.2 for is_glass in plot_df["is_glass_pair"]],
                     ),
-                    colorbar=dict(title="Mean abs count % error"),
+                    colorbar=dict(
+                        title="Mean abs count % error",
+                        len=0.72,
+                        thickness=22,
+                        x=1.03,
+                        y=0.5,
+                    ),
                 ),
                 customdata=plot_df[
                     [
@@ -2459,7 +2491,8 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
         template="plotly_white",
         width=int(width),
         height=int(height),
-        margin=dict(l=150, r=180, t=110, b=95),
+        margin=dict(l=150, r=260, t=120, b=95),
+        title_font=dict(size=24),
     )
     fig.update_xaxes(type="log", range=[np.log10(x_axis_min), np.log10(x_axis_max)])
     fig.update_yaxes(range=[y_axis_min, y_axis_max])
@@ -2539,9 +2572,11 @@ def plot_interactive_latest_observed_count_vs_future_si(
     random_state: int | None = None,
     show: bool = True,
     display_name: bool = False,
+    max_text_labels: int | None = None,
+    always_label_glass: bool = True,
     title: str | None = None,
-    width: int = 1400,
-    height: int = 900,
+    width: int = 2200,
+    height: int = 1600,
     marker_color: str = "#1f77b4",
     pdf_path: str | None = None,
 ) -> dict[str, Any]:
@@ -2655,27 +2690,57 @@ def plot_interactive_latest_observed_count_vs_future_si(
         lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
         axis=1,
     )
+    plot_df["display_label"] = ""
+    plot_df["text_position"] = "middle right"
+    if display_name:
+        if max_text_labels is None:
+            label_mask = pd.Series(True, index=plot_df.index)
+        else:
+            label_mask = pd.Series(False, index=plot_df.index)
+            if always_label_glass and "is_glass_pair" in plot_df.columns:
+                label_mask = label_mask | plot_df["is_glass_pair"].fillna(False)
+            remaining_label_slots = max(int(max_text_labels) - int(label_mask.sum()), 0)
+            if remaining_label_slots > 0:
+                extra_label_index = (
+                    plot_df.loc[~label_mask]
+                    .sort_values(
+                        ["future_predicted_SI", "latest_available_count"],
+                        ascending=[False, False],
+                    )
+                    .head(remaining_label_slots)
+                    .index
+                )
+                label_mask.loc[extra_label_index] = True
+        plot_df.loc[label_mask, "display_label"] = plot_df.loc[label_mask, "label"]
+    show_text = display_name and plot_df["display_label"].astype(str).str.len().gt(0).any()
 
     fig = go.Figure(
         data=[
             go.Scatter(
                 x=plot_df["latest_available_count"],
                 y=plot_df["future_predicted_SI"],
-                mode="markers+text" if display_name else "markers",
-                text=plot_df["label"] if display_name else None,
-                textposition="top center" if display_name else None,
+                mode="markers+text" if show_text else "markers",
+                text=plot_df["display_label"] if show_text else None,
+                textposition=plot_df["text_position"] if show_text else None,
+                textfont=dict(size=8),
                 marker=dict(
                     color=pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
                     colorscale=[[0.0, "#b30000"], [1.0, "#ffffff"]],
                     cmin=0.0,
                     cmax=float(max_count_abs_pct_error_mean),
-                    size=13,
-                    opacity=0.8,
+                    size=10,
+                    opacity=0.72,
                     line=dict(
                         color=["#000000" if is_glass else "#000000" for is_glass in plot_df["is_glass_pair"]],
                         width=[3.8 if is_glass else 1.2 for is_glass in plot_df["is_glass_pair"]],
                     ),
-                    colorbar=dict(title="Mean abs count % error"),
+                    colorbar=dict(
+                        title="Mean abs count % error",
+                        len=0.72,
+                        thickness=22,
+                        x=1.03,
+                        y=0.5,
+                    ),
                 ),
                 customdata=plot_df[
                     [
@@ -2736,7 +2801,8 @@ def plot_interactive_latest_observed_count_vs_future_si(
         template="plotly_white",
         width=int(width),
         height=int(height),
-        margin=dict(l=150, r=180, t=110, b=95),
+        margin=dict(l=150, r=260, t=120, b=95),
+        title_font=dict(size=24),
     )
     fig.update_xaxes(type="log", range=[np.log10(x_axis_min), np.log10(x_axis_max)])
     fig.update_yaxes(range=[y_axis_min, y_axis_max])
