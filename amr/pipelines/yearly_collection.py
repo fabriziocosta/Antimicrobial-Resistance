@@ -353,6 +353,7 @@ def collect_yearly_background_counts(
     pathogens: Sequence[str],
     antibiotics: Sequence[str],
     bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     start_year: int,
     end_year: int,
     email: str,
@@ -378,6 +379,7 @@ def collect_yearly_background_counts(
     )
     antibiotic_counts_df = count_pmids_per_year_for_antibiotics_resumable(
         antibiotics=antibiotics,
+        antibiotic_synonym_df=antibiotic_synonym_df,
         start_year=start_year,
         end_year=end_year,
         email=email,
@@ -395,6 +397,7 @@ def collect_yearly_amr_dataset(
     pathogens: Sequence[str],
     antibiotics: Sequence[str],
     bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     min_date: str,
     max_date: str,
     email: str,
@@ -420,6 +423,7 @@ def collect_yearly_amr_dataset(
         pathogens=pathogens,
         antibiotics=antibiotics,
         bacteria_synonym_df=bacteria_synonym_df,
+        antibiotic_synonym_df=antibiotic_synonym_df,
         min_date=min_date,
         max_date=max_date,
         year_gap=interval_year_gap,

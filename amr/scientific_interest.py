@@ -11,6 +11,30 @@ from skmisc.loess import loess
 from sklearn.linear_model import Ridge
 
 _AUTO_TAIL_DAMPING = object()
+WEAK_SIGNAL_CATEGORY = "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+AMR_DRIVER_CATEGORY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "year",
+    "amr_primary_category",
+    "count",
+]
+AMR_DRIVER_SUMMARY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "driver_recent_total",
+    "driver_previous_total",
+    "driver_count_change",
+    "driver_dominant_category",
+    "driver_dominant_category_count",
+    "driver_fastest_growing_category",
+    "driver_fastest_growing_category_change",
+    "driver_weak_signal_share",
+    "driver_manual_review_share",
+    "driver_central_count",
+    "driver_partial_count",
+    "driver_incidental_count",
+]
 
 
 def _log_transform(values: pd.Series | np.ndarray | float) -> pd.Series | np.ndarray | float:
@@ -110,6 +134,154 @@ def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: 
         raise ValueError(f"No yearly SI data found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
     pair_df["log_count"] = _log_transform(pair_df["count"].astype(float))
     return pair_df
+
+
+def build_yearly_category_counts(
+    unified_df: pd.DataFrame,
+    *,
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    category_col: str = "amr_primary_category",
+) -> pd.DataFrame:
+    """Aggregate unified LLM decisions to yearly AMR category counts."""
+    required = {"pathogen", "antibiotic", "year", "unified_decision", category_col}
+    if unified_df.empty or not required.issubset(unified_df.columns):
+        return pd.DataFrame(columns=AMR_DRIVER_CATEGORY_COLUMNS)
+
+    include_set = {str(value).strip().lower() for value in include_decisions}
+    work = unified_df.copy()
+    work["unified_decision"] = work["unified_decision"].astype(str).str.strip().str.lower()
+    work = work.loc[work["unified_decision"].isin(include_set)].copy()
+    if work.empty:
+        return pd.DataFrame(columns=AMR_DRIVER_CATEGORY_COLUMNS)
+
+    work["year"] = pd.to_numeric(work["year"], errors="coerce")
+    work = work.dropna(subset=["pathogen", "antibiotic", "year"])
+    if work.empty:
+        return pd.DataFrame(columns=AMR_DRIVER_CATEGORY_COLUMNS)
+
+    work["year"] = work["year"].astype(int)
+    work["amr_primary_category"] = work[category_col].where(work[category_col].notna(), WEAK_SIGNAL_CATEGORY)
+    work["amr_primary_category"] = (
+        work["amr_primary_category"].astype(str).str.strip().replace({"": WEAK_SIGNAL_CATEGORY})
+    )
+
+    return (
+        work.groupby(["pathogen", "antibiotic", "year", "amr_primary_category"], as_index=False)
+        .size()
+        .rename(columns={"size": "count"})
+        .sort_values(["pathogen", "antibiotic", "year", "amr_primary_category"])
+        .reset_index(drop=True)
+    )
+
+
+def summarize_si_change_drivers(
+    interesting_df: pd.DataFrame,
+    unified_df: pd.DataFrame,
+    *,
+    fit_end_year: int,
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    lookback_years: int = 5,
+    category_col: str = "amr_primary_category",
+) -> pd.DataFrame:
+    """Summarize recent LLM category mix for ranked SI-change pairs."""
+    required = {
+        "pathogen",
+        "antibiotic",
+        "year",
+        "unified_decision",
+        category_col,
+        "amr_pair_centrality",
+        "amr_needs_manual_review",
+    }
+    if interesting_df.empty or unified_df.empty or not required.issubset(unified_df.columns):
+        return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
+
+    include_set = {str(value).strip().lower() for value in include_decisions}
+    lookback_years = max(int(lookback_years), 1)
+    recent_start = int(fit_end_year) - lookback_years + 1
+    previous_start = int(fit_end_year) - (2 * lookback_years) + 1
+    previous_end = recent_start - 1
+
+    work = unified_df.copy()
+    work["unified_decision"] = work["unified_decision"].astype(str).str.strip().str.lower()
+    work = work.loc[work["unified_decision"].isin(include_set)].copy()
+    if work.empty:
+        return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
+
+    work["year"] = pd.to_numeric(work["year"], errors="coerce")
+    work = work.dropna(subset=["pathogen", "antibiotic", "year"])
+    if work.empty:
+        return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
+
+    work["year"] = work["year"].astype(int)
+    work["amr_primary_category"] = work[category_col].where(work[category_col].notna(), WEAK_SIGNAL_CATEGORY)
+    work["amr_primary_category"] = (
+        work["amr_primary_category"].astype(str).str.strip().replace({"": WEAK_SIGNAL_CATEGORY})
+    )
+    work["amr_pair_centrality"] = work["amr_pair_centrality"].astype(str).str.strip().str.lower()
+    manual = work["amr_needs_manual_review"]
+    if manual.dtype == object:
+        work["manual_review_bool"] = manual.astype(str).str.strip().str.lower().isin({"true", "1", "yes"})
+    else:
+        work["manual_review_bool"] = manual.fillna(False).astype(bool)
+
+    pairs = interesting_df[["pathogen", "antibiotic"]].drop_duplicates()
+    work = work.merge(pairs, on=["pathogen", "antibiotic"], how="inner")
+    if work.empty:
+        return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
+
+    rows: list[dict[str, Any]] = []
+    for pair in pairs.itertuples(index=False):
+        pair_df = work.loc[(work["pathogen"] == pair.pathogen) & (work["antibiotic"] == pair.antibiotic)]
+        recent = pair_df.loc[(pair_df["year"] >= recent_start) & (pair_df["year"] <= int(fit_end_year))]
+        previous = pair_df.loc[(pair_df["year"] >= previous_start) & (pair_df["year"] <= previous_end)]
+
+        recent_counts = recent["amr_primary_category"].value_counts()
+        previous_counts = previous["amr_primary_category"].value_counts()
+        all_categories = sorted(set(recent_counts.index).union(previous_counts.index))
+        changes = {
+            category: int(recent_counts.get(category, 0) - previous_counts.get(category, 0))
+            for category in all_categories
+        }
+
+        if recent_counts.empty:
+            dominant_category = None
+            dominant_count = 0
+        else:
+            dominant_category = sorted(
+                ((str(category), int(count)) for category, count in recent_counts.items()),
+                key=lambda item: (-item[1], item[0]),
+            )[0][0]
+            dominant_count = int(recent_counts[dominant_category])
+
+        if changes:
+            fastest_category, fastest_change = sorted(changes.items(), key=lambda item: (-item[1], item[0]))[0]
+        else:
+            fastest_category, fastest_change = None, 0
+
+        recent_total = int(len(recent))
+        weak_count = int((recent["amr_primary_category"] == WEAK_SIGNAL_CATEGORY).sum()) if recent_total else 0
+        centrality_counts = recent["amr_pair_centrality"].value_counts()
+        rows.append(
+            {
+                "pathogen": pair.pathogen,
+                "antibiotic": pair.antibiotic,
+                "driver_recent_total": recent_total,
+                "driver_previous_total": int(len(previous)),
+                "driver_count_change": recent_total - int(len(previous)),
+                "driver_dominant_category": dominant_category,
+                "driver_dominant_category_count": dominant_count,
+                "driver_fastest_growing_category": fastest_category,
+                "driver_fastest_growing_category_change": int(fastest_change),
+                "driver_weak_signal_share": weak_count / recent_total if recent_total else 0.0,
+                "driver_manual_review_share": float(recent["manual_review_bool"].mean()) if recent_total else 0.0,
+                "driver_central_count": int(centrality_counts.get("central", 0)),
+                "driver_partial_count": int(centrality_counts.get("partial", 0)),
+                "driver_incidental_count": int(centrality_counts.get("incidental", 0)),
+            }
+        )
+
+    return pd.DataFrame(rows, columns=AMR_DRIVER_SUMMARY_COLUMNS)
 
 
 def _build_pair_lookup(si_df: pd.DataFrame) -> dict[tuple[str, str], pd.DataFrame]:
@@ -809,11 +981,65 @@ def plot_yearly_si_pair(
     return result
 
 
+def plot_yearly_category_driver_counts(
+    category_counts_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    *,
+    fit_end_year: int | None = None,
+) -> dict[str, Any]:
+    """Plot yearly LLM category counts for one pathogen-antibiotic pair."""
+    required = set(AMR_DRIVER_CATEGORY_COLUMNS)
+    missing = required - set(category_counts_df.columns)
+    if missing:
+        raise KeyError(f"category_counts_df missing required columns: {sorted(missing)}")
+
+    pair_df = category_counts_df.loc[
+        (category_counts_df["pathogen"] == pathogen) & (category_counts_df["antibiotic"] == antibiotic)
+    ].copy()
+    if pair_df.empty:
+        raise ValueError(f"No category counts found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
+
+    pivot = (
+        pair_df.pivot_table(
+            index="year",
+            columns="amr_primary_category",
+            values="count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .sort_index()
+        .sort_index(axis=1)
+    )
+    fig, ax = plt.subplots(figsize=(12, 5))
+    pivot.plot(kind="bar", stacked=True, ax=ax, width=0.85)
+    if fit_end_year is not None and not pivot.empty:
+        years = list(pivot.index)
+        if int(fit_end_year) in years:
+            ax.axvline(
+                years.index(int(fit_end_year)) + 0.5,
+                color="grey",
+                linestyle="--",
+                linewidth=1.2,
+                label="Fit end year",
+            )
+    ax.set_xlabel("Year")
+    ax.set_ylabel("LLM-classified AMR publication count")
+    ax.set_title(f"{pathogen} vs {antibiotic} | AMR category drivers")
+    ax.grid(axis="y", alpha=0.2)
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    return {"figure": fig, "ax": ax, "pivot": pivot}
+
+
 __all__ = [
     "fit_global_pooled_si_model",
     "build_pair_si_yearly_series",
     "fit_predict_yearly_si_loess",
     "rank_yearly_pairs_by_future_si_shift",
     "select_interesting_yearly_rank_cases",
+    "build_yearly_category_counts",
+    "summarize_si_change_drivers",
     "plot_yearly_si_pair",
+    "plot_yearly_category_driver_counts",
 ]

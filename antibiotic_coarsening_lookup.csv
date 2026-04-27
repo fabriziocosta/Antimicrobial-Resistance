@@ -1,0 +1,246 @@
+Antibiotic,Class,Simplified categories,High level categories,Origin
+Amikacin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Amoxicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Amoxicillin/clavulanic-acid,Beta-lactam/beta-lactamase-inhibitor,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Ampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Ampicillin/sulbactam,Beta-lactam/beta-lactamase-inhibitor,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Arbekacin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Aspoxicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Azidocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Azithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Azlocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Aztreonam,Monobactams,Monobactams,Beta lactam and related,Naturally occurring/modified
+Bacampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Bekanamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Benzathine-benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Biapenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Brodimoprim,Trimethoprim-derivatives,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Carbenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Carindacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Carumonam,Monobactams,Monobactams,Beta lactam and related,Naturally occurring/modified
+Cefacetrile,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefaclor,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefadroxil,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefalexin,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefaloridine,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefalotin,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefamandole,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefapirin,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefatrizine,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefazedone,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefazolin,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefbuperazone,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefcapene-pivoxil,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefdinir,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefditoren-pivoxil,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefepime,Fourth-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefetamet-pivoxil,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefiderocol,Other-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefixime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefmenoxime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefmetazole,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefminox,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefodizime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefonicid,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefoperazone,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceforanide,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefoselis,Fourth-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefotaxime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefotetan,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefotiam,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefoxitin,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefozopran,Fourth-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefpiramide,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefpirome,Fourth-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefpodoxime-proxetil,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefprozil,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefradine,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefroxadine,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefsulodin,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftaroline-fosamil,Fifth-generation cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftazidime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftazidime/avibactam,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefteram-pivoxil,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftezole,First-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftibuten,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftizoxime,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftobiprole-medocaril,Fifth-generation cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftolozane/tazobactam,Fifth-generation cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Ceftriaxone,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Cefuroxime,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Chloramphenicol,Amphenicols,Miscellaneous,Other,Naturally occurring/modified
+Chlortetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Cinoxacin,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Ciprofloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Clarithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Clindamycin,Lincosamides,Miscellaneous,MLS,Naturally occurring/modified
+Clofoctol,Phenol derivatives,Miscellaneous,Other,Naturally occurring/modified
+Clometocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Clomocycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Cloxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Colistin,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
+Dalbavancin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified
+Dalfopristin/quinupristin,Streptogramins,Miscellaneous,MLS,Naturally occurring/modified
+Daptomycin,Lipopeptides,Miscellaneous,Other,Naturally occurring/modified
+Delafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Demeclocycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Dibekacin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Dicloxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Dirithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Doripenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Doxycycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Enoxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Epicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Eravacycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Ertapenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Erythromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Faropenem,Penems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Fidaxomicin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Fleroxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Flomoxef,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Flucloxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Flumequine,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Flurithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Fosfomycin,Phosphonics,Miscellaneous,Other,Synthetic
+Furazidin,Nitrofuran derivatives,Nitrofuran derivatives,Nitrofuran derivatives,Synthetic
+Fusidic-acid,Steroid antibacterials,Miscellaneous,Other,Naturally occurring/modified
+Garenoxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Gatifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Gemifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Gentamicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Grepafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Hetacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Iclaprim,Trimethoprim-derivatives,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Imipenem/cilastatin,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Imipenem/cilastatin/relebactam,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Isepamicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Josamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Kanamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Lascufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Latamoxef,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Lefamulin,Pleuromutilin,Miscellaneous,Other,Naturally occurring/modified
+Levofloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Levonadifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Lincomycin,Lincosamides,Miscellaneous,MLS,Naturally occurring/modified
+Linezolid,Oxazolidinones,Miscellaneous,Other,Synthetic
+Lomefloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Loracarbef,Second-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Lymecycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Mecillinam,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Meropenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Meropenem/vaborbactam,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Metacycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Metampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Meticillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Metronidazole,Imidazoles,Imidazoles,Imidazoles,Synthetic
+Mezlocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Micronomicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Midecamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Minocycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Miocamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Moxifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Nafcillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Nemonoxacin,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Neomycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Netilmicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Nifurtoinol,Nitrofuran derivatives,Nitrofuran derivatives,Nitrofuran derivatives,Synthetic
+Nitrofurantoin,Nitrofuran-derivatives,Nitrofuran derivatives,Nitrofuran derivatives,Synthetic
+Norfloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Ofloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Oleandomycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Omadacycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Oritavancin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified
+Ornidazole,Imidazoles,Imidazoles,Imidazoles,Synthetic
+Oxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Oxolinic-acid,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Oxytetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Panipenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Pazufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Pefloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Penamecillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Penimepicycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Pheneticillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Phenoxymethylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Pipemidic-acid,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Piperacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Piperacillin/tazobactam,Beta-lactam/beta-lactamase-inhibitor_anti-pseudomonal,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Piromidic-acid,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Pivampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Pivmecillinam,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Plazomicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Polymyxin-B,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
+Pristinamycin,Streptogramins,Miscellaneous,MLS,Naturally occurring/modified
+Procaine-benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Propicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Prulifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Ribostamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Rifabutin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rifampicin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rifamycin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rifaximin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rokitamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Rolitetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Rosoxacin,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Roxithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Rufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Sarecycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Secnidazole,Imidazoles,Imidazoles,Imidazoles,Synthetic
+Sisomicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Sitafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Solithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Sparfloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Spectinomycin,Aminocyclitols,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Spiramycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Streptoduocin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Streptomycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Sulbactam,Beta-lactamase-inhibitors,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Sulbenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Sulfadiazine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfadiazine/tetroxoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfadiazine/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfadimethoxine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfadimidine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfadimidine/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfafurazole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfaisodimidine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfalene,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamazone,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamerazine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamerazine/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamethizole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamethoxazole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamethoxypyridazine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfametomidine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfametoxydiazine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfametrole/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamoxole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfamoxole/trimethoprim,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfanilamide,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfaperin,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfaphenazole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfapyridine,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfathiazole,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sulfathiourea,Sulfonamides,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Sultamicillin,Beta-lactam/beta-lactamase-inhibitor,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Talampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Tazobactam,Beta-lactamase-inhibitors,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
+Tebipenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Tedizolid,Oxazolidinones,Miscellaneous,Other,Synthetic
+Teicoplanin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified
+Telavancin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified
+Telithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Temafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Temocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Tetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Thiamphenicol,Amphenicols,Miscellaneous,Other,Naturally occurring/modified
+Ticarcillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Tigecycline,Glycylcyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
+Tinidazole,Imidazoles,Imidazoles,Imidazoles,Synthetic
+Tobramycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Tosufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Trimethoprim,Trimethoprim-derivatives,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Troleandomycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Trovafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Vancomycin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified

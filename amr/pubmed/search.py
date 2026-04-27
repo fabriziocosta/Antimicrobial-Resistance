@@ -163,6 +163,7 @@ def search_pmids(
     min_date: str,
     max_date: str,
     email: str,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
 ) -> Tuple[str, int, Optional[str], Optional[str]]:
     """Search PubMed for PMIDs with retries and exponential backoff."""
     _configure_entrez(email)
@@ -170,6 +171,7 @@ def search_pmids(
         antibiotic,
         pathogen,
         bacteria_synonym_df,
+        antibiotic_synonym_df=antibiotic_synonym_df,
         extra_clauses=extra_clauses,
         min_date=min_date,
         max_date=max_date,

@@ -10,8 +10,8 @@ from typing import Optional, Sequence
 import pandas as pd
 
 from amr.pubmed.queries import (
+    build_antibiotic_query,
     build_pathogen_tiab_query,
-    prepare_antibiotic_pubmed_query_tiab,
 )
 from amr.pubmed.search import (
     esearch_count_for_year,
@@ -62,6 +62,7 @@ def count_pmids_per_year_for_pathogens(
 
 def count_pmids_per_year_for_antibiotics(
     antibiotics: Sequence[str],
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     *,
     start_year: int | None = None,
     end_year: int | None = None,
@@ -82,7 +83,7 @@ def count_pmids_per_year_for_antibiotics(
     total_tasks = len(antibiotics) * (end_year - start_year + 1)
     done = 0
     for ab in antibiotics:
-        clause = prepare_antibiotic_pubmed_query_tiab(ab)
+        clause = build_antibiotic_query(ab, antibiotic_synonym_df, field="Title/Abstract")
         for year in range(start_year, end_year + 1):
             cnt = esearch_count_for_year(clause, year, email=email)
             rows.append({"antibiotic": ab, "year": year, "count": cnt})
@@ -98,6 +99,7 @@ def fetch_pmids_by_date_and_keywords(
     antibiotic: str,
     pathogen: str,
     bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     email: str = "your_email@example.com",
     batch_size: int = 5000,
     extra_clauses: Optional[Sequence[str]] = None,
@@ -107,6 +109,7 @@ def fetch_pmids_by_date_and_keywords(
         antibiotic,
         pathogen,
         bacteria_synonym_df,
+        antibiotic_synonym_df=antibiotic_synonym_df,
         extra_clauses=extra_clauses,
         min_date=min_date,
         max_date=max_date,
@@ -126,6 +129,7 @@ def fetch_pmids_by_date_and_keywords(
             antibiotic=antibiotic,
             pathogen=pathogen,
             bacteria_synonym_df=bacteria_synonym_df,
+            antibiotic_synonym_df=antibiotic_synonym_df,
             email=email,
             batch_size=batch_size,
             extra_clauses=extra_clauses,
@@ -136,6 +140,7 @@ def fetch_pmids_by_date_and_keywords(
             antibiotic=antibiotic,
             pathogen=pathogen,
             bacteria_synonym_df=bacteria_synonym_df,
+            antibiotic_synonym_df=antibiotic_synonym_df,
             email=email,
             batch_size=batch_size,
             extra_clauses=extra_clauses,
@@ -150,6 +155,7 @@ def fetch_pmids_intervals(
     bacteria_synonym_df: pd.DataFrame,
     min_date: str,
     max_date: str,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     year_gap: int = 5,
     email: str = "your_email@example.com",
     parquet_path: str = "pmids_results.parquet",
@@ -266,6 +272,7 @@ def fetch_pmids_intervals(
                 antibiotic,
                 pathogen,
                 bacteria_synonym_df,
+                antibiotic_synonym_df=antibiotic_synonym_df,
                 extra_clauses=extra_keywords,
                 min_date=min_date,
                 max_date=max_date,
@@ -350,6 +357,7 @@ def fetch_pmids_intervals(
                     antibiotic=antibiotic,
                     pathogen=pathogen,
                     bacteria_synonym_df=bacteria_synonym_df,
+                    antibiotic_synonym_df=antibiotic_synonym_df,
                     email=email,
                     extra_clauses=extra_keywords,
                 )
@@ -671,6 +679,7 @@ def count_pmids_per_year_for_pathogens_resumable(
 
 def count_pmids_per_year_for_antibiotics_resumable(
     antibiotics: Sequence[str],
+    antibiotic_synonym_df: pd.DataFrame | None = None,
     *,
     start_year: int | None = None,
     end_year: int | None = None,
@@ -681,9 +690,9 @@ def count_pmids_per_year_for_antibiotics_resumable(
     fetch_threshold: int = 9500,
     metadata_batch_size: int = 200,
 ) -> pd.DataFrame:
-    """Resumable yearly PMID counts per antibiotic (Title/Abstract; hyphen/slash variants).
+    """Resumable yearly PMID counts per antibiotic (Title/Abstract; synonym-aware).
 
-    - Uses prepare_antibiotic_pubmed_query_tiab to handle hyphens/slashes via AND splits.
+    - Uses canonical antibiotic names plus spelling/synonym variants when provided.
     - Skips already-processed (antibiotic, year) pairs from ``output_path``.
     - Saves incrementally and resumes safely after interruption.
     """
@@ -699,7 +708,11 @@ def count_pmids_per_year_for_antibiotics_resumable(
     return _count_pmids_per_year_resumable(
         entity_values=antibiotics,
         entity_col="antibiotic",
-        clause_builder=prepare_antibiotic_pubmed_query_tiab,
+        clause_builder=lambda antibiotic: build_antibiotic_query(
+            antibiotic,
+            antibiotic_synonym_df,
+            field="Title/Abstract",
+        ),
         output_path=output_path,
         start_year=start_year,
         end_year=end_year,

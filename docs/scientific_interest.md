@@ -1,10 +1,3 @@
----
-title: "Scientific Interest in AMR"
-output:
-  pdf_document:
-    path: "./SCIENTIFIC_INTEREST_README.pdf"
----
-
 # Scientific Interest in AMR
 
 ## Overview

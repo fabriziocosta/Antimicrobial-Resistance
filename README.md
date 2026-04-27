@@ -1,13 +1,29 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project now uses a module-first workflow with two active notebooks:
+This project now uses a module-first workflow with three active notebooks:
 
-1. `01_collect_yearly_data.ipynb`
-2. `02_model_scientific_interest.ipynb`
+1. `00_prepare_antibiotic_inputs.ipynb`
+2. `01_collect_yearly_data.ipynb`
+3. `02_model_scientific_interest.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
+## Documentation
+
+Detailed project documents live in `docs/`:
+
+- [Data collection and filtering process](docs/data_collection_and_filtering.md)
+- [Scientific interest modeling notes](docs/scientific_interest.md)
+- [SI driver classification analysis](docs/si_driver_classification_analysis.md)
+
 ## Active Workflow
+
+### Notebook 0: `00_prepare_antibiotic_inputs.ipynb`
+
+Builds antibiotic input CSVs from `antibiotic_list3.xlsx`:
+
+- `antibiotic_synonym_lookup.csv`
+- `antibiotic_coarsening_lookup.csv`
 
 ### Notebook 1: `01_collect_yearly_data.ipynb`
 

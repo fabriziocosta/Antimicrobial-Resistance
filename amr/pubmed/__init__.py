@@ -4,6 +4,8 @@ from .queries import (
     prepare_antibiotic_pubmed_query,
     prepare_antibiotic_pubmed_query_tiab,
     expand_synonyms,
+    expand_antibiotic_synonyms,
+    build_antibiotic_query,
     build_pathogen_tiab_query,
     build_antibiotic_pathogen_query,
 )
@@ -34,6 +36,8 @@ __all__ = [
     "prepare_antibiotic_pubmed_query",
     "prepare_antibiotic_pubmed_query_tiab",
     "expand_synonyms",
+    "expand_antibiotic_synonyms",
+    "build_antibiotic_query",
     "build_pathogen_tiab_query",
     "build_antibiotic_pathogen_query",
     # search
