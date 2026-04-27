@@ -65,6 +65,18 @@ antibiotics = all_antibiotics[:NUM_ANTIBIOTICS] if NUM_ANTIBIOTICS is not None e
 
 For each active pathogen-antibiotic pair, the pipeline first determines which date intervals are missing from `pmids_results.parquet`.
 
+The active pair keys are always canonical names:
+
+- pathogen: `CanonicalSpecies` from the Zenodo-ranked pathogen list
+- antibiotic: `Antibiotic` from `antibiotic_coarsening_lookup.csv`
+
+PubMed queries expand those canonical keys with synonyms:
+
+- pathogen clauses use `bacteria_synonym_lookup.csv`
+- antibiotic clauses use `antibiotic_synonym_lookup.csv`
+
+The expanded terms only affect retrieval. Cached outputs, LLM rows, yearly counts, background counts, and SI modeling continue to use canonical pathogen and antibiotic names.
+
 If all intervals for a pair are already cached, no PubMed query is made for that pair. Otherwise, the pipeline performs one total-window pair query:
 
 - If total count is zero, all missing intervals are written as zero-count rows.
@@ -83,14 +95,17 @@ apply NUM_PATHOGENS and NUM_ANTIBIOTICS prefix limits
 load existing interval cache from pmids_results.parquet
 build date intervals for MIN_DATE..MAX_DATE
 
-for pathogen in pathogens:
-  for antibiotic in antibiotics:
+for canonical_pathogen in pathogens:
+  pathogen_terms = canonical_pathogen plus bacteria synonyms
+
+  for canonical_antibiotic in antibiotics:
+    antibiotic_terms = canonical_antibiotic plus antibiotic synonyms and split slash/hyphen variants
     missing_intervals = intervals not already cached for this pair
 
     if no missing_intervals:
       continue
 
-    total_query = PubMedSearch(pathogen, antibiotic, MIN_DATE, MAX_DATE, AMR_keywords)
+    total_query = PubMedSearch(pathogen_terms, antibiotic_terms, MIN_DATE, MAX_DATE, AMR_keywords)
     total_count = total_query.count
 
     if total_count == 0:
@@ -105,7 +120,7 @@ for pathogen in pathogens:
 
       for interval in missing_intervals:
         interval_pmids = PMIDs whose publication date falls inside interval
-        write interval row with interval_pmids, count, venue histogram
+        write interval row with canonical_pathogen, canonical_antibiotic, interval_pmids, count, venue histogram
       checkpoint cache
       continue
 

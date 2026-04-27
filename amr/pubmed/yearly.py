@@ -9,6 +9,7 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 
+from amr.io import atomic_write_parquet
 from .search import fetch_pub_metadata
 
 
@@ -85,7 +86,7 @@ def save_pubmed_metadata_cache(cache_df: pd.DataFrame, cache_path: str | Path) -
     work["pub_year"] = pd.to_numeric(work["pub_year"], errors="coerce").astype("Int64")
     work["venue"] = work["venue"].fillna("Unknown").astype(str)
     work = work.drop_duplicates(subset=["pmid"], keep="last").sort_values("pmid").reset_index(drop=True)
-    work.to_parquet(cache_path, index=False)
+    atomic_write_parquet(work, cache_path, index=False)
 
 
 def refresh_pubmed_metadata_cache(

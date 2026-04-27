@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antimicrobial-resistance"
+version = "0.1.0"
+description = "PubMed collection, LLM filtering, and scientific-interest modeling for AMR analysis."
+requires-python = ">=3.10"
+dependencies = [
+    "biopython",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "requests",
+    "scikit-learn",
+    "seaborn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+llm = [
+    "openai",
+]
+loess = [
+    "scikit-misc",
+]
+notebooks = [
+    "jupyter",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"

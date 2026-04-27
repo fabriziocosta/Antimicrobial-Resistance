@@ -7,8 +7,14 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from skmisc.loess import loess
 from sklearn.linear_model import Ridge
+
+from amr.io import atomic_write_parquet
+
+try:  # pragma: no cover - exercised only when optional dependency is installed
+    from skmisc.loess import loess
+except ImportError:  # pragma: no cover - environment-dependent fallback
+    loess = None
 
 _AUTO_TAIL_DAMPING = object()
 WEAK_SIGNAL_CATEGORY = "CO_OCCURRENCE_OR_WEAK_SIGNAL"
@@ -342,6 +348,10 @@ def _loess_predict(
         return np.full_like(query_years, float(train_values[0]), dtype=float)
     if degree not in (1, 2):
         raise ValueError("loess_degree must be 1 or 2 for skmisc.loess.")
+    if loess is None:
+        fit_degree = min(int(degree), int(train_years.size - 1))
+        coeffs = np.polyfit(train_years, train_values, deg=fit_degree)
+        return np.asarray(np.polyval(coeffs, query_years), dtype=float)
     model = loess(
         train_years,
         train_values,
@@ -830,7 +840,7 @@ def rank_yearly_pairs_by_future_si_shift(
 
     if save_path is None:
         save_path = f"si_yearly_rank_shift_fit_{fit_start_year}_{fit_end_year}_ref_{reference_year}_future_{target_year}.parquet"
-    ranking_df.to_parquet(save_path, index=False)
+        atomic_write_parquet(ranking_df, save_path, index=False)
     return ranking_df
 
 

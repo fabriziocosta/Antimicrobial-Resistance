@@ -73,6 +73,33 @@ class PubMedQueryTests(unittest.TestCase):
 
         self.assertEqual(query, '("Salmonella enterica"[Title/Abstract])')
 
+    def test_query_terms_are_sanitized_before_quoting(self) -> None:
+        bacteria_synonyms = pd.DataFrame(
+            {
+                "bacteria name": ['Bug "bad"[x]'],
+                "bacteria synonym": ['Alias "bad"[y]'],
+            }
+        )
+        antibiotic_synonyms = pd.DataFrame(
+            {
+                "antibiotic name": ['Drug "bad"[x]'],
+                "antibiotic synonym": ['Other "bad"[y]'],
+            }
+        )
+
+        query = build_antibiotic_pathogen_query(
+            'Drug "bad"[x]',
+            'Bug "bad"[x]',
+            bacteria_synonyms,
+            antibiotic_synonym_df=antibiotic_synonyms,
+        )
+
+        self.assertIn('"Drug bad x"[Abstract]', query)
+        self.assertIn('"Other bad y"[Abstract]', query)
+        self.assertIn('"Bug bad x"[Abstract]', query)
+        self.assertIn('"Alias bad y"[Abstract]', query)
+        self.assertNotIn('"bad"[x]', query)
+
 
 if __name__ == "__main__":
     unittest.main()

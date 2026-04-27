@@ -8,6 +8,7 @@ from typing import Sequence
 
 import pandas as pd
 
+from amr.io import atomic_write_parquet
 from .collection import (
     count_pmids_per_year_for_antibiotics_resumable,
     count_pmids_per_year_for_pathogens_resumable,
@@ -77,15 +78,14 @@ def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.Dat
     work_existing["pmids"] = work_existing["pmids"].apply(lambda v: v if isinstance(v, list) else [])
     work_delta["pmids"] = work_delta["pmids"].apply(lambda v: v if isinstance(v, list) else [])
     combined = pd.concat([work_existing, work_delta], ignore_index=True)
-    merged = (
-        combined.groupby(key_cols, as_index=False)
-        .agg(
-            pmids=("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
-            count=("count", "max"),
-        )
-        .sort_values(key_cols)
-        .reset_index(drop=True)
-    )
+    agg_spec: dict[str, tuple[str, object]] = {
+        "pmids": ("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
+        "count": ("count", "max"),
+    }
+    for col in ["collection_run_min_date", "collection_run_max_date"]:
+        if col in combined.columns:
+            agg_spec[col] = (col, lambda values: ";".join(sorted({str(v) for v in values if pd.notna(v)})))
+    merged = combined.groupby(key_cols, as_index=False).agg(**agg_spec).sort_values(key_cols).reset_index(drop=True)
     merged["count"] = merged["pmids"].apply(len)
     return merged
 
@@ -109,9 +109,13 @@ def _summarize_interval_cache(
     *,
     interval_df: pd.DataFrame,
     intervals: list[tuple[str, str]],
-    pathogen_count: int,
-    antibiotic_count: int,
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
 ) -> dict[str, object]:
+    pathogen_values = {str(value) for value in pathogens}
+    antibiotic_values = {str(value) for value in antibiotics}
+    pathogen_count = len(pathogen_values)
+    antibiotic_count = len(antibiotic_values)
     expected_rows = pathogen_count * antibiotic_count * len(intervals)
     if interval_df.empty or not intervals:
         return {
@@ -126,7 +130,12 @@ def _summarize_interval_cache(
         }
 
     target_intervals = pd.DataFrame(intervals, columns=["start_date", "end_date"])
-    scoped = interval_df.merge(target_intervals, on=["start_date", "end_date"], how="inner")
+    work = interval_df.copy()
+    work["pathogen"] = work["pathogen"].astype(str)
+    work["antibiotic"] = work["antibiotic"].astype(str)
+    scoped = work.loc[
+        work["pathogen"].isin(pathogen_values) & work["antibiotic"].isin(antibiotic_values)
+    ].merge(target_intervals, on=["start_date", "end_date"], how="inner")
     cached_rows = len(scoped)
     return {
         "intervals": intervals,
@@ -144,10 +153,12 @@ def _summarize_background_cache(
     *,
     df: pd.DataFrame,
     key_col: str,
-    entity_count: int,
+    entities: Sequence[str],
     start_year: int,
     end_year: int,
 ) -> dict[str, object]:
+    entity_values = {str(value) for value in entities}
+    entity_count = len(entity_values)
     expected_rows = entity_count * (end_year - start_year + 1)
     if df.empty:
         return {
@@ -164,7 +175,10 @@ def _summarize_background_cache(
     work["year"] = pd.to_numeric(work["year"], errors="coerce")
     work = work.dropna(subset=["year"]).copy()
     work["year"] = work["year"].astype(int)
-    scoped = work.loc[work["year"].between(start_year, end_year), [key_col, "year"]].drop_duplicates()
+    scoped = work.loc[
+        work[key_col].isin(entity_values) & work["year"].between(start_year, end_year),
+        [key_col, "year"],
+    ].drop_duplicates()
     cached_rows = len(scoped)
     warning = None
     if cached_rows > expected_rows:
@@ -222,14 +236,14 @@ def build_collection_preflight_summary(
     run_interval_summary = _summarize_interval_cache(
         interval_df=interval_df,
         intervals=run_intervals,
-        pathogen_count=len(pathogens),
-        antibiotic_count=len(antibiotics),
+        pathogens=pathogens,
+        antibiotics=antibiotics,
     )
     total_interval_summary = _summarize_interval_cache(
         interval_df=interval_df,
         intervals=_build_interval_windows(total_min_date, total_max_date, interval_year_gap),
-        pathogen_count=len(pathogens),
-        antibiotic_count=len(antibiotics),
+        pathogens=pathogens,
+        antibiotics=antibiotics,
     )
 
     yearly_rows = 0
@@ -294,28 +308,28 @@ def build_collection_preflight_summary(
     run_pathogen_bg_summary = _summarize_background_cache(
         df=pathogen_bg_df,
         key_col="pathogen",
-        entity_count=len(pathogens),
+        entities=pathogens,
         start_year=background_start_year,
         end_year=background_end_year,
     )
     total_pathogen_bg_summary = _summarize_background_cache(
         df=pathogen_bg_df,
         key_col="pathogen",
-        entity_count=len(pathogens),
+        entities=pathogens,
         start_year=total_background_start_year,
         end_year=total_background_end_year,
     )
     run_antibiotic_bg_summary = _summarize_background_cache(
         df=antibiotic_bg_df,
         key_col="antibiotic",
-        entity_count=len(antibiotics),
+        entities=antibiotics,
         start_year=background_start_year,
         end_year=background_end_year,
     )
     total_antibiotic_bg_summary = _summarize_background_cache(
         df=antibiotic_bg_df,
         key_col="antibiotic",
-        entity_count=len(antibiotics),
+        entities=antibiotics,
         start_year=total_background_start_year,
         end_year=total_background_end_year,
     )
@@ -444,9 +458,13 @@ def collect_yearly_amr_dataset(
         existing_pair_pmid_df = pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid"])
 
     new_pair_pmid_df = _extract_new_pair_pmids(existing_pair_pmid_df, pair_pmid_df_raw)
+    if not new_pair_pmid_df.empty:
+        new_pair_pmid_df = new_pair_pmid_df.copy()
+        new_pair_pmid_df["collection_run_min_date"] = min_date
+        new_pair_pmid_df["collection_run_max_date"] = max_date
     pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, new_pair_pmid_df)
     Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
-    pair_pmid_df.to_parquet(yearly_pair_pmid_output_path, index=False)
+    atomic_write_parquet(pair_pmid_df, yearly_pair_pmid_output_path, index=False)
 
     metadata_df = refresh_pubmed_metadata_cache(
         new_pair_pmid_df["pmid"].astype(str).tolist() if not new_pair_pmid_df.empty else [],
@@ -465,6 +483,10 @@ def collect_yearly_amr_dataset(
         if not enriched_df.empty
         else pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
     )
+    if not yearly_delta_df.empty:
+        yearly_delta_df = yearly_delta_df.copy()
+        yearly_delta_df["collection_run_min_date"] = min_date
+        yearly_delta_df["collection_run_max_date"] = max_date
     if Path(output_path).exists():
         existing_yearly_df = pd.read_parquet(output_path)
     else:
@@ -472,7 +494,7 @@ def collect_yearly_amr_dataset(
     yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    yearly_df.to_parquet(output_path, index=False)
+    atomic_write_parquet(yearly_df, output_path, index=False)
     return yearly_df, pair_pmid_df, enriched_df
 
 

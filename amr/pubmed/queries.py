@@ -7,6 +7,8 @@ from typing import List
 
 import pandas as pd
 
+_VALID_PUBMED_FIELDS = {"Abstract", "Title/Abstract"}
+
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -23,15 +25,32 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return out
 
 
+def _clean_pubmed_phrase(value: object) -> str:
+    """Sanitize lookup-table text before embedding it as a quoted PubMed phrase."""
+    text = str(value or "").strip()
+    text = re.sub(r'["\[\]\r\n\t]', " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _quote_pubmed_phrase(value: object, field: str) -> str:
+    if field not in _VALID_PUBMED_FIELDS:
+        raise ValueError(f"Unsupported PubMed field: {field!r}")
+    clean = _clean_pubmed_phrase(value)
+    if not clean:
+        raise ValueError("PubMed phrase cannot be empty.")
+    return f'"{clean}"[{field}]'
+
+
 def prepare_antibiotic_pubmed_query(name: str) -> str:
     """Build a PubMed query clause for an antibiotic name (handles hyphens/slashes)."""
     parts = re.split(r"[-/]", name)
     parts = [p.strip() for p in parts if p.strip()]
     if len(parts) > 1:
-        and_part = " AND ".join(f'"{p}"[Abstract]' for p in parts)
-        query = f'("{name}"[Abstract] OR ({and_part}))'
+        and_part = " AND ".join(_quote_pubmed_phrase(p, "Abstract") for p in parts)
+        query = f'({_quote_pubmed_phrase(name, "Abstract")} OR ({and_part}))'
     else:
-        query = f'"{name}"[Abstract]'
+        query = _quote_pubmed_phrase(name, "Abstract")
     return query
 
 
@@ -40,10 +59,10 @@ def prepare_antibiotic_pubmed_query_tiab(name: str) -> str:
     parts = re.split(r"[-/]", name)
     parts = [p.strip() for p in parts if p.strip()]
     if len(parts) > 1:
-        and_part = " AND ".join(f'"{p}"[Title/Abstract]' for p in parts)
-        query = f'("{name}"[Title/Abstract] OR ({and_part}))'
+        and_part = " AND ".join(_quote_pubmed_phrase(p, "Title/Abstract") for p in parts)
+        query = f'({_quote_pubmed_phrase(name, "Title/Abstract")} OR ({and_part}))'
     else:
-        query = f'"{name}"[Title/Abstract]'
+        query = _quote_pubmed_phrase(name, "Title/Abstract")
     return query
 
 
@@ -90,10 +109,10 @@ def build_antibiotic_query(
         parts = re.split(r"[-/]", variant)
         parts = [p.strip() for p in parts if p.strip()]
         if len(parts) > 1:
-            and_part = " AND ".join(f'"{p}"[{field}]' for p in parts)
-            variant_clauses.append(f'("{variant}"[{field}] OR ({and_part}))')
+            and_part = " AND ".join(_quote_pubmed_phrase(p, field) for p in parts)
+            variant_clauses.append(f'({_quote_pubmed_phrase(variant, field)} OR ({and_part}))')
         else:
-            variant_clauses.append(f'"{variant}"[{field}]')
+            variant_clauses.append(_quote_pubmed_phrase(variant, field))
     return "(" + " OR ".join(_dedupe_preserve_order(variant_clauses)) + ")"
 
 
@@ -104,7 +123,7 @@ def build_pathogen_tiab_query(pathogen: str, bacteria_synonym_df: pd.DataFrame) 
         variants = [pathogen]
     elif pathogen not in variants:
         variants = [pathogen] + variants
-    clause = "(" + " OR ".join(f'"{v}"[Title/Abstract]' for v in variants) + ")"
+    clause = "(" + " OR ".join(_quote_pubmed_phrase(v, "Title/Abstract") for v in variants) + ")"
     return clause
 
 
@@ -124,12 +143,12 @@ def build_antibiotic_pathogen_query(
     elif pathogen not in pathogen_variants:
         pathogen_variants = [pathogen] + pathogen_variants
 
-    pathogen_clause = "(" + " OR ".join(f'"{p}"[Abstract]' for p in pathogen_variants) + ")"
+    pathogen_clause = "(" + " OR ".join(_quote_pubmed_phrase(p, "Abstract") for p in pathogen_variants) + ")"
     antibiotic_clause = build_antibiotic_query(antibiotic, antibiotic_synonym_df, field="Abstract")
 
     term_parts = [f"({antibiotic_clause} AND {pathogen_clause})"]
     if extra_clauses:
-        term_parts.extend(extra_clauses)
+        term_parts.extend(f"({clause})" for clause in extra_clauses)
     if min_date and max_date:
         term_parts.append(f'("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])')
     return " AND ".join(term_parts)

@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from tempfile import NamedTemporaryFile
 
 import pandas as pd
@@ -65,6 +66,26 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertIn("SI", si_df.columns)
         self.assertFalse(si_df["expected_log_count_global"].isna().any())
         self.assertFalse(si_df["SI"].isna().any())
+        self.assertIn("coverage_report", si_df.attrs)
+
+    def test_build_yearly_si_dataset_warns_when_background_rows_are_dropped(self) -> None:
+        yearly_amr_df = pd.DataFrame(
+            [{"pathogen": "p1", "antibiotic": "a1", "year": 2020, "count": 3}]
+        )
+        pathogen_bg_df = pd.DataFrame(columns=["pathogen", "year", "count"])
+        antibiotic_bg_df = pd.DataFrame([{"antibiotic": "a1", "year": 2020, "count": 10}])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(ValueError):
+                build_yearly_si_dataset(
+                    yearly_amr_df,
+                    pathogen_bg_df,
+                    antibiotic_bg_df,
+                    output_path=None,
+                )
+
+        self.assertTrue(any("Dropped 1 yearly AMR row" in str(item.message) for item in caught))
 
     def test_rank_future_high_interest_pairs_filters_low_support_pairs(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()

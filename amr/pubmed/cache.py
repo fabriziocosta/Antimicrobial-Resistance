@@ -9,6 +9,7 @@ from typing import Dict, Sequence
 
 import pandas as pd
 
+from amr.io import atomic_write_parquet
 from .search import fetch_pub_metadata
 
 
@@ -31,7 +32,7 @@ def merge_with_existing(new_df: pd.DataFrame, parquet_path: str = "pmids_results
 
     for attempt in range(3):
         try:
-            merged_df.to_parquet(parquet_path, index=False)
+            atomic_write_parquet(merged_df, parquet_path, index=False)
             break
         except OSError as e:
             delay = 2**attempt
@@ -63,4 +64,3 @@ __all__ = [
     "update_metadata_cache",
     "get_metadata",
 ]
-

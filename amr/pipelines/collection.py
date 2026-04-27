@@ -9,6 +9,7 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
+from amr.io import atomic_write_parquet
 from amr.pubmed.queries import (
     build_antibiotic_query,
     build_pathogen_tiab_query,
@@ -53,6 +54,8 @@ def count_pmids_per_year_for_pathogens(
         clause = build_pathogen_tiab_query(pathogen, bacteria_synonym_df)
         for year in range(start_year, end_year + 1):
             cnt = esearch_count_for_year(clause, year, email=email)
+            if cnt is None:
+                raise RuntimeError(f"PubMed count failed for pathogen={pathogen!r}, year={year}.")
             rows.append({"pathogen": pathogen, "year": year, "count": cnt})
             done += 1
             if done % 50 == 0:
@@ -86,6 +89,8 @@ def count_pmids_per_year_for_antibiotics(
         clause = build_antibiotic_query(ab, antibiotic_synonym_df, field="Title/Abstract")
         for year in range(start_year, end_year + 1):
             cnt = esearch_count_for_year(clause, year, email=email)
+            if cnt is None:
+                raise RuntimeError(f"PubMed count failed for antibiotic={ab!r}, year={year}.")
             rows.append({"antibiotic": ab, "year": year, "count": cnt})
             done += 1
             if done % 50 == 0:
@@ -115,6 +120,11 @@ def fetch_pmids_by_date_and_keywords(
         max_date=max_date,
         email=email,
     )
+    if count is None:
+        raise RuntimeError(
+            f"PubMed search failed for pathogen={pathogen!r}, antibiotic={antibiotic!r}, "
+            f"window={min_date}..{max_date}."
+        )
     if count == 0:
         return []
     if count > 9999:
@@ -279,6 +289,12 @@ def fetch_pmids_intervals(
                 email=email,
             )
 
+            if total_count is None:
+                raise RuntimeError(
+                    f"PubMed search failed for pathogen={pathogen!r}, antibiotic={antibiotic!r}, "
+                    f"window={min_date}..{max_date}; no zero rows were written."
+                )
+
             if total_count == 0:
                 for entry in missing_entries:
                     new_results.append(
@@ -413,7 +429,16 @@ def fetch_pmids_intervals(
             f"new={event_stats.get('new',0)}"
         )
 
-    return existing_df
+    pathogen_values = {str(value) for value in pathogens}
+    antibiotic_values = {str(value) for value in antibiotics}
+    target_intervals = pd.DataFrame(intervals, columns=["start_date", "end_date"])
+    scoped_df = existing_df.copy()
+    scoped_df["pathogen"] = scoped_df["pathogen"].astype(str)
+    scoped_df["antibiotic"] = scoped_df["antibiotic"].astype(str)
+    scoped_df = scoped_df.loc[
+        scoped_df["pathogen"].isin(pathogen_values) & scoped_df["antibiotic"].isin(antibiotic_values)
+    ].merge(target_intervals, on=["start_date", "end_date"], how="inner")
+    return scoped_df.reset_index(drop=True)
 
 
 __all__ = [
@@ -455,6 +480,12 @@ def _count_pmids_per_year_via_windows(
         max_date=max_date,
         email=email,
     )
+
+    if total_count is None:
+        raise RuntimeError(
+            f"PubMed background-count search failed for {entity_col}={entity_value!r}, "
+            f"years={start_year}-{end_year}; no zero rows were written."
+        )
 
     if total_count == 0:
         return _year_count_rows(entity_col, entity_value, start_year, end_year, {})
@@ -615,7 +646,7 @@ def _count_pmids_per_year_resumable(
                 batch_df = pd.DataFrame(results)
                 combined = pd.concat([existing, batch_df], ignore_index=True)
                 combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
-                combined.to_parquet(output_path, index=False)
+                atomic_write_parquet(combined, output_path, index=False)
                 existing = combined
                 results = []
     except KeyboardInterrupt:
@@ -626,7 +657,7 @@ def _count_pmids_per_year_resumable(
             combined = pd.concat([existing, batch_df], ignore_index=True)
             combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
             try:
-                combined.to_parquet(output_path, index=False)
+                atomic_write_parquet(combined, output_path, index=False)
             except Exception:
                 combined.to_csv(output_path, index=False)
             existing = combined

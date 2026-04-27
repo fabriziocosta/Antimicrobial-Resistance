@@ -14,6 +14,7 @@ import pandas as pd
 import requests
 
 from amr.config import EUTILS_API_KEY
+from amr.io import atomic_write_parquet
 
 DEFAULT_SYSTEM_PROMPT = """
 You are a careful biomedical evidence reviewer. Given a title and abstract, decide whether the authors explicitly state or conclude that the specified pathogen is showing clinically meaningful resistance to the specified antibiotic.
@@ -637,14 +638,14 @@ def run_unified_llm_filter(
         tmp_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
         if not tmp_df.empty:
             tmp_df = tmp_df.drop_duplicates(subset=key_cols, keep="last")
-        tmp_df.to_parquet(output_path, index=False)
+        atomic_write_parquet(tmp_df, output_path, index=False)
 
     def _checkpoint_cache() -> None:
         nonlocal cache_dirty
         if not abstract_cache_path or not abstract_cache:
             return
         cache_df = pd.DataFrame([{"pmid": p, "title": t, "abstract": a} for p, (t, a) in abstract_cache.items()])
-        cache_df.to_parquet(abstract_cache_path, index=False)
+        atomic_write_parquet(cache_df, abstract_cache_path, index=False)
         cache_dirty = False
 
     def _checkpoint_failures() -> None:
@@ -663,7 +664,7 @@ def run_unified_llm_filter(
                     "last_attempt_ts": str(meta.get("last_attempt_ts", "")),
                 }
             )
-        pd.DataFrame(rows, columns=failure_cols).to_parquet(failed_retry_path, index=False)
+        atomic_write_parquet(pd.DataFrame(rows, columns=failure_cols), failed_retry_path, index=False)
 
     def _classification_output_fields(verdict: dict) -> dict:
         return {
@@ -894,7 +895,7 @@ def run_unified_llm_filter(
     if not out_df.empty:
         out_df = out_df.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
     if output_path:
-        out_df.to_parquet(output_path, index=False)
+        atomic_write_parquet(out_df, output_path, index=False)
     if abstract_cache_path and abstract_cache:
         _checkpoint_cache()
     if failed_retry_path:
@@ -1101,7 +1102,7 @@ def run_llm_filter(
             key_cols = ["pmid", "pathogen", "antibiotic", "start_date", "end_date"]
             keep_cols = [c for c in key_cols if c in df_tmp.columns]
             df_tmp = df_tmp.drop_duplicates(subset=keep_cols, keep="last")
-            df_tmp.to_parquet(output_path, index=False)
+            atomic_write_parquet(df_tmp, output_path, index=False)
             _log_verbose(f"Checkpoint saved {len(df_tmp)} rows to {output_path}")
         # Save abstract cache periodically, independent of decision checkpoints
         if abstract_cache_path and cache_dirty and abstract_cache_save_every and (len(results) % max(1, abstract_cache_save_every) == 0):
@@ -1110,7 +1111,7 @@ def run_llm_filter(
                     [{"pmid": k, "title": v[0], "abstract": v[1]} for k, v in abstract_cache.items()]
                 )
                 # Keep last occurrence per PMID (dict already unique keys)
-                df_cache.to_parquet(abstract_cache_path, index=False)
+                atomic_write_parquet(df_cache, abstract_cache_path, index=False)
                 _log_verbose(f"Checkpoint saved abstract cache with {len(df_cache)} PMIDs to {abstract_cache_path}")
                 cache_dirty = False
             except Exception as e:
@@ -1146,7 +1147,7 @@ def run_llm_filter(
         key_cols = ["pmid", "pathogen", "antibiotic", "start_date", "end_date"]
         keep_cols = [c for c in key_cols if c in df_all.columns]
         df_all = df_all.drop_duplicates(subset=keep_cols, keep="last")
-        df_all.to_parquet(output_path, index=False)
+        atomic_write_parquet(df_all, output_path, index=False)
         df_out = df_all  # return deduped full set for convenience
     # Final save of abstract cache at end of run
     if abstract_cache_path and abstract_cache:
@@ -1154,7 +1155,7 @@ def run_llm_filter(
             df_cache = pd.DataFrame(
                 [{"pmid": k, "title": v[0], "abstract": v[1]} for k, v in abstract_cache.items()]
             )
-            df_cache.to_parquet(abstract_cache_path, index=False)
+            atomic_write_parquet(df_cache, abstract_cache_path, index=False)
             _log_verbose(f"Saved abstract cache with {len(df_cache)} PMIDs to {abstract_cache_path}")
         except Exception as e:
             _log_verbose(f"Failed to save abstract cache to {abstract_cache_path}: {e}")
@@ -1212,7 +1213,7 @@ def build_yearly_screened_pairs(
     if keep_keys.empty:
         out = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
         if output_path:
-            out.to_parquet(output_path, index=False)
+            atomic_write_parquet(out, output_path, index=False)
         return out
 
     filtered = work.merge(keep_keys, on=["pmid", "pathogen", "antibiotic", "year"], how="inner")
@@ -1246,7 +1247,7 @@ def build_yearly_screened_pairs(
         )
         out["count"] = out["pmids"].apply(len)
     if output_path:
-        out.to_parquet(output_path, index=False)
+        atomic_write_parquet(out, output_path, index=False)
     return out
 
 
@@ -1291,7 +1292,7 @@ def build_positive_dataset(
             columns=["pathogen", "antibiotic", "start_date", "end_date", "pmids", "count", "venue_histogram"]
         )
         if output_path:
-            out.to_parquet(output_path, index=False)
+            atomic_write_parquet(out, output_path, index=False)
         return out
 
     work = work.astype({col: str for col in merge_cols})
@@ -1311,7 +1312,7 @@ def build_positive_dataset(
     )
 
     if output_path:
-        out.to_parquet(output_path, index=False)
+        atomic_write_parquet(out, output_path, index=False)
     return out
 
 

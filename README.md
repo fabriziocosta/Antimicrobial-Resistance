@@ -75,15 +75,19 @@ Primary APIs:
 Python 3.10+ is required.
 
 ```bash
-pip install \
-  pandas numpy requests biopython pyarrow \
-  matplotlib seaborn scikit-learn jupyter
+pip install -e ".[dev,notebooks]"
 ```
 
 Optional model backends:
 
 ```bash
-pip install openai
+pip install -e ".[llm]"
+```
+
+Optional SI smoothing backend:
+
+```bash
+pip install -e ".[loess]"
 ```
 
 ## Runtime Requirements

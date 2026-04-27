@@ -72,8 +72,8 @@ def parse_pubdate(pubdate: str | None) -> Optional[datetime]:
         return datetime(year, 1, 1)
 
 
-def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
-    """Return PubMed count for `term_clause` limited to a single publication year."""
+def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int | None:
+    """Return PubMed count for a year, or ``None`` if the query did not complete."""
     _configure_entrez(email)
     date_clause = f'("{year}/01/01"[Date - Publication] : "{year}/12/31"[Date - Publication])'
     term = f"({term_clause}) AND {date_clause}"
@@ -87,7 +87,7 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
             except Exception as e:
                 if i == RETRIES - 1:
                     print(f"Failed to parse Entrez response after retries: {e}")
-                    record = {}
+                    return None
                 else:
                     delay = BACKOFF_FACTOR * (2**i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
@@ -102,7 +102,7 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int:
         except Exception as e:  # pragma: no cover - defensive
             print(f"Unexpected error in esearch_count_for_year: {e}")
             break
-    return 0
+    return None
 
 
 def search_term_clause(
@@ -111,8 +111,12 @@ def search_term_clause(
     min_date: str,
     max_date: str,
     email: str,
-) -> Tuple[str, int, Optional[str], Optional[str]]:
-    """Search PubMed for an arbitrary term clause constrained to a publication-date window."""
+) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
+    """Search PubMed for a term/date window.
+
+    Returns ``count=None`` when the query failed, distinguishing failures from true
+    zero-result searches.
+    """
     _configure_entrez(email)
     query = f'({term_clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
     print(f"[search_term_clause] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
@@ -126,7 +130,7 @@ def search_term_clause(
             except Exception as e:
                 if i == RETRIES - 1:
                     print(f"Failed to parse Entrez response after retries: {e}")
-                    record = {}
+                    return query, None, None, None
                 else:
                     delay = BACKOFF_FACTOR * (2**i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
@@ -140,8 +144,8 @@ def search_term_clause(
             if total_count == 0:
                 return query, 0, None, None
             if not webenv or not query_key:
-                print("Warning: missing WebEnv or QueryKey — skipping retrieval.")
-                return query, 0, None, None
+                print("Warning: missing WebEnv or QueryKey — treating search as failed.")
+                return query, None, None, None
             return query, total_count, webenv, query_key
         except (HTTPError, URLError) as e:
             delay = BACKOFF_FACTOR * (2**i)
@@ -152,7 +156,7 @@ def search_term_clause(
             break
 
     print(f"Failed to connect to Entrez after {RETRIES} retries.")
-    return query, 0, None, None
+    return query, None, None, None
 
 
 def search_pmids(
@@ -164,8 +168,12 @@ def search_pmids(
     max_date: str,
     email: str,
     antibiotic_synonym_df: pd.DataFrame | None = None,
-) -> Tuple[str, int, Optional[str], Optional[str]]:
-    """Search PubMed for PMIDs with retries and exponential backoff."""
+) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
+    """Search PubMed for PMIDs with retries and exponential backoff.
+
+    Returns ``count=None`` when the query failed, distinguishing failures from true
+    zero-result searches.
+    """
     _configure_entrez(email)
     query = build_antibiotic_pathogen_query(
         antibiotic,
@@ -187,7 +195,7 @@ def search_pmids(
             except Exception as e:
                 if i == RETRIES - 1:
                     print(f"Failed to parse Entrez response after retries: {e}")
-                    record = {}
+                    return query, None, None, None
                 else:
                     delay = BACKOFF_FACTOR * (2**i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
@@ -199,9 +207,11 @@ def search_pmids(
             webenv = record.get("WebEnv")
             query_key = record.get("QueryKey")
 
-            if not webenv or not query_key:
-                print("Warning: missing WebEnv or QueryKey — skipping retrieval.")
+            if total_count == 0:
                 return query, 0, None, None
+            if not webenv or not query_key:
+                print("Warning: missing WebEnv or QueryKey — treating search as failed.")
+                return query, None, None, None
 
             return query, total_count, webenv, query_key
 
@@ -214,7 +224,7 @@ def search_pmids(
             break
 
     print(f"Failed to connect to Entrez after {RETRIES} retries.")
-    return query, 0, None, None
+    return query, None, None, None
 
 
 def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_size: int = 5000) -> List[str]:
