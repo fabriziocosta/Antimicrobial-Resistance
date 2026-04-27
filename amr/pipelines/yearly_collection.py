@@ -405,7 +405,7 @@ def collect_yearly_amr_dataset(
     output_path: str | Path = "yearly_amr_pairs.parquet",
     save_every: int = 50,
     extra_keywords: Sequence[str] | None = None,
-    full_fetch_threshold: int = 2000,
+    full_fetch_threshold: int = 9500,
     summary_batch_size: int = 200,
     metadata_batch_size: int = 200,
     metadata_checkpoint_every_batches: int = 10,

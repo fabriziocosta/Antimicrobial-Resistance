@@ -28,18 +28,93 @@ Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one sh
 """.strip()
 
 UNIFIED_AMR_INTEREST_SYSTEM_PROMPT = """
-You are screening PubMed abstracts for pathogen-antibiotic antimicrobial resistance evidence.
+You are classifying scientific abstracts about antimicrobial resistance (AMR).
 
-A study should be included only when BOTH are true:
-1) The abstract explicitly reports that the specified pathogen shows resistance / reduced susceptibility / treatment failure due to resistance for the specified antibiotic.
-2) The study is scientifically relevant for real-world AMR interest (clinical, surveillance, epidemiological, environmental, food, veterinary, or naturally occurring strain contexts), and not primarily a laboratory model-system experiment where AMR is incidental.
+Task:
+Given a target pathogen, a target antibiotic or antibiotic class, a title, and an abstract,
+classify the abstract into exactly one primary category describing why this paper contributes
+to scientific interest for the target pathogen-antibiotic pair.
 
-Decision labels:
-- yes: both conditions are clearly satisfied.
-- no: at least one condition is clearly not satisfied.
+Categories:
+
+A. RESISTANCE_PREVALENCE_SURVEILLANCE
+Use this category when the abstract mainly reports resistance rates, susceptibility frequencies,
+incidence, prevalence, temporal trends, geographic spread, epidemiology, outbreak burden,
+surveillance results, or antibiogram-style findings for the target pathogen-antibiotic pair.
+
+B. RESISTANCE_MECHANISM
+Use this category when the abstract mainly studies biological or molecular mechanisms of
+resistance for the target pair, including resistance genes, beta-lactamases, carbapenemases,
+ESBLs, KPC, NDM, OXA, CTX-M, plasmids, integrons, transposons, horizontal gene transfer,
+mutations, porin loss, efflux pumps, target modification, or genomics focused on explaining
+resistance.
+
+C. TREATMENT_EFFECTIVENESS
+Use this category when the abstract mainly evaluates clinical effectiveness or patient outcomes
+of a treatment involving the target antibiotic/class against the target pathogen.
+
+D. TREATMENT_REUSE_OR_SALVAGE
+Use this category when the abstract mainly discusses reuse, revival, repositioning, salvage use,
+niche use, oral step-down, suppressive therapy, or susceptibility-guided use of an older,
+neglected, or non-first-line agent for the target pathogen.
+
+E. DIAGNOSTIC_STEWARDSHIP
+Use this category when the abstract mainly concerns testing, detection, reporting, diagnostic
+workflows, breakpoint interpretation, laboratory methods, or decision support for the target
+pathogen-antibiotic pair.
+
+F. GUIDELINE_POLICY_STEWARDSHIP
+Use this category when the abstract mainly concerns prescribing policy, guideline
+recommendations, antimicrobial stewardship programmes, formulary restrictions, antibiotic
+consumption, implementation of recommendations, or healthcare policy involving the target pair.
+
+G. ONE_HEALTH_ENVIRONMENTAL_RESERVOIR
+Use this category when the abstract mainly studies the target pair in animals, food,
+agriculture, wastewater, environment, transmission reservoirs, or cross-sector AMR ecology.
+
+H. CO_OCCURRENCE_OR_WEAK_SIGNAL
+Use this category when the target pathogen and target antibiotic/class are both mentioned, but
+the abstract is not centrally about the target pair, or when there is not enough information to
+infer a stronger category.
+
+Classification rules:
+1. Classify according to the main scientific contribution, not merely keyword occurrence.
+2. The target pair must be central to the category. If the abstract mentions the pathogen and
+   antibiotic only incidentally, choose CO_OCCURRENCE_OR_WEAK_SIGNAL.
+3. If pair_centrality is "incidental", primary_category must be
+   "CO_OCCURRENCE_OR_WEAK_SIGNAL", even if the abstract contains AMR-related words.
+4. Prefer RESISTANCE_MECHANISM over RESISTANCE_PREVALENCE_SURVEILLANCE when the abstract
+   explains why resistance occurs mechanistically, even if it also reports resistance rates.
+5. Prefer TREATMENT_EFFECTIVENESS over RESISTANCE_PREVALENCE_SURVEILLANCE when the main
+   outcome is patient response to therapy, even if susceptibility is reported.
+6. Prefer TREATMENT_REUSE_OR_SALVAGE over TREATMENT_EFFECTIVENESS when the main framing is
+   revival, salvage use, oral step-down, suppressive therapy, or reuse of an older/non-first-line
+   drug.
+7. Prefer DIAGNOSTIC_STEWARDSHIP when the main contribution is how resistance is detected,
+   tested, reported, or interpreted.
+8. Prefer GUIDELINE_POLICY_STEWARDSHIP when the main contribution is prescribing behaviour,
+   policy, guidelines, antibiotic consumption, or stewardship implementation.
+9. Prefer ONE_HEALTH_ENVIRONMENTAL_RESERVOIR when the main setting is animals, food, farms,
+   wastewater, environment, or cross-sector transmission.
+10. If the abstract does not provide enough evidence for a confident category, choose
+    CO_OCCURRENCE_OR_WEAK_SIGNAL.
+
+Decision labels for backward compatibility:
+- yes: the abstract is AMR-relevant for the target pair and pair_centrality is central or partial.
+- no: the abstract is not AMR-relevant for the target pair, or pair_centrality is incidental.
 - uncertain: abstract missing, ambiguous, or insufficient to judge confidently.
 
-Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one short sentence).
+Output only valid compact JSON using this schema:
+{
+  "decision": "yes | no | uncertain",
+  "primary_category": "one of: RESISTANCE_PREVALENCE_SURVEILLANCE, RESISTANCE_MECHANISM, TREATMENT_EFFECTIVENESS, TREATMENT_REUSE_OR_SALVAGE, DIAGNOSTIC_STEWARDSHIP, GUIDELINE_POLICY_STEWARDSHIP, ONE_HEALTH_ENVIRONMENTAL_RESERVOIR, CO_OCCURRENCE_OR_WEAK_SIGNAL",
+  "pair_centrality": "central | partial | incidental",
+  "confidence": "high | medium | low",
+  "rationale": "Brief explanation in 1-3 sentences. Mention the specific evidence from the title/abstract that drove the classification.",
+  "evidence_phrases": ["short phrase copied from the title or abstract"],
+  "is_amr_relevant": true,
+  "needs_manual_review": true
+}
 """.strip()
 
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -47,6 +122,27 @@ RETRIES = 3
 BACKOFF_FACTOR = 2
 LLM_RETRIES = 3
 LLM_BACKOFF_FACTOR = 2
+LLM_CLASSIFICATION_MAX_TOKENS = 768
+AMR_CATEGORY_COLUMNS = [
+    "amr_primary_category",
+    "amr_pair_centrality",
+    "amr_confidence",
+    "amr_evidence_phrases",
+    "amr_is_relevant",
+    "amr_needs_manual_review",
+]
+AMR_PRIMARY_CATEGORIES = {
+    "RESISTANCE_PREVALENCE_SURVEILLANCE",
+    "RESISTANCE_MECHANISM",
+    "TREATMENT_EFFECTIVENESS",
+    "TREATMENT_REUSE_OR_SALVAGE",
+    "DIAGNOSTIC_STEWARDSHIP",
+    "GUIDELINE_POLICY_STEWARDSHIP",
+    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR",
+    "CO_OCCURRENCE_OR_WEAK_SIGNAL",
+}
+AMR_PAIR_CENTRALITY_VALUES = {"central", "partial", "incidental"}
+AMR_CONFIDENCE_VALUES = {"high", "medium", "low"}
 
 
 def _log(log_path: str | None, message: str) -> None:
@@ -174,15 +270,132 @@ def build_user_prompt(pmid: str, pathogen: str, antibiotic: str, title: str, abs
     """Create the LLM prompt for a single PMID."""
     return f"""
 PMID: {pmid}
-Target pathogen (exact match only): {pathogen}
-Target antibiotic (exact match only): {antibiotic}
-Title: {title}
+Target pathogen:
+{pathogen}
+
+Target antibiotic or antibiotic class:
+{antibiotic}
+
+Title:
+{title}
+
 Abstract:
 {abstract or '[no abstract available]'}
 
-Task: Decide if the authors explicitly claim that THIS pathogen shows significant resistance to THIS antibiotic (ignore other organisms/drugs mentioned).
-Return JSON with keys decision (yes/no/uncertain) and rationale (short phrase).
+Task:
+Classify only this target pathogen-antibiotic pair. Ignore other organisms or drugs unless they
+determine whether the target pair is central, partial, or incidental. Return only the requested JSON.
 """.strip()
+
+
+def _extract_json_object(raw: str) -> dict:
+    try:
+        data = json.loads(raw)
+    except Exception:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return {"decision": "uncertain", "rationale": raw.strip()}
+        try:
+            data = json.loads(raw[start : end + 1])
+        except Exception:
+            return {"decision": "uncertain", "rationale": raw.strip()}
+    return data if isinstance(data, dict) else {"decision": "uncertain", "rationale": raw.strip()}
+
+
+def _normalize_primary_category(value: object, pair_centrality: str = "") -> str:
+    text = str(value or "").strip().upper()
+    if pair_centrality == "incidental":
+        return "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+    if text in AMR_PRIMARY_CATEGORIES:
+        return text
+    return "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+
+
+def _normalize_pair_centrality(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in AMR_PAIR_CENTRALITY_VALUES:
+        return text
+    return "incidental"
+
+
+def _normalize_confidence(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in AMR_CONFIDENCE_VALUES:
+        return text
+    return "low"
+
+
+def _normalize_bool(value: object, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"true", "yes", "1"}:
+        return True
+    if text in {"false", "no", "0"}:
+        return False
+    return default
+
+
+def _normalize_evidence_phrases(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    phrases = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            phrases.append(text)
+    return phrases
+
+
+def _derive_decision(data: dict, pair_centrality: str, is_amr_relevant: bool) -> str:
+    decision = _normalize_unified_decision(data.get("decision"))
+    if decision != "uncertain" or "decision" in data:
+        return decision
+    if is_amr_relevant and pair_centrality in {"central", "partial"}:
+        return "yes"
+    if not is_amr_relevant or pair_centrality == "incidental":
+        return "no"
+    return "uncertain"
+
+
+def _normalize_classification(data: dict, pmid: str) -> dict:
+    pair_centrality = _normalize_pair_centrality(data.get("pair_centrality"))
+    primary_category = _normalize_primary_category(data.get("primary_category"), pair_centrality)
+    confidence = _normalize_confidence(data.get("confidence"))
+    is_amr_relevant = _normalize_bool(data.get("is_amr_relevant"), default=False)
+    needs_manual_review = _normalize_bool(
+        data.get("needs_manual_review"),
+        default=confidence == "low" or pair_centrality == "incidental",
+    )
+    decision = _derive_decision(data, pair_centrality, is_amr_relevant)
+    if pair_centrality == "incidental" and decision == "yes":
+        decision = "no"
+    return {
+        "pmid": pmid,
+        "decision": decision,
+        "rationale": str(data.get("rationale", "") or "").strip(),
+        "primary_category": primary_category,
+        "pair_centrality": pair_centrality,
+        "confidence": confidence,
+        "evidence_phrases": _normalize_evidence_phrases(data.get("evidence_phrases")),
+        "is_amr_relevant": is_amr_relevant,
+        "needs_manual_review": needs_manual_review,
+    }
+
+
+def _default_no_abstract_classification(pmid: str) -> dict:
+    return {
+        "pmid": pmid,
+        "decision": "uncertain",
+        "rationale": "no abstract",
+        "primary_category": "CO_OCCURRENCE_OR_WEAK_SIGNAL",
+        "pair_centrality": "incidental",
+        "confidence": "low",
+        "evidence_phrases": [],
+        "is_amr_relevant": False,
+        "needs_manual_review": True,
+    }
 
 
 def classify_abstract(
@@ -194,7 +407,7 @@ def classify_abstract(
     abstract: str,
     *,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-    max_tokens: int = 256,
+    max_tokens: int = LLM_CLASSIFICATION_MAX_TOKENS,
     log_path: str | None = None,
     retries: int = LLM_RETRIES,
     backoff: int = LLM_BACKOFF_FACTOR,
@@ -205,25 +418,7 @@ def classify_abstract(
     for attempt in range(retries):
         try:
             raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=0)
-            try:
-                data = json.loads(raw)
-            except Exception:
-                # attempt to locate JSON substring if the model wrapped output
-                start = raw.find("{")
-                end = raw.rfind("}")
-                if start != -1 and end != -1 and end > start:
-                    fragment = raw[start : end + 1]
-                    try:
-                        data = json.loads(fragment)
-                    except Exception:
-                        data = {"decision": "uncertain", "rationale": raw.strip()}
-                else:
-                    data = {"decision": "uncertain", "rationale": raw.strip()}
-            return {
-                "pmid": pmid,
-                "decision": data.get("decision", "uncertain"),
-                "rationale": data.get("rationale", ""),
-            }
+            return _normalize_classification(_extract_json_object(raw), pmid)
         except Exception as exc:  # pragma: no cover - network/API handling
             last_error = exc
             if attempt == retries - 1:
@@ -232,7 +427,8 @@ def classify_abstract(
             delay = backoff**attempt
             _log(log_path, f"LLM error for PMID {pmid}: {exc}. Retrying in {delay}s...")
             time.sleep(delay)
-    return {"pmid": pmid, "decision": "uncertain", "rationale": f"LLM failure: {last_error}"}
+    data = {"decision": "uncertain", "rationale": f"LLM failure: {last_error}"}
+    return _normalize_classification(data, pmid)
 
 
 def prepare_pmids_to_review(
@@ -315,12 +511,14 @@ def run_unified_llm_filter(
     max_failure_retries: int | None = 5,
     abstract_fetch_batch_size: int = 200,
     prefetch_abstracts: bool = True,
+    category_backfill_decisions: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Run the unified AMR + scientific-interest LLM screen on yearly candidates."""
     required_cols = {"pmid", "pathogen", "antibiotic", "year"}
     missing = required_cols - set(candidate_df.columns)
     if missing:
         raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
+    category_cols = AMR_CATEGORY_COLUMNS
 
     def _append_log(message: str) -> None:
         if log_path:
@@ -334,6 +532,11 @@ def run_unified_llm_filter(
     existing = pd.DataFrame()
     key_cols = ["pmid", "pathogen", "antibiotic", "year"]
     seen_keys: set[tuple[str, str, str, int]] = set()
+    category_backfill_set = (
+        {str(value).strip().lower() for value in category_backfill_decisions}
+        if category_backfill_decisions is not None
+        else None
+    )
     if auto_resume_from_output and resume_from is None and output_path and os.path.exists(output_path):
         try:
             resume_from = pd.read_parquet(output_path)
@@ -342,6 +545,28 @@ def run_unified_llm_filter(
     if resume_from is not None and not resume_from.empty:
         existing = resume_from.copy()
         if set(key_cols).issubset(existing.columns):
+            for col in category_cols:
+                if col not in existing.columns:
+                    existing[col] = pd.NA
+            complete_mask = existing[category_cols].notna().all(axis=1)
+            if "amr_evidence_phrases" in existing.columns:
+                complete_mask &= existing["amr_evidence_phrases"].apply(
+                    lambda v: isinstance(v, (list, tuple)) or hasattr(v, "tolist")
+                )
+            complete_existing = existing.loc[complete_mask].copy()
+            incomplete_existing = existing.loc[~complete_mask].copy()
+            if category_backfill_set is not None and not incomplete_existing.empty:
+                incomplete_decisions = incomplete_existing["unified_decision"].map(_normalize_unified_decision)
+                defer_mask = ~incomplete_decisions.isin(category_backfill_set)
+                if defer_mask.any():
+                    deferred_existing = incomplete_existing.loc[defer_mask].copy()
+                    complete_existing = pd.concat([complete_existing, deferred_existing], ignore_index=True)
+                    incomplete_existing = incomplete_existing.loc[~defer_mask].copy()
+            if not incomplete_existing.empty:
+                _append_log(
+                    f"Requeueing {len(incomplete_existing)} existing unified rows missing AMR category fields."
+                )
+            existing = complete_existing
             for row in existing[key_cols].itertuples(index=False):
                 seen_keys.add((str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year)))
 
@@ -380,7 +605,12 @@ def run_unified_llm_filter(
 
     failed_prefetch_pmids: set[str] = set()
     if prefetch_abstracts and not dry_run:
-        candidate_pmids = pd.Index(candidate_df["pmid"].astype(str)).dropna().unique().tolist()
+        candidate_pmids = []
+        for row in candidate_df.itertuples(index=False):
+            key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+            if key not in seen_keys:
+                candidate_pmids.append(str(row.pmid))
+        candidate_pmids = pd.Index(candidate_pmids).dropna().unique().tolist()
         missing_pmids = [pmid for pmid in candidate_pmids if pmid not in abstract_cache]
         if missing_pmids:
             batch_n = max(1, int(abstract_fetch_batch_size))
@@ -435,6 +665,19 @@ def run_unified_llm_filter(
             )
         pd.DataFrame(rows, columns=failure_cols).to_parquet(failed_retry_path, index=False)
 
+    def _classification_output_fields(verdict: dict) -> dict:
+        return {
+            "amr_primary_category": verdict["primary_category"],
+            "amr_pair_centrality": verdict["pair_centrality"],
+            "amr_confidence": verdict["confidence"],
+            "amr_evidence_phrases": verdict["evidence_phrases"],
+            "amr_is_relevant": verdict["is_amr_relevant"],
+            "amr_needs_manual_review": verdict["needs_manual_review"],
+        }
+
+    def _default_no_abstract_output_fields(pmid: str) -> dict:
+        return _classification_output_fields(_default_no_abstract_classification(pmid))
+
     def _record_result(item: dict) -> None:
         results.append(item)
         seen_keys.add((str(item["pmid"]), str(item["pathogen"]), str(item["antibiotic"]), int(item["year"])))
@@ -483,6 +726,7 @@ def run_unified_llm_filter(
                     "unified_rationale": "dry_run",
                     "title": item["title"] or "",
                     "abstract": item["abstract"] or "",
+                    **_default_no_abstract_output_fields(item["pmid"]),
                 }
                 for item in batch
             ]
@@ -496,7 +740,7 @@ def run_unified_llm_filter(
                 item["title"],
                 item["abstract"],
                 system_prompt=system_prompt,
-                max_tokens=256,
+                max_tokens=LLM_CLASSIFICATION_MAX_TOKENS,
                 log_path=log_path,
             )
             raw_decision = str(verdict.get("decision", "uncertain"))
@@ -510,6 +754,7 @@ def run_unified_llm_filter(
                 "unified_rationale": str(verdict.get("rationale", "") or "").strip(),
                 "title": item["title"] or "",
                 "abstract": item["abstract"] or "",
+                **_classification_output_fields(verdict),
             }
 
         if int(max(1, llm_max_workers)) == 1:
@@ -557,6 +802,7 @@ def run_unified_llm_filter(
                     "unified_rationale": "dry_run",
                     "title": "",
                     "abstract": "",
+                    **_default_no_abstract_output_fields(pmid),
                 }
             )
             continue
@@ -594,17 +840,19 @@ def run_unified_llm_filter(
             time.sleep(rate_limit)
 
         if not abstract:
+            no_abstract = _default_no_abstract_classification(pmid)
             _record_result(
                 {
                     "pmid": pmid,
                     "pathogen": pathogen,
                     "antibiotic": antibiotic,
                     "year": year,
-                    "unified_decision": "uncertain",
+                    "unified_decision": no_abstract["decision"],
                     "unified_raw_decision": "no_abstract",
-                    "unified_rationale": "no abstract",
+                    "unified_rationale": no_abstract["rationale"],
                     "title": title or "",
                     "abstract": abstract or "",
+                    **_classification_output_fields(no_abstract),
                 }
             )
             continue
@@ -1070,6 +1318,8 @@ def build_positive_dataset(
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "UNIFIED_AMR_INTEREST_SYSTEM_PROMPT",
+    "LLM_CLASSIFICATION_MAX_TOKENS",
+    "AMR_CATEGORY_COLUMNS",
     "PUBMED_EFETCH",
     "fetch_pubmed_abstract",
     "fetch_pubmed_abstracts_batch",

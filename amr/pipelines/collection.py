@@ -155,7 +155,7 @@ def fetch_pmids_intervals(
     parquet_path: str = "pmids_results.parquet",
     save_every: int = 50,
     extra_keywords: Optional[Sequence[str]] = None,
-    full_fetch_threshold: int = 2000,
+    full_fetch_threshold: int = 9500,
     summary_batch_size: int = 200,
     verbose: int = 1,
     progress_every: int = 200,
