@@ -571,14 +571,16 @@ def fit_predict_yearly_si_loess(
     model_plot_start_year = int(pair_df["year"].min())
     pred_years = np.arange(model_plot_start_year, prediction_end_year + 1, dtype=float)
 
-    pred_df = pd.DataFrame({"year": pred_years.astype(int)})
-    pred_df["expected_log_count_baseline"] = np.interp(
-        pred_years,
-        pair_df["year"].astype(float).to_numpy(),
-        pair_df["expected_log_count_global"].astype(float).to_numpy(),
-        left=float(pair_df["expected_log_count_global"].iloc[0]),
-        right=float(pair_df["expected_log_count_global"].iloc[-1]),
+    baseline_fit = _fit_loess_log_count_curve(
+        train_df["year"].to_numpy(dtype=float),
+        train_df["expected_log_count_global"].to_numpy(dtype=float),
+        loess_frac=loess_frac,
+        loess_degree=loess_degree,
+        tail_damping_years=tail_damping_years,
     )
+
+    pred_df = pd.DataFrame({"year": pred_years.astype(int)})
+    pred_df["expected_log_count_baseline"] = _predict_loess_log_count_with_linear_tails(baseline_fit, pred_years)
     pred_df["expected_count_baseline"] = np.clip(_inverse_log_transform(pred_df["expected_log_count_baseline"]), 0.0, None)
 
     pred_log_count = _predict_loess_log_count_with_linear_tails(loess_fit, pred_years)
@@ -636,6 +638,7 @@ def fit_predict_yearly_si_loess(
         "comparison_df": compact,
         "detailed_comparison_df": detailed_comparison_df,
         "loess_fit": loess_fit,
+        "baseline_fit": baseline_fit,
     }
 
 
@@ -1009,6 +1012,9 @@ def plot_yearly_si_pair(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
+    fill_missing_amr_counts_with_zero: bool = True,
+    pathogen_background_df: pd.DataFrame | None = None,
+    antibiotic_background_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Plot observed/predicted SI and counts for one pathogen-antibiotic pair."""
     result = fit_predict_yearly_si_loess(
@@ -1036,7 +1042,70 @@ def plot_yearly_si_pair(
         ax1.spines[spine].set_visible(False)
     ax2.spines["top"].set_visible(False)
 
-    count_plot_df = pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]].copy()
+    if fill_missing_amr_counts_with_zero:
+        plot_years = pd.DataFrame(
+            {
+                "year": np.arange(
+                    int(pair_df["year"].min()),
+                    int(pair_df["year"].max()) + 1,
+                    dtype=int,
+                )
+            }
+        )
+        count_plot_df = plot_years.merge(
+            pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]],
+            on="year",
+            how="left",
+        )
+        if pathogen_background_df is not None and not pathogen_background_df.empty:
+            pathogen_bg_by_year = (
+                pathogen_background_df.loc[
+                    pathogen_background_df["pathogen"] == pathogen,
+                    ["year", "count"],
+                ]
+                .rename(columns={"count": "bg_pathogen_n"})
+                .groupby("year", as_index=False)["bg_pathogen_n"]
+                .max()
+            )
+        else:
+            pathogen_bg_by_year = (
+                si_df.loc[si_df["pathogen"] == pathogen, ["year", "bg_pathogen_n"]]
+                .groupby("year", as_index=False)["bg_pathogen_n"]
+                .max()
+            )
+        if antibiotic_background_df is not None and not antibiotic_background_df.empty:
+            antibiotic_bg_by_year = (
+                antibiotic_background_df.loc[
+                    antibiotic_background_df["antibiotic"] == antibiotic,
+                    ["year", "count"],
+                ]
+                .rename(columns={"count": "bg_antibiotic_n"})
+                .groupby("year", as_index=False)["bg_antibiotic_n"]
+                .max()
+            )
+        else:
+            antibiotic_bg_by_year = (
+                si_df.loc[si_df["antibiotic"] == antibiotic, ["year", "bg_antibiotic_n"]]
+                .groupby("year", as_index=False)["bg_antibiotic_n"]
+                .max()
+            )
+        count_plot_df = count_plot_df.merge(
+            pathogen_bg_by_year.rename(columns={"bg_pathogen_n": "bg_pathogen_n_filled"}),
+            on="year",
+            how="left",
+        ).merge(
+            antibiotic_bg_by_year.rename(columns={"bg_antibiotic_n": "bg_antibiotic_n_filled"}),
+            on="year",
+            how="left",
+        )
+        count_plot_df["count"] = count_plot_df["count"].fillna(0.0)
+        count_plot_df["bg_pathogen_n"] = count_plot_df["bg_pathogen_n"].fillna(count_plot_df["bg_pathogen_n_filled"])
+        count_plot_df["bg_antibiotic_n"] = count_plot_df["bg_antibiotic_n"].fillna(
+            count_plot_df["bg_antibiotic_n_filled"]
+        )
+        count_plot_df = count_plot_df.drop(columns=["bg_pathogen_n_filled", "bg_antibiotic_n_filled"])
+    else:
+        count_plot_df = pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]].copy()
     count_plot_df["amr_count_plot"] = np.clip(count_plot_df["count"].astype(float), 1.0, None)
     count_plot_df["pathogen_count_plot"] = np.clip(count_plot_df["bg_pathogen_n"].astype(float), 1.0, None)
     count_plot_df["antibiotic_count_plot"] = np.clip(count_plot_df["bg_antibiotic_n"].astype(float), 1.0, None)
@@ -1134,6 +1203,7 @@ def plot_yearly_si_pair(
     result["figure"] = fig
     result["ax_si"] = ax1
     result["ax_count"] = ax2
+    result["count_plot_df"] = count_plot_df
     return result
 
 

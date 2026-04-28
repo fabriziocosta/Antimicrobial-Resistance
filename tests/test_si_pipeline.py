@@ -149,6 +149,63 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(zero_lines), 1)
 
+    def test_yearly_si_plot_can_fill_missing_pair_year_counts_with_zero(self) -> None:
+        years = list(range(2000, 2005))
+        yearly_amr_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": year, "count": 10 + year - 2000}
+                for year in years
+                if year != 2002
+            ]
+            + [
+                {"pathogen": "p1", "antibiotic": "a2", "year": year, "count": 5}
+                for year in years
+            ]
+            + [
+                {"pathogen": "p2", "antibiotic": "a1", "year": year, "count": 4}
+                for year in years
+            ]
+        )
+        pathogen_bg_df = pd.DataFrame(
+            [
+                {"pathogen": pathogen, "year": year, "count": 100 + year - 2000}
+                for pathogen in ["p1", "p2"]
+                for year in years
+            ]
+        )
+        antibiotic_bg_df = pd.DataFrame(
+            [
+                {"antibiotic": antibiotic, "year": year, "count": 80 + year - 2000}
+                for antibiotic in ["a1", "a2"]
+                for year in years
+            ]
+        )
+        si_df, _, _ = build_yearly_si_dataset(
+            yearly_amr_df,
+            pathogen_bg_df,
+            antibiotic_bg_df,
+            output_path=None,
+        )
+
+        result = plot_yearly_si_pair(
+            si_df,
+            pathogen="p1",
+            antibiotic="a1",
+            fit_start_year=2000,
+            fit_end_year=2004,
+            num_additional_years=0,
+            pathogen_background_df=pathogen_bg_df,
+            antibiotic_background_df=antibiotic_bg_df,
+        )
+        count_plot_df = result["count_plot_df"]
+        plt.close(result["figure"])
+
+        self.assertEqual(count_plot_df["year"].tolist(), years)
+        missing_year_row = count_plot_df.loc[count_plot_df["year"] == 2002].iloc[0]
+        self.assertEqual(float(missing_year_row["count"]), 0.0)
+        self.assertEqual(float(missing_year_row["bg_pathogen_n"]), 102.0)
+        self.assertEqual(float(missing_year_row["bg_antibiotic_n"]), 82.0)
+
     def test_build_yearly_si_dataset_warns_when_background_rows_are_dropped(self) -> None:
         yearly_amr_df = pd.DataFrame(
             [{"pathogen": "p1", "antibiotic": "a1", "year": 2020, "count": 3}]
@@ -218,6 +275,51 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                 fit_end_year=2008,
                 loess_degree=2,
             )
+
+    def test_si_prediction_baseline_ignores_post_fit_baseline_collapse(self) -> None:
+        si_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": year,
+                    "count": 10 + year - 2000,
+                    "bg_pathogen_n": 100 + year - 2000,
+                    "bg_antibiotic_n": 80 + year - 2000,
+                    "expected_count_global": 10.0,
+                    "expected_log_count_global": 1.0 + 0.1 * (year - 2000),
+                    "SI": 0.0,
+                }
+                for year in range(2000, 2005)
+            ]
+            + [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2005,
+                    "count": 15,
+                    "bg_pathogen_n": 10,
+                    "bg_antibiotic_n": 8,
+                    "expected_count_global": 0.1,
+                    "expected_log_count_global": -1.0,
+                    "SI": 2.2,
+                }
+            ]
+        )
+
+        result = fit_predict_yearly_si_loess(
+            si_df,
+            pathogen="p1",
+            antibiotic="a1",
+            fit_start_year=2000,
+            fit_end_year=2004,
+            num_additional_years=0,
+            loess_frac=0.6,
+        )
+        pred_2005 = result["pred_df"].loc[result["pred_df"]["year"] == 2005].iloc[0]
+
+        self.assertGreater(float(pred_2005["expected_log_count_baseline"]), 1.3)
+        self.assertLess(float(pred_2005["predicted_SI"]), 0.5)
 
     def test_build_yearly_category_counts_filters_and_aggregates(self) -> None:
         unified_df = pd.DataFrame(

@@ -530,10 +530,13 @@ def save_interesting_si_plots(
     fit_start_year: int,
     fit_end_year: int,
     num_future_years: int,
+    pathogen_background_df: pd.DataFrame | None = None,
+    antibiotic_background_df: pd.DataFrame | None = None,
     max_plots: int = 25,
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
+    fill_missing_amr_counts_with_zero: bool = True,
     figure_format: str = "pdf",
     display_plots: bool = False,
     max_display_plots: int | None = None,
@@ -556,6 +559,9 @@ def save_interesting_si_plots(
             loess_frac=loess_frac,
             loess_degree=loess_degree,
             tail_damping_years=tail_damping_years,
+            fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
+            pathogen_background_df=pathogen_background_df,
+            antibiotic_background_df=antibiotic_background_df,
         )
         pathogen_slug = str(row.pathogen).replace("/", "_").replace(" ", "_")
         antibiotic_slug = str(row.antibiotic).replace("/", "_").replace(" ", "_")
