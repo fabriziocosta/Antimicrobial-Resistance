@@ -21,11 +21,11 @@ def __getattr__(name: str):
 
         return import_module(".pipelines", __name__)
     if name in {"collect_yearly_amr_dataset", "collect_yearly_background_counts"}:
-        from .pipelines import yearly_collection
+        from .pipelines import collection
 
-        return getattr(yearly_collection, name)
+        return getattr(collection, name)
     if name in {"build_yearly_si_dataset", "rank_future_high_interest_pairs"}:
-        from .pipelines import scientific_interest
+        from .pipelines import si
 
-        return getattr(scientific_interest, name)
+        return getattr(si, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

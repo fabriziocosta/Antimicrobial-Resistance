@@ -4,11 +4,11 @@ from tempfile import NamedTemporaryFile
 
 import pandas as pd
 
-from amr.scientific_interest import (
+from amr.si import (
     build_yearly_category_counts,
     summarize_si_change_drivers,
 )
-from amr.pipelines.scientific_interest import (
+from amr.pipelines.si import (
     build_yearly_si_dataset,
     rank_future_high_interest_pairs,
 )

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from amr.io import atomic_write_parquet
-from ..scientific_interest import (
+from amr.si.core import (
     fit_global_pooled_si_model,
     rank_yearly_pairs_by_future_si_shift,
     select_interesting_yearly_rank_cases,

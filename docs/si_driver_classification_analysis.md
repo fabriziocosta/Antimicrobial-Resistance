@@ -1,6 +1,6 @@
 # SI Driver Classification Analysis
 
-This document describes the analysis added to `02_model_scientific_interest.ipynb` to explain predicted scientific-interest changes using LLM abstract-classification metadata.
+This document describes the analysis added to `notebooks/02_model_scientific_interest.ipynb` to explain predicted scientific-interest changes using LLM abstract-classification metadata.
 
 The analysis is descriptive. It does not change the SI model, the forecast, or the ranking thresholds. It helps interpret why a pathogen-antibiotic pair is rising by showing which types of AMR papers make up the observed count curve behind the SI forecast.
 

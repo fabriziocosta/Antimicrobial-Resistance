@@ -27,6 +27,13 @@ __all__ = [
     "attach_pubmed_metadata",
     "aggregate_pair_counts_by_year",
     "summarize_metadata_coverage",
+    # interval collection
+    "count_pmids_per_year_for_pathogens",
+    "count_pmids_per_year_for_antibiotics",
+    "count_pmids_per_year_for_pathogens_resumable",
+    "count_pmids_per_year_for_antibiotics_resumable",
+    "fetch_pmids_by_date_and_keywords",
+    "fetch_pmids_intervals",
 ]
 
 _QUERY_EXPORTS = {
@@ -55,6 +62,14 @@ _YEARLY_EXPORTS = {
     "aggregate_pair_counts_by_year",
     "summarize_metadata_coverage",
 }
+_INTERVAL_EXPORTS = {
+    "count_pmids_per_year_for_pathogens",
+    "count_pmids_per_year_for_antibiotics",
+    "count_pmids_per_year_for_pathogens_resumable",
+    "count_pmids_per_year_for_antibiotics_resumable",
+    "fetch_pmids_by_date_and_keywords",
+    "fetch_pmids_intervals",
+}
 
 
 def __getattr__(name: str):
@@ -73,4 +88,7 @@ def __getattr__(name: str):
     if name in _YEARLY_EXPORTS:
         yearly = import_module(".yearly", __name__)
         return getattr(yearly, name)
+    if name in _INTERVAL_EXPORTS:
+        intervals = import_module(".intervals", __name__)
+        return getattr(intervals, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

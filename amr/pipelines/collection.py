@@ -10,7 +10,7 @@ import pandas as pd
 
 from amr.io import atomic_write_parquet
 from amr.validation import clean_background_counts, clean_pair_pmid_df, clean_yearly_pair_counts
-from .collection import (
+from amr.pubmed.intervals import (
     count_pmids_per_year_for_antibiotics_resumable,
     count_pmids_per_year_for_pathogens_resumable,
     fetch_pmids_intervals,

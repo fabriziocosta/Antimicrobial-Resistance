@@ -2,9 +2,9 @@
 
 This project now uses a module-first workflow with three active notebooks:
 
-1. `00_prepare_antibiotic_inputs.ipynb`
-2. `01_collect_yearly_data.ipynb`
-3. `02_model_scientific_interest.ipynb`
+1. `notebooks/00_prepare_inputs.ipynb`
+2. `notebooks/01_collect_yearly_data.ipynb`
+3. `notebooks/02_model_scientific_interest.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -16,16 +16,27 @@ Detailed project documents live in `docs/`:
 - [Scientific interest modeling notes](docs/scientific_interest.md)
 - [SI driver classification analysis](docs/si_driver_classification_analysis.md)
 
+## Repository Layout
+
+- `assets/`: static lookup inputs used by the notebooks and PubMed query builders.
+- `notebooks/`: active notebook workflow entrypoints.
+- `amr/pubmed/`: PubMed query construction, Entrez retrieval, metadata, and yearly PMID transforms.
+- `amr/screening/`: LLM-assisted abstract screening and screened-pair dataset builders.
+- `amr/si/`: scientific-interest modeling, forecasting, ranking, driver summaries, and plots.
+- `amr/pipelines/`: notebook-facing orchestration functions.
+
 ## Active Workflow
 
-### Notebook 0: `00_prepare_antibiotic_inputs.ipynb`
+Static lookup inputs live in `assets/`; generated parquet outputs stay at the project root by default.
 
-Builds antibiotic input CSVs from `antibiotic_list3.xlsx`:
+### Notebook 0: `notebooks/00_prepare_inputs.ipynb`
 
-- `antibiotic_synonym_lookup.csv`
-- `antibiotic_coarsening_lookup.csv`
+Prepares static input assets. It downloads/validates the pathogen priority list and builds antibiotic lookup CSVs from `assets/antibiotic_list3.xlsx`:
 
-### Notebook 1: `01_collect_yearly_data.ipynb`
+- `assets/antibiotic_synonym_lookup.csv`
+- `assets/antibiotic_coarsening_lookup.csv`
+
+### Notebook 1: `notebooks/01_collect_yearly_data.ipynb`
 
 Builds the yearly AMR dataset end-to-end:
 
@@ -38,13 +49,13 @@ Builds the yearly AMR dataset end-to-end:
 
 Primary APIs:
 
-- `amr.pipelines.yearly_collection.collect_yearly_amr_dataset(...)`
-- `amr.pipelines.yearly_collection.collect_yearly_background_counts(...)`
-- `amr.filtering.prepare_yearly_candidate_pmids(...)`
-- `amr.filtering.run_unified_llm_filter(...)`
-- `amr.filtering.build_yearly_screened_pairs(...)`
+- `amr.pipelines.collection.collect_yearly_amr_dataset(...)`
+- `amr.pipelines.collection.collect_yearly_background_counts(...)`
+- `amr.screening.prepare_yearly_candidate_pmids(...)`
+- `amr.screening.run_unified_llm_filter(...)`
+- `amr.screening.build_yearly_screened_pairs(...)`
 
-### Notebook 2: `02_model_scientific_interest.ipynb`
+### Notebook 2: `notebooks/02_model_scientific_interest.ipynb`
 
 Performs SI modeling and forecasting:
 
@@ -55,8 +66,8 @@ Performs SI modeling and forecasting:
 
 Primary APIs:
 
-- `amr.pipelines.scientific_interest.build_yearly_si_dataset(...)`
-- `amr.pipelines.scientific_interest.rank_future_high_interest_pairs(...)`
+- `amr.pipelines.si.build_yearly_si_dataset(...)`
+- `amr.pipelines.si.rank_future_high_interest_pairs(...)`
 
 ## Canonical Data Contracts
 

@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from amr.pubmed.yearly import explode_positive_pair_pmids
-from amr.filtering import (
+from amr.screening import (
     AMR_CATEGORY_COLUMNS,
     build_yearly_screened_pairs,
     prepare_yearly_candidate_pmids,
@@ -79,8 +79,8 @@ class UnifiedFilteringTests(unittest.TestCase):
 
         self.assertEqual(out["pmid"].tolist(), ["111", "222"])
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_normalizes_decisions(self, mock_fetch_single: patch, mock_fetch_batch: patch) -> None:
         mock_fetch_batch.return_value = {
             "111": ("t1", "clinical resistant isolates", "ok"),
@@ -184,8 +184,8 @@ class UnifiedFilteringTests(unittest.TestCase):
             )
             self.assertEqual(set(out["year"]), {2020, 2021})
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_auto_resume_from_output(self, mock_fetch_single: patch, mock_fetch_batch: patch) -> None:
         mock_fetch_batch.return_value = {"222": ("t", "clinical resistant isolates", "ok")}
         candidates = pd.DataFrame(
@@ -228,8 +228,8 @@ class UnifiedFilteringTests(unittest.TestCase):
             self.assertEqual(mock_fetch_batch.call_args.args[0], ["222"])
             self.assertEqual(mock_fetch_single.call_count, 0)
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_backfills_missing_category_fields(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:
@@ -275,8 +275,8 @@ class UnifiedFilteringTests(unittest.TestCase):
             self.assertEqual(mock_fetch_batch.call_args.args[0], ["111"])
             self.assertEqual(mock_fetch_single.call_count, 0)
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_can_defer_backfill_for_decisions(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:
@@ -320,8 +320,8 @@ class UnifiedFilteringTests(unittest.TestCase):
             self.assertEqual(mock_fetch_batch.call_count, 0)
             self.assertEqual(mock_fetch_single.call_count, 0)
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_malformed_json_gets_safe_defaults(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:
@@ -351,8 +351,8 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertTrue(out.loc[0, "amr_needs_manual_review"])
         self.assertEqual(mock_fetch_single.call_count, 0)
 
-    @patch("amr.filtering.fetch_pubmed_abstracts_batch")
-    @patch("amr.filtering.fetch_pubmed_abstract")
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_no_abstract_skips_llm(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:
