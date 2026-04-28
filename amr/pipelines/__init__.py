@@ -11,6 +11,14 @@ __all__ = [
     "collect_yearly_background_counts",
     "build_yearly_si_dataset",
     "rank_future_high_interest_pairs",
+    "build_si_analysis_paths",
+    "build_si_driver_analysis",
+    "load_yearly_si_inputs",
+    "prepare_antibiotic_analysis_level",
+    "save_category_driver_plots",
+    "save_interesting_si_plots",
+    "select_existing_columns",
+    "slugify_analysis_level",
 ]
 
 _PUBMED_INTERVAL_EXPORTS = {
@@ -25,7 +33,18 @@ _COLLECTION_EXPORTS = {
     "collect_yearly_amr_dataset",
     "collect_yearly_background_counts",
 }
-_SI_EXPORTS = {"build_yearly_si_dataset", "rank_future_high_interest_pairs"}
+_SI_EXPORTS = {
+    "build_yearly_si_dataset",
+    "rank_future_high_interest_pairs",
+    "build_si_analysis_paths",
+    "build_si_driver_analysis",
+    "load_yearly_si_inputs",
+    "prepare_antibiotic_analysis_level",
+    "save_category_driver_plots",
+    "save_interesting_si_plots",
+    "select_existing_columns",
+    "slugify_analysis_level",
+}
 
 
 def __getattr__(name: str):

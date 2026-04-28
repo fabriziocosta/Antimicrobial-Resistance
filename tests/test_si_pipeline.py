@@ -14,12 +14,28 @@ from amr.si import (
 )
 from amr.si.core import AMR_DRIVER_CATEGORY_COLORS
 from amr.pipelines.si import (
+    build_si_analysis_paths,
     build_yearly_si_dataset,
     rank_future_high_interest_pairs,
 )
 
 
 class ScientificInterestPipelineTests(unittest.TestCase):
+    def test_analysis_paths_use_format_neutral_plot_directories(self) -> None:
+        paths = build_si_analysis_paths("/tmp/amr", "antibiotic")
+        self.assertEqual(paths["figure_dir"].as_posix(), "/tmp/amr/figures")
+        self.assertEqual(paths["interesting_plot_dir"].parent.name, "figures")
+        self.assertEqual(paths["driver_plot_dir"].parent.name, "figures")
+        self.assertEqual(paths["interesting_plot_dir"].name, "interesting_yearly_si_plots")
+        self.assertEqual(paths["driver_plot_dir"].name, "interesting_yearly_si_driver_plots")
+
+        class_paths = build_si_analysis_paths("/tmp/amr", "Class")
+        self.assertEqual(class_paths["figure_dir"].as_posix(), "/tmp/amr/figures")
+        self.assertEqual(class_paths["interesting_plot_dir"].parent.name, "figures")
+        self.assertEqual(class_paths["driver_plot_dir"].parent.name, "figures")
+        self.assertEqual(class_paths["interesting_plot_dir"].name, "interesting_yearly_si_plots_class")
+        self.assertEqual(class_paths["driver_plot_dir"].name, "interesting_yearly_si_driver_plots_class")
+
     def _build_synthetic_yearly_frames(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         years = list(range(2000, 2011))
         rows = []

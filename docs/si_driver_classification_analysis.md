@@ -51,10 +51,10 @@ The resulting table answers:
 
 > For this pathogen-antibiotic pair, which kind of AMR literature is increasing over time?
 
-The category curves are saved as PNG files in:
+The category curves are saved as figure files in:
 
 ```text
-interesting_yearly_si_driver_pngs/
+figures/interesting_yearly_si_driver_plots/
 ```
 
 Each plot marks `FIT_END_YEAR`, so recent observed category changes can be compared with the forecast window.
@@ -144,7 +144,7 @@ save yearly_si_driver_explanations.parquet
 for each top interesting pair:
   plot yearly stacked category counts
   mark FIT_END_YEAR
-  save plot to interesting_yearly_si_driver_pngs/
+  save plot to figures/interesting_yearly_si_driver_plots/
 ```
 
 ## Failure Behavior

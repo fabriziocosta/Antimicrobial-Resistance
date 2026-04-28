@@ -3,18 +3,291 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 import warnings
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from amr.io import atomic_write_parquet
 from amr.si.core import (
+    build_yearly_category_counts,
     fit_global_pooled_si_model,
+    plot_yearly_category_driver_counts,
+    plot_yearly_si_pair,
     rank_yearly_pairs_by_future_si_shift,
     select_interesting_yearly_rank_cases,
+    summarize_si_change_drivers,
 )
+
+DEFAULT_DRIVER_REQUIRED_COLUMNS = {
+    "pathogen",
+    "antibiotic",
+    "year",
+    "unified_decision",
+    "amr_primary_category",
+    "amr_pair_centrality",
+    "amr_needs_manual_review",
+}
+
+
+def slugify_analysis_level(analysis_level: str) -> str:
+    """Return the suffix used for output files/directories for an antibiotic analysis level."""
+    slug = (
+        str(analysis_level)
+        .strip()
+        .lower()
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace("-", "_")
+    )
+    return "antibiotic" if slug in {"", "antibiotic"} else slug
+
+
+def build_si_analysis_paths(data_dir: str | Path, analysis_level: str = "antibiotic") -> dict[str, Path]:
+    """Build SI output paths, preserving legacy filenames for individual-antibiotic analysis."""
+    data_dir = Path(data_dir)
+    figure_dir = data_dir / "figures"
+    slug = slugify_analysis_level(analysis_level)
+    is_antibiotic = slug == "antibiotic"
+    return {
+        "yearly_si": data_dir / ("yearly_si.parquet" if is_antibiotic else f"yearly_si_{slug}.parquet"),
+        "rank_output": data_dir
+        / ("yearly_si_ranked_future.parquet" if is_antibiotic else f"yearly_si_ranked_future_{slug}.parquet"),
+        "interesting_output": data_dir
+        / (
+            "yearly_si_ranked_future_interesting.parquet"
+            if is_antibiotic
+            else f"yearly_si_ranked_future_interesting_{slug}.parquet"
+        ),
+        "driver_output": data_dir
+        / (
+            "yearly_si_driver_explanations.parquet"
+            if is_antibiotic
+            else f"yearly_si_driver_explanations_{slug}.parquet"
+        ),
+        "figure_dir": figure_dir,
+        "interesting_plot_dir": figure_dir
+        / ("interesting_yearly_si_plots" if is_antibiotic else f"interesting_yearly_si_plots_{slug}"),
+        "driver_plot_dir": figure_dir
+        / (
+            "interesting_yearly_si_driver_plots"
+            if is_antibiotic
+            else f"interesting_yearly_si_driver_plots_{slug}"
+        ),
+    }
+
+
+def load_yearly_si_inputs(
+    *,
+    yearly_screened_path: str | Path,
+    pathogen_background_path: str | Path,
+    antibiotic_background_path: str | Path,
+    unified_decisions_path: str | Path | None = None,
+    driver_required_cols: set[str] | None = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load canonical SI inputs and return an empty driver frame when category columns are unavailable."""
+    yearly_screened_df = pd.read_parquet(yearly_screened_path)
+    pathogen_bg_df = pd.read_parquet(pathogen_background_path)
+    antibiotic_bg_df = pd.read_parquet(antibiotic_background_path)
+
+    required_cols = DEFAULT_DRIVER_REQUIRED_COLUMNS if driver_required_cols is None else set(driver_required_cols)
+    unified_decisions_df = pd.DataFrame()
+    if unified_decisions_path and Path(unified_decisions_path).exists():
+        candidate_unified_df = pd.read_parquet(unified_decisions_path)
+        missing_driver_cols = required_cols - set(candidate_unified_df.columns)
+        if missing_driver_cols:
+            if verbose:
+                print(
+                    "Skipping SI driver classification analysis because "
+                    f"{unified_decisions_path} is missing columns: {sorted(missing_driver_cols)}"
+                )
+        else:
+            unified_decisions_df = candidate_unified_df
+    elif verbose and unified_decisions_path:
+        print(f"Skipping SI driver classification analysis because {unified_decisions_path} was not found.")
+
+    if verbose:
+        print(f"yearly_screened rows: {len(yearly_screened_df):,}")
+        print(f"pathogen bg rows: {len(pathogen_bg_df):,}")
+        print(f"antibiotic bg rows: {len(antibiotic_bg_df):,}")
+        print(f"unified decision rows available for driver analysis: {len(unified_decisions_df):,}")
+    return yearly_screened_df, pathogen_bg_df, antibiotic_bg_df, unified_decisions_df
+
+
+def _coerce_pmid_items(value: object) -> list[object]:
+    if isinstance(value, (str, bytes)) or value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    if hasattr(value, "tolist"):
+        items = value.tolist()
+        return items if isinstance(items, list) else []
+    return []
+
+
+def _unique_pmids_from_lists(values: pd.Series) -> list[object]:
+    seen: set[str] = set()
+    out: list[object] = []
+    for value in values:
+        for pmid in _coerce_pmid_items(value):
+            key = str(pmid)
+            if key not in seen:
+                seen.add(key)
+                out.append(pmid)
+    return out
+
+
+def _resolve_coarsening_column(requested_level: str, lookup_columns: list[str]) -> str | None:
+    requested = str(requested_level).strip()
+    if requested.lower() in {"", "antibiotic"}:
+        return None
+    column_by_lower = {col.lower(): col for col in lookup_columns}
+    if requested.lower() not in column_by_lower:
+        raise ValueError(
+            f"ANTIBIOTIC_ANALYSIS_LEVEL={requested_level!r} is not available. "
+            f"Use 'antibiotic' or one of: {lookup_columns}"
+        )
+    return column_by_lower[requested.lower()]
+
+
+def build_antibiotic_group_mapping(
+    coarsening_path: str | Path,
+    requested_level: str,
+) -> tuple[pd.DataFrame | None, str]:
+    """Build a one-to-one antibiotic-to-analysis-level mapping, or ``None`` for antibiotic level."""
+    lookup_df = pd.read_csv(coarsening_path)
+    group_col = _resolve_coarsening_column(requested_level, lookup_df.columns.tolist())
+    if group_col is None:
+        return None, "antibiotic"
+    if "Antibiotic" not in lookup_df.columns:
+        raise KeyError(f"{coarsening_path} must contain an 'Antibiotic' column.")
+
+    mapping_df = lookup_df[["Antibiotic", group_col]].copy()
+    mapping_df = mapping_df.rename(columns={"Antibiotic": "source_antibiotic", group_col: "analysis_antibiotic"})
+    mapping_df["source_antibiotic"] = mapping_df["source_antibiotic"].astype(str).str.strip()
+    mapping_df["analysis_antibiotic"] = mapping_df["analysis_antibiotic"].astype(str).str.strip()
+    mapping_df = mapping_df.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+    mapping_df = mapping_df.dropna(subset=["source_antibiotic", "analysis_antibiotic"])
+
+    duplicate_mapping_df = (
+        mapping_df.groupby("source_antibiotic")["analysis_antibiotic"]
+        .nunique()
+        .reset_index(name="n_groups")
+        .query("n_groups > 1")
+    )
+    if not duplicate_mapping_df.empty:
+        raise ValueError(
+            f"Some antibiotics map to multiple {group_col!r} values. Fix the coarsening lookup before modeling."
+        )
+    return mapping_df.drop_duplicates(subset=["source_antibiotic"]).reset_index(drop=True), group_col
+
+
+def prepare_antibiotic_analysis_level(
+    *,
+    yearly_screened_df: pd.DataFrame,
+    antibiotic_background_df: pd.DataFrame,
+    unified_decisions_df: pd.DataFrame,
+    coarsening_path: str | Path,
+    analysis_level: str = "antibiotic",
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Optionally aggregate AMR, background, and driver inputs to an antibiotic coarsening level."""
+    mapping_df, analysis_column = build_antibiotic_group_mapping(coarsening_path, analysis_level)
+    if mapping_df is None:
+        summary = {
+            "analysis_column": "antibiotic",
+            "analysis_level": "antibiotic",
+            "mapping_rows": None,
+            "analysis_values": int(yearly_screened_df["antibiotic"].nunique()) if "antibiotic" in yearly_screened_df else 0,
+        }
+        if verbose:
+            print("Antibiotic analysis level: individual antibiotic.")
+            print(f"model yearly rows: {len(yearly_screened_df):,}")
+            print(f"model pathogen-antibiotic rows: {yearly_screened_df[['pathogen', 'antibiotic']].drop_duplicates().shape[0]:,}")
+            print(f"model antibiotic values: {summary['analysis_values']:,}")
+            print(f"model antibiotic background rows: {len(antibiotic_background_df):,}")
+            print(f"model unified decision rows: {len(unified_decisions_df):,}")
+        return yearly_screened_df.copy(), antibiotic_background_df.copy(), unified_decisions_df.copy(), summary
+
+    if verbose:
+        print(
+            f"Antibiotic analysis level: {analysis_column!r}. "
+            f"Mapped {len(mapping_df):,} antibiotics into {mapping_df['analysis_antibiotic'].nunique():,} groups."
+        )
+
+    yearly_mapped_df = yearly_screened_df.merge(
+        mapping_df,
+        left_on="antibiotic",
+        right_on="source_antibiotic",
+        how="left",
+    )
+    amr_coverage = float(yearly_mapped_df["analysis_antibiotic"].notna().mean())
+    yearly_mapped_df = yearly_mapped_df.dropna(subset=["analysis_antibiotic"]).copy()
+    yearly_mapped_df["pmids"] = yearly_mapped_df["pmids"].apply(_coerce_pmid_items)
+    yearly_screened_model_df = (
+        yearly_mapped_df.groupby(["pathogen", "analysis_antibiotic", "year"], as_index=False)
+        .agg(pmids=("pmids", _unique_pmids_from_lists))
+        .rename(columns={"analysis_antibiotic": "antibiotic"})
+    )
+    yearly_screened_model_df["count"] = yearly_screened_model_df["pmids"].apply(len)
+
+    antibiotic_bg_mapped_df = antibiotic_background_df.merge(
+        mapping_df,
+        left_on="antibiotic",
+        right_on="source_antibiotic",
+        how="left",
+    )
+    bg_coverage = float(antibiotic_bg_mapped_df["analysis_antibiotic"].notna().mean())
+    antibiotic_bg_model_df = (
+        antibiotic_bg_mapped_df.dropna(subset=["analysis_antibiotic"])
+        .groupby(["analysis_antibiotic", "year"], as_index=False)["count"]
+        .sum()
+        .rename(columns={"analysis_antibiotic": "antibiotic"})
+    )
+
+    driver_coverage: float | None = None
+    if unified_decisions_df.empty:
+        unified_decisions_model_df = unified_decisions_df.copy()
+    else:
+        unified_mapped_df = unified_decisions_df.merge(
+            mapping_df,
+            left_on="antibiotic",
+            right_on="source_antibiotic",
+            how="left",
+        )
+        driver_coverage = float(unified_mapped_df["analysis_antibiotic"].notna().mean())
+        unified_decisions_model_df = unified_mapped_df.dropna(subset=["analysis_antibiotic"]).copy()
+        unified_decisions_model_df["antibiotic"] = unified_decisions_model_df["analysis_antibiotic"]
+        if "pmid" in unified_decisions_model_df.columns:
+            dedupe_cols = ["pathogen", "antibiotic", "year", "pmid", "unified_decision", "amr_primary_category"]
+            dedupe_cols = [col for col in dedupe_cols if col in unified_decisions_model_df.columns]
+            unified_decisions_model_df = unified_decisions_model_df.drop_duplicates(subset=dedupe_cols, keep="first")
+        drop_cols = [col for col in ["source_antibiotic", "analysis_antibiotic"] if col in unified_decisions_model_df.columns]
+        unified_decisions_model_df = unified_decisions_model_df.drop(columns=drop_cols)
+
+    summary = {
+        "analysis_column": analysis_column,
+        "analysis_level": analysis_level,
+        "mapping_rows": int(len(mapping_df)),
+        "analysis_values": int(yearly_screened_model_df["antibiotic"].nunique()),
+        "amr_mapping_coverage": amr_coverage,
+        "background_mapping_coverage": bg_coverage,
+        "driver_mapping_coverage": driver_coverage,
+    }
+    if verbose:
+        print(f"AMR yearly mapping coverage: {100 * amr_coverage:.2f}%")
+        print(f"Antibiotic background mapping coverage: {100 * bg_coverage:.2f}%")
+        if driver_coverage is not None:
+            print(f"Unified decision mapping coverage: {100 * driver_coverage:.2f}%")
+        print(f"model yearly rows: {len(yearly_screened_model_df):,}")
+        print(f"model pathogen-antibiotic rows: {yearly_screened_model_df[['pathogen', 'antibiotic']].drop_duplicates().shape[0]:,}")
+        print(f"model antibiotic values: {yearly_screened_model_df['antibiotic'].nunique():,}")
+        print(f"model antibiotic background rows: {len(antibiotic_bg_model_df):,}")
+        print(f"model unified decision rows: {len(unified_decisions_model_df):,}")
+    return yearly_screened_model_df, antibiotic_bg_model_df, unified_decisions_model_df, summary
 
 
 def build_yearly_si_dataset(
@@ -142,7 +415,177 @@ def rank_future_high_interest_pairs(
     return rank_df, interesting_df
 
 
+def build_si_driver_analysis(
+    *,
+    interesting_df: pd.DataFrame,
+    unified_decisions_df: pd.DataFrame,
+    fit_end_year: int,
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    lookback_years: int = 5,
+    output_path: str | Path | None = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build yearly category counts and merge driver summaries into interesting pairs."""
+    category_counts_df = build_yearly_category_counts(
+        unified_decisions_df,
+        include_decisions=include_decisions,
+    )
+    driver_summary_df = summarize_si_change_drivers(
+        interesting_df,
+        unified_decisions_df,
+        fit_end_year=fit_end_year,
+        include_decisions=include_decisions,
+        lookback_years=lookback_years,
+    )
+    if driver_summary_df.empty:
+        interesting_with_drivers_df = interesting_df.copy()
+        if verbose:
+            print("No SI driver classification summaries were produced.")
+    else:
+        interesting_with_drivers_df = interesting_df.merge(
+            driver_summary_df,
+            on=["pathogen", "antibiotic"],
+            how="left",
+        )
+        if output_path:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_parquet(interesting_with_drivers_df, output_path, index=False)
+        if verbose:
+            print(f"Saved SI driver explanations to {output_path}")
+    return category_counts_df, interesting_with_drivers_df
+
+
+def _display_figure(figure: Any) -> None:
+    try:
+        from IPython.display import display
+    except ImportError:
+        warnings.warn(
+            "display_plots=True requires IPython; plots were saved but not displayed inline.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
+    display(figure)
+
+
+def save_category_driver_plots(
+    *,
+    category_counts_df: pd.DataFrame,
+    interesting_df: pd.DataFrame,
+    output_dir: str | Path,
+    fit_end_year: int,
+    max_plots: int = 25,
+    figure_format: str = "pdf",
+    display_plots: bool = False,
+    max_display_plots: int | None = None,
+    verbose: bool = True,
+) -> int:
+    """Save category driver count plots for the top interesting rows."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figure_format = str(figure_format).strip().lstrip(".") or "pdf"
+    saved_plots = 0
+    displayed_plots = 0
+    if category_counts_df.empty:
+        if verbose:
+            print("No category count curves available to plot.")
+        return saved_plots
+
+    for row in interesting_df.head(max_plots).itertuples(index=False):
+        try:
+            result = plot_yearly_category_driver_counts(
+                category_counts_df=category_counts_df,
+                pathogen=row.pathogen,
+                antibiotic=row.antibiotic,
+                fit_end_year=fit_end_year,
+            )
+        except ValueError:
+            continue
+        pathogen_slug = str(row.pathogen).replace("/", "_").replace(" ", "_")
+        antibiotic_slug = str(row.antibiotic).replace("/", "_").replace(" ", "_")
+        out_path = output_dir / f"{pathogen_slug}__{antibiotic_slug}__drivers.{figure_format}"
+        result["figure"].savefig(out_path, bbox_inches="tight")
+        if display_plots and (max_display_plots is None or displayed_plots < max_display_plots):
+            _display_figure(result["figure"])
+            displayed_plots += 1
+        plt.close(result["figure"])
+        saved_plots += 1
+
+    if verbose:
+        print(f"Saved {saved_plots} category driver plots to {output_dir}")
+        if display_plots:
+            print(f"Displayed {displayed_plots} category driver plots inline.")
+    return saved_plots
+
+
+def save_interesting_si_plots(
+    *,
+    si_df: pd.DataFrame,
+    interesting_df: pd.DataFrame,
+    output_dir: str | Path,
+    fit_start_year: int,
+    fit_end_year: int,
+    num_future_years: int,
+    max_plots: int = 25,
+    loess_frac: float = 0.6,
+    loess_degree: int = 1,
+    tail_damping_years: Any = None,
+    figure_format: str = "pdf",
+    display_plots: bool = False,
+    max_display_plots: int | None = None,
+    verbose: bool = True,
+) -> int:
+    """Save SI forecast plots for the top interesting rows."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figure_format = str(figure_format).strip().lstrip(".") or "pdf"
+    saved_plots = 0
+    displayed_plots = 0
+    for row in interesting_df.head(max_plots).itertuples(index=False):
+        result = plot_yearly_si_pair(
+            si_df=si_df,
+            pathogen=row.pathogen,
+            antibiotic=row.antibiotic,
+            fit_start_year=fit_start_year,
+            fit_end_year=fit_end_year,
+            num_additional_years=num_future_years,
+            loess_frac=loess_frac,
+            loess_degree=loess_degree,
+            tail_damping_years=tail_damping_years,
+        )
+        pathogen_slug = str(row.pathogen).replace("/", "_").replace(" ", "_")
+        antibiotic_slug = str(row.antibiotic).replace("/", "_").replace(" ", "_")
+        out_path = output_dir / f"{pathogen_slug}__{antibiotic_slug}.{figure_format}"
+        result["figure"].savefig(out_path, bbox_inches="tight")
+        if display_plots and (max_display_plots is None or displayed_plots < max_display_plots):
+            _display_figure(result["figure"])
+            displayed_plots += 1
+        plt.close(result["figure"])
+        saved_plots += 1
+
+    if verbose:
+        print(f"Saved {saved_plots} plots to {output_dir}")
+        if display_plots:
+            print(f"Displayed {displayed_plots} plots inline.")
+    return saved_plots
+
+
+def select_existing_columns(df: pd.DataFrame, columns: Sequence[str], *, head: int | None = None) -> pd.DataFrame:
+    """Return the requested columns that exist, optionally limited to the first rows."""
+    out = df[[col for col in columns if col in df.columns]]
+    return out.head(head) if head is not None else out
+
+
 __all__ = [
+    "build_antibiotic_group_mapping",
+    "build_si_analysis_paths",
+    "build_si_driver_analysis",
     "build_yearly_si_dataset",
+    "load_yearly_si_inputs",
+    "prepare_antibiotic_analysis_level",
     "rank_future_high_interest_pairs",
+    "save_category_driver_plots",
+    "save_interesting_si_plots",
+    "select_existing_columns",
+    "slugify_analysis_level",
 ]
