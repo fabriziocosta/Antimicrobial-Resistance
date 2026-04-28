@@ -1466,6 +1466,8 @@ def plot_yearly_category_driver_counts(
     pathogen: str,
     antibiotic: str,
     *,
+    start_year: int | None = None,
+    end_year: int | None = None,
     fit_end_year: int | None = None,
 ) -> dict[str, Any]:
     """Plot yearly LLM category counts for one pathogen-antibiotic pair."""
@@ -1490,6 +1492,12 @@ def plot_yearly_category_driver_counts(
         )
         .sort_index()
     )
+    if start_year is not None or end_year is not None:
+        first_year = int(start_year) if start_year is not None else int(pivot.index.min())
+        last_year = int(end_year) if end_year is not None else int(pivot.index.max())
+        if last_year < first_year:
+            raise ValueError("end_year must be >= start_year.")
+        pivot = pivot.reindex(range(first_year, last_year + 1), fill_value=0)
     ordered_categories = [category for category in AMR_DRIVER_CATEGORY_ORDER if category in pivot.columns]
     extra_categories = sorted(category for category in pivot.columns if category not in AMR_DRIVER_CATEGORY_COLORS)
     pivot = pivot[ordered_categories + extra_categories]

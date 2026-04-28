@@ -12,6 +12,9 @@ __all__ = [
     "collect_yearly_amr_dataset",
     "collect_yearly_background_counts",
     "build_yearly_si_dataset",
+    "DEFAULT_DRIVER_SUMMARY_COLUMNS",
+    "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
+    "filter_model_inputs_by_average_amr_publications",
     "rank_future_high_interest_pairs",
     "build_si_analysis_paths",
     "build_glass_match_table",
@@ -22,6 +25,7 @@ __all__ = [
     "load_yearly_si_inputs",
     "plot_future_si_vs_si_shift",
     "print_collection_preflight",
+    "print_si_dataset_summary",
     "print_pubmed_query_examples",
     "print_unified_prompt_examples",
     "print_wrapped_system_prompt",
@@ -30,6 +34,7 @@ __all__ = [
     "save_interesting_si_plots",
     "select_existing_columns",
     "slugify_analysis_level",
+    "summarize_pair_publication_rates",
 ]
 
 _PUBMED_INTERVAL_EXPORTS = {
@@ -54,15 +59,20 @@ _COLLECTION_PREVIEW_EXPORTS = {
 }
 _SI_EXPORTS = {
     "build_yearly_si_dataset",
+    "DEFAULT_DRIVER_SUMMARY_COLUMNS",
+    "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
+    "filter_model_inputs_by_average_amr_publications",
     "rank_future_high_interest_pairs",
     "build_si_analysis_paths",
     "build_si_driver_analysis",
     "load_yearly_si_inputs",
     "prepare_antibiotic_analysis_level",
+    "print_si_dataset_summary",
     "save_category_driver_plots",
     "save_interesting_si_plots",
     "select_existing_columns",
     "slugify_analysis_level",
+    "summarize_pair_publication_rates",
 }
 _GLASS_SI_EXPORTS = {
     "build_glass_match_table",

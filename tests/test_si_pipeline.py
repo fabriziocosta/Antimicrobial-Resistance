@@ -18,6 +18,7 @@ from amr.si.core import AMR_DRIVER_CATEGORY_COLORS
 from amr.pipelines.si import (
     build_si_analysis_paths,
     build_yearly_si_dataset,
+    filter_model_inputs_by_average_amr_publications,
     rank_future_high_interest_pairs,
 )
 
@@ -94,6 +95,38 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertFalse(si_df["expected_log_count_global"].isna().any())
         self.assertFalse(si_df["SI"].isna().any())
         self.assertIn("coverage_report", si_df.attrs)
+
+    def test_filter_model_inputs_by_average_amr_publications_keeps_high_volume_pairs(self) -> None:
+        yearly_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2020, "count": 10},
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2021, "count": 10},
+                {"pathogen": "p2", "antibiotic": "a2", "year": 2020, "count": 1},
+                {"pathogen": "p2", "antibiotic": "a2", "year": 2021, "count": 1},
+            ]
+        )
+        unified_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2020, "pmid": "1"},
+                {"pathogen": "p2", "antibiotic": "a2", "year": 2020, "pmid": "2"},
+            ]
+        )
+
+        filtered_yearly_df, filtered_unified_df, rates_df = filter_model_inputs_by_average_amr_publications(
+            yearly_screened_model_df=yearly_df,
+            unified_decisions_model_df=unified_df,
+            fit_start_year=2020,
+            fit_end_year=2021,
+            min_avg_amr_publications_per_year=5.0,
+            verbose=False,
+        )
+
+        self.assertEqual(set(filtered_yearly_df["pathogen"]), {"p1"})
+        self.assertEqual(set(filtered_unified_df["pathogen"]), {"p1"})
+        high_rate = rates_df.loc[rates_df["pathogen"] == "p1", "avg_amr_publications_per_year"].iloc[0]
+        low_rate = rates_df.loc[rates_df["pathogen"] == "p2", "avg_amr_publications_per_year"].iloc[0]
+        self.assertEqual(float(high_rate), 10.0)
+        self.assertEqual(float(low_rate), 1.0)
 
     def test_rank_output_includes_latest_count_fields_for_interactive_plots(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
@@ -506,6 +539,44 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         finally:
             plt.close(result_with_mechanism["figure"])
             plt.close(result_without_mechanism["figure"])
+
+    def test_category_driver_plot_can_use_fixed_year_window(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2002,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2004,
+                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "count": 1,
+                },
+            ]
+        )
+
+        result = plot_yearly_category_driver_counts(
+            category_counts_df,
+            "p1",
+            "a1",
+            start_year=2000,
+            end_year=2005,
+            fit_end_year=2003,
+        )
+        try:
+            self.assertEqual(result["pivot"].index.tolist(), [2000, 2001, 2002, 2003, 2004, 2005])
+            self.assertEqual(int(result["pivot"].loc[2000].sum()), 0)
+            self.assertEqual(int(result["pivot"].loc[2003].sum()), 0)
+            fit_lines = [line for line in result["ax"].lines if line.get_linestyle() == "--"]
+            self.assertEqual(len(fit_lines), 1)
+            self.assertAlmostEqual(float(fit_lines[0].get_xdata()[0]), 3.5)
+        finally:
+            plt.close(result["figure"])
 
 
 if __name__ == "__main__":

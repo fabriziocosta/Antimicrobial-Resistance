@@ -31,6 +31,31 @@ DEFAULT_DRIVER_REQUIRED_COLUMNS = {
     "amr_needs_manual_review",
 }
 
+DEFAULT_INTERESTING_SUMMARY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "interest_score",
+    "si_change",
+    "current_predicted_count",
+    "future_predicted_count",
+    "post_fit_si_abs_pct_error_mean",
+]
+
+DEFAULT_DRIVER_SUMMARY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "interest_score",
+    "si_change",
+    "current_predicted_count",
+    "future_predicted_count",
+    "driver_recent_total",
+    "driver_count_change",
+    "driver_dominant_category",
+    "driver_fastest_growing_category",
+    "driver_weak_signal_share",
+    "driver_manual_review_share",
+]
+
 
 def slugify_analysis_level(analysis_level: str) -> str:
     """Return the suffix used for output files/directories for an antibiotic analysis level."""
@@ -373,6 +398,84 @@ def build_yearly_si_dataset(
     return si_df, pooled_model, design_columns
 
 
+def filter_model_inputs_by_average_amr_publications(
+    *,
+    yearly_screened_model_df: pd.DataFrame,
+    unified_decisions_model_df: pd.DataFrame,
+    fit_start_year: int,
+    fit_end_year: int,
+    min_avg_amr_publications_per_year: float = 5.0,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Keep model inputs whose pair-level AMR count averages above a fit-window threshold."""
+    required_cols = {"pathogen", "antibiotic", "year", "count"}
+    missing = required_cols - set(yearly_screened_model_df.columns)
+    if missing:
+        raise KeyError(f"yearly_screened_model_df missing required columns: {sorted(missing)}")
+    if fit_end_year < fit_start_year:
+        raise ValueError("fit_end_year must be >= fit_start_year.")
+
+    fit_year_count = int(fit_end_year) - int(fit_start_year) + 1
+    fit_window_df = yearly_screened_model_df.loc[
+        yearly_screened_model_df["year"].between(int(fit_start_year), int(fit_end_year))
+    ]
+    pair_publication_rates = (
+        fit_window_df.groupby(["pathogen", "antibiotic"], as_index=False)["count"]
+        .sum()
+        .rename(columns={"count": "fit_window_amr_publications"})
+    )
+    pair_publication_rates["avg_amr_publications_per_year"] = (
+        pair_publication_rates["fit_window_amr_publications"] / fit_year_count
+    )
+
+    eligible_pairs = pair_publication_rates.loc[
+        pair_publication_rates["avg_amr_publications_per_year"] >= float(min_avg_amr_publications_per_year),
+        ["pathogen", "antibiotic"],
+    ]
+    pair_count_before = yearly_screened_model_df[["pathogen", "antibiotic"]].drop_duplicates().shape[0]
+    filtered_yearly_df = yearly_screened_model_df.merge(
+        eligible_pairs,
+        on=["pathogen", "antibiotic"],
+        how="inner",
+    )
+    if unified_decisions_model_df.empty:
+        filtered_unified_df = unified_decisions_model_df.copy()
+    else:
+        filtered_unified_df = unified_decisions_model_df.merge(
+            eligible_pairs,
+            on=["pathogen", "antibiotic"],
+            how="inner",
+        )
+    pair_count_after = filtered_yearly_df[["pathogen", "antibiotic"]].drop_duplicates().shape[0]
+
+    if verbose:
+        print(
+            f"AMR publication filter: kept {pair_count_after:,} / {pair_count_before:,} pairs "
+            f"with >= {min_avg_amr_publications_per_year:g} publications/year on average "
+            f"from {fit_start_year} to {fit_end_year}."
+        )
+    return filtered_yearly_df, filtered_unified_df, pair_publication_rates
+
+
+def summarize_pair_publication_rates(
+    pair_publication_rates: pd.DataFrame,
+    *,
+    head: int | None = 30,
+) -> pd.DataFrame:
+    """Return pair publication rates sorted by average fit-window AMR volume."""
+    out = pair_publication_rates.sort_values(
+        "avg_amr_publications_per_year",
+        ascending=False,
+    )
+    return out.head(head) if head is not None else out
+
+
+def print_si_dataset_summary(si_df: pd.DataFrame) -> None:
+    """Print a short yearly SI dataset summary for notebooks."""
+    print(f"SI rows: {len(si_df):,}")
+    print(f"SI pairs: {si_df[['pathogen', 'antibiotic']].drop_duplicates().shape[0]:,}")
+
+
 def rank_future_high_interest_pairs(
     si_df: pd.DataFrame,
     *,
@@ -477,6 +580,8 @@ def save_category_driver_plots(
     category_counts_df: pd.DataFrame,
     interesting_df: pd.DataFrame,
     output_dir: str | Path,
+    start_year: int | None = None,
+    end_year: int | None = None,
     fit_end_year: int,
     max_plots: int = 25,
     figure_format: str = "pdf",
@@ -501,6 +606,8 @@ def save_category_driver_plots(
                 category_counts_df=category_counts_df,
                 pathogen=row.pathogen,
                 antibiotic=row.antibiotic,
+                start_year=start_year,
+                end_year=end_year,
                 fit_end_year=fit_end_year,
             )
         except ValueError:
@@ -591,11 +698,16 @@ __all__ = [
     "build_si_analysis_paths",
     "build_si_driver_analysis",
     "build_yearly_si_dataset",
+    "DEFAULT_DRIVER_SUMMARY_COLUMNS",
+    "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
+    "filter_model_inputs_by_average_amr_publications",
     "load_yearly_si_inputs",
+    "print_si_dataset_summary",
     "prepare_antibiotic_analysis_level",
     "rank_future_high_interest_pairs",
     "save_category_driver_plots",
     "save_interesting_si_plots",
     "select_existing_columns",
     "slugify_analysis_level",
+    "summarize_pair_publication_rates",
 ]
