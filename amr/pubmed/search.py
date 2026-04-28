@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Sequence, Tuple, List
+from typing import Callable, Dict, Optional, Sequence, Tuple, List
 from urllib.error import HTTPError, URLError
 
 import pandas as pd
@@ -275,7 +275,12 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
     return pmids
 
 
-def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.com", batch_size: int = 200):
+def fetch_pub_metadata(
+    pmids: Sequence[str],
+    email: str = "your_email@example.com",
+    batch_size: int = 200,
+    on_batch_complete: Callable[[int, int, list[str], Dict[str, datetime], Dict[str, str]], None] | None = None,
+):
     """Fetch publication dates and venues for a list of PMIDs."""
     _configure_entrez(email)
     pmids = normalize_pmids(pmids)
@@ -303,6 +308,9 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
             f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} "
             f"({len(batch)} PMIDs) | ETA {eta_text} | est finish {est_finish}"
         )
+        batch_date_map: Dict[str, datetime] = {}
+        batch_venue_map: Dict[str, str] = {}
+        batch_completed = False
         for attempt in range(RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
@@ -341,7 +349,10 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
                         parsed_date = parse_pubdate(epub)
                     if parsed_date:
                         date_map[pmid] = parsed_date
+                        batch_date_map[pmid] = parsed_date
                     venue_map[pmid] = venue
+                    batch_venue_map[pmid] = venue
+                batch_completed = True
                 break
             except (HTTPError, URLError) as e:
                 delay = BACKOFF_FACTOR * (2**attempt)
@@ -350,6 +361,8 @@ def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.co
             except Exception as e:  # pragma: no cover - defensive
                 print(f"Unexpected error in fetch_pub_metadata: {e}")
                 break
+        if batch_completed and on_batch_complete is not None:
+            on_batch_complete(batch_idx, total_batches, batch, batch_date_map, batch_venue_map)
 
     return date_map, venue_map
 

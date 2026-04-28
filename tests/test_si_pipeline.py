@@ -2,13 +2,17 @@ import unittest
 import warnings
 from tempfile import NamedTemporaryFile
 
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 import pandas as pd
 
 from amr.si import (
     build_yearly_category_counts,
     fit_predict_yearly_si_loess,
+    plot_yearly_category_driver_counts,
     summarize_si_change_drivers,
 )
+from amr.si.core import AMR_DRIVER_CATEGORY_COLORS
 from amr.pipelines.si import (
     build_yearly_si_dataset,
     rank_future_high_interest_pairs,
@@ -278,6 +282,52 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         self.assertTrue(counts.empty)
         self.assertTrue(summary.empty)
+
+    def test_category_driver_plot_uses_fixed_category_colors(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "count": 1,
+                },
+                {
+                    "pathogen": "p2",
+                    "antibiotic": "a2",
+                    "year": 2022,
+                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "count": 1,
+                },
+            ]
+        )
+
+        result_with_mechanism = plot_yearly_category_driver_counts(category_counts_df, "p1", "a1")
+        result_without_mechanism = plot_yearly_category_driver_counts(category_counts_df, "p2", "a2")
+
+        try:
+            treatment_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS["TREATMENT_EFFECTIVENESS"])
+            treatment_index_with_mechanism = list(result_with_mechanism["pivot"].columns).index("TREATMENT_EFFECTIVENESS")
+            treatment_index_without_mechanism = list(result_without_mechanism["pivot"].columns).index("TREATMENT_EFFECTIVENESS")
+            self.assertEqual(
+                result_with_mechanism["ax"].containers[treatment_index_with_mechanism].patches[0].get_facecolor(),
+                treatment_rgba,
+            )
+            self.assertEqual(
+                result_without_mechanism["ax"].containers[treatment_index_without_mechanism].patches[0].get_facecolor(),
+                treatment_rgba,
+            )
+        finally:
+            plt.close(result_with_mechanism["figure"])
+            plt.close(result_without_mechanism["figure"])
 
 
 if __name__ == "__main__":

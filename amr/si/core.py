@@ -18,6 +18,26 @@ except ImportError:  # pragma: no cover - environment-dependent fallback
 
 _AUTO_TAIL_DAMPING = object()
 WEAK_SIGNAL_CATEGORY = "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+AMR_DRIVER_CATEGORY_ORDER = [
+    "RESISTANCE_PREVALENCE_SURVEILLANCE",
+    "RESISTANCE_MECHANISM",
+    "TREATMENT_EFFECTIVENESS",
+    "TREATMENT_REUSE_OR_SALVAGE",
+    "DIAGNOSTIC_STEWARDSHIP",
+    "GUIDELINE_POLICY_STEWARDSHIP",
+    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR",
+    WEAK_SIGNAL_CATEGORY,
+]
+AMR_DRIVER_CATEGORY_COLORS = {
+    "RESISTANCE_PREVALENCE_SURVEILLANCE": "#4e79a7",
+    "RESISTANCE_MECHANISM": "#f28e2b",
+    "TREATMENT_EFFECTIVENESS": "#59a14f",
+    "TREATMENT_REUSE_OR_SALVAGE": "#e15759",
+    "DIAGNOSTIC_STEWARDSHIP": "#76b7b2",
+    "GUIDELINE_POLICY_STEWARDSHIP": "#edc948",
+    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR": "#b07aa1",
+    WEAK_SIGNAL_CATEGORY: "#9c755f",
+}
 AMR_DRIVER_CATEGORY_COLUMNS = [
     "pathogen",
     "antibiotic",
@@ -940,34 +960,110 @@ def plot_yearly_si_pair(
     pair_df = result["pair_df"]
     pred_df = result["pred_df"]
 
-    fig, ax1 = plt.subplots(figsize=(12, 6))
+    fig, ax1 = plt.subplots(figsize=(12, 7), facecolor="white")
     ax2 = ax1.twinx()
+    ax1.set_facecolor("#fbfbf8")
+    ax2.set_facecolor("none")
+    ax1.set_zorder(2)
+    ax2.set_zorder(1)
+    ax1.patch.set_alpha(0.0)
+    for spine in ("top", "right"):
+        ax1.spines[spine].set_visible(False)
+    ax2.spines["top"].set_visible(False)
 
-    ax1.plot(pair_df["year"], pair_df["SI"], color="navy", lw=2, label="Observed SI")
-    ax1.plot(pred_df["year"], pred_df["predicted_SI"], color="crimson", lw=2, label="Predicted SI")
+    count_plot_df = pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]].copy()
+    count_plot_df["amr_count_plot"] = np.clip(count_plot_df["count"].astype(float), 1.0, None)
+    count_plot_df["pathogen_count_plot"] = np.clip(count_plot_df["bg_pathogen_n"].astype(float), 1.0, None)
+    count_plot_df["antibiotic_count_plot"] = np.clip(count_plot_df["bg_antibiotic_n"].astype(float), 1.0, None)
+    bar_width = 0.85
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["pathogen_count_plot"],
+        color="#8fbf88",
+        alpha=0.26,
+        edgecolor="none",
+        width=bar_width,
+        label="Pathogen publication count",
+        zorder=0,
+    )
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["antibiotic_count_plot"],
+        color="#b9a7d1",
+        alpha=0.34,
+        edgecolor="none",
+        width=bar_width,
+        label="Antibiotic publication count",
+        zorder=1,
+    )
+    ax2.bar(
+        count_plot_df["year"],
+        count_plot_df["amr_count_plot"],
+        color="#9ecae1",
+        alpha=0.68,
+        edgecolor="none",
+        width=bar_width,
+        label="AMR pair publication count",
+        zorder=2,
+    )
+    ax2.set_yscale("log")
+
+    ax1.plot(
+        pair_df["year"],
+        pair_df["SI"],
+        color="#111111",
+        marker="o",
+        lw=2.6,
+        markersize=6.0,
+        markerfacecolor="#f8fbff",
+        markeredgecolor="#111111",
+        markeredgewidth=1.6,
+        label="Observed SI",
+        zorder=4,
+    )
+    ax1.plot(pred_df["year"], pred_df["predicted_SI"], color="#d62828", lw=2.8, label="Predicted SI", zorder=5)
     ax1.fill_between(
         pred_df["year"],
         pred_df["lower_1std"],
         pred_df["upper_1std"],
-        color="crimson",
-        alpha=0.15,
+        color="#f7b2b0",
+        alpha=0.28,
         label="Predicted SI ±1 std",
+        zorder=3,
     )
-    ax1.axvline(int(fit_end_year), color="grey", linestyle="--", linewidth=1.2, label="Fit end year")
-
-    ax2.bar(pair_df["year"], pair_df["count"], color="orange", alpha=0.25, width=0.8, label="Observed count")
-    ax2.plot(pred_df["year"], pred_df["predicted_count_loess"], color="darkorange", lw=2, label="Predicted count")
+    ax1.axvline(int(fit_end_year), color="#6b7280", linestyle="--", linewidth=1.6, alpha=0.9, label="Fit end year")
+    ax2.plot(
+        pred_df["year"],
+        np.clip(pred_df["predicted_count_loess"], 1.0, None),
+        color="#4e8fb3",
+        lw=2.5,
+        label="Predicted AMR pair count",
+        zorder=3,
+    )
 
     ax1.set_xlabel("Year")
     ax1.set_ylabel("Scientific interest (SI)")
-    ax2.set_ylabel("AMR publication count")
+    ax2.set_ylabel("Publication counts (log scale)", color="#4e6475")
+    ax2.tick_params(axis="y", labelcolor="#4e6475", colors="#4e6475")
     ax1.set_title(f"{pathogen} vs {antibiotic} | fit {fit_start_year}-{fit_end_year}")
-    ax1.grid(alpha=0.2)
+    ax1.grid(True, axis="y", color="#c7c7c7", alpha=0.45, linewidth=0.8)
+    ax1.grid(False, axis="x")
+    ax2.grid(False)
 
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, loc="best")
-    fig.tight_layout()
+    ax1.legend(
+        h1 + h2,
+        l1 + l2,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.16),
+        ncol=3,
+        frameon=False,
+        fontsize=9.5,
+        handlelength=2.4,
+        columnspacing=1.2,
+    )
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
 
     result["figure"] = fig
     result["ax_si"] = ax1
@@ -1003,10 +1099,17 @@ def plot_yearly_category_driver_counts(
             fill_value=0,
         )
         .sort_index()
-        .sort_index(axis=1)
     )
+    ordered_categories = [category for category in AMR_DRIVER_CATEGORY_ORDER if category in pivot.columns]
+    extra_categories = sorted(category for category in pivot.columns if category not in AMR_DRIVER_CATEGORY_COLORS)
+    pivot = pivot[ordered_categories + extra_categories]
+    fallback_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    colors = [
+        AMR_DRIVER_CATEGORY_COLORS.get(category, fallback_colors[idx % len(fallback_colors)] if fallback_colors else "#999999")
+        for idx, category in enumerate(pivot.columns)
+    ]
     fig, ax = plt.subplots(figsize=(12, 5))
-    pivot.plot(kind="bar", stacked=True, ax=ax, width=0.85)
+    pivot.plot(kind="bar", stacked=True, ax=ax, width=0.85, color=colors)
     if fit_end_year is not None and not pivot.empty:
         years = list(pivot.index)
         if int(fit_end_year) in years:

@@ -26,6 +26,7 @@ from amr.pubmed.cache import (
     update_metadata_cache,
     get_metadata,
 )
+from amr.pubmed.pmids import normalize_pmids
 
 
 def count_pmids_per_year_for_pathogens(
@@ -535,6 +536,100 @@ def _count_pmids_per_year_via_windows(
     return left_rows + right_rows
 
 
+def _plan_year_counts_via_windows(
+    *,
+    entity_value: str,
+    entity_col: str,
+    clause: str,
+    start_year: int,
+    end_year: int,
+    email: str,
+    fetch_threshold: int,
+) -> tuple[list[dict], list[dict]]:
+    """Plan yearly background counts, deferring metadata fetches for multi-year windows."""
+    if start_year > end_year:
+        return [], []
+
+    min_date = f"{start_year}/01/01"
+    max_date = f"{end_year}/12/31"
+    _, total_count, webenv, query_key = search_term_clause(
+        clause,
+        min_date=min_date,
+        max_date=max_date,
+        email=email,
+    )
+
+    if total_count is None:
+        raise RuntimeError(
+            f"PubMed background-count search failed for {entity_col}={entity_value!r}, "
+            f"years={start_year}-{end_year}; no zero rows were written."
+        )
+
+    if total_count == 0:
+        return _year_count_rows(entity_col, entity_value, start_year, end_year, {}), []
+
+    if start_year == end_year:
+        return [{entity_col: entity_value, "year": start_year, "count": int(total_count)}], []
+
+    if total_count <= fetch_threshold and webenv and query_key:
+        query = f'({clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
+        pmids_all = list(dict.fromkeys(retrieve_pmids(query, webenv, query_key, total_count)))
+        return [], [
+            {
+                "entity_value": entity_value,
+                "entity_col": entity_col,
+                "start_year": start_year,
+                "end_year": end_year,
+                "pmids": pmids_all,
+            }
+        ]
+
+    mid_year = (start_year + end_year) // 2
+    left_rows, left_windows = _plan_year_counts_via_windows(
+        entity_value=entity_value,
+        entity_col=entity_col,
+        clause=clause,
+        start_year=start_year,
+        end_year=mid_year,
+        email=email,
+        fetch_threshold=fetch_threshold,
+    )
+    right_rows, right_windows = _plan_year_counts_via_windows(
+        entity_value=entity_value,
+        entity_col=entity_col,
+        clause=clause,
+        start_year=mid_year + 1,
+        end_year=end_year,
+        email=email,
+        fetch_threshold=fetch_threshold,
+    )
+    return left_rows + right_rows, left_windows + right_windows
+
+
+def _year_rows_from_planned_metadata_windows(
+    windows: list[dict],
+    *,
+    metadata_cache: dict[str, dict],
+) -> list[dict]:
+    rows: list[dict] = []
+    for window in windows:
+        entity_col = str(window["entity_col"])
+        entity_value = str(window["entity_value"])
+        start_year = int(window["start_year"])
+        end_year = int(window["end_year"])
+        year_to_count: dict[int, int] = {}
+        for pmid in normalize_pmids(window["pmids"]):
+            meta = get_metadata(pmid, metadata_cache)
+            pub_date = meta["date"]
+            if not pub_date:
+                continue
+            pub_year = int(pub_date.year)
+            if start_year <= pub_year <= end_year:
+                year_to_count[pub_year] = year_to_count.get(pub_year, 0) + 1
+        rows.extend(_year_count_rows(entity_col, entity_value, start_year, end_year, year_to_count))
+    return rows
+
+
 def _count_pmids_per_year_resumable(
     *,
     entity_values: Sequence[str],
@@ -595,7 +690,8 @@ def _count_pmids_per_year_resumable(
     if total == 0:
         return existing.sort_values([entity_col, "year"]).reset_index(drop=True)
 
-    results: list[dict] = []
+    direct_results: list[dict] = []
+    metadata_windows: list[dict] = []
     metadata_cache: dict[str, dict] = {}
 
     import time
@@ -607,18 +703,17 @@ def _count_pmids_per_year_resumable(
     try:
         for idx, (entity_value, window_start, window_end) in enumerate(tasks, start=1):
             clause = clause_builder(entity_value)
-            window_rows = _count_pmids_per_year_via_windows(
+            window_rows, window_metadata_windows = _plan_year_counts_via_windows(
                 entity_value=entity_value,
                 entity_col=entity_col,
                 clause=clause,
                 start_year=window_start,
                 end_year=window_end,
                 email=email,
-                metadata_cache=metadata_cache,
                 fetch_threshold=fetch_threshold,
-                metadata_batch_size=metadata_batch_size,
             )
-            results.extend(window_rows)
+            direct_results.extend(window_rows)
+            metadata_windows.extend(window_metadata_windows)
 
             if progress_every and (idx % progress_every == 0):
                 now = time.time()
@@ -642,22 +737,41 @@ def _count_pmids_per_year_resumable(
                     f"{entity_col}={entity_value} | years={window_start}-{window_end}"
                 )
 
-            if save_every and (len(results) >= save_every):
-                batch_df = pd.DataFrame(results)
+            if save_every and (len(direct_results) >= save_every):
+                batch_df = pd.DataFrame(direct_results)
                 combined = clean_background_counts(pd.concat([existing, batch_df], ignore_index=True), key_col=entity_col)
                 atomic_write_parquet(combined, output_path, index=False)
                 existing = combined
-                results = []
+                direct_results = []
     except KeyboardInterrupt:
         print("Interrupted. Saving partial results…")
     finally:
-        if results:
-            batch_df = pd.DataFrame(results)
+        if direct_results:
+            batch_df = pd.DataFrame(direct_results)
             combined = clean_background_counts(pd.concat([existing, batch_df], ignore_index=True), key_col=entity_col)
             try:
                 atomic_write_parquet(combined, output_path, index=False)
             except Exception:
                 combined.to_csv(output_path, index=False)
+            existing = combined
+
+    if metadata_windows:
+        metadata_pmids = normalize_pmids(
+            pmid
+            for window in metadata_windows
+            for pmid in window["pmids"]
+        )
+        total_window_pmids = sum(len(normalize_pmids(window["pmids"])) for window in metadata_windows)
+        print(
+            f"[background_metadata:{entity_col}] fetching metadata for {len(metadata_pmids)} unique PMIDs "
+            f"from {total_window_pmids} window-PMID assignments across {len(metadata_windows)} window(s)."
+        )
+        update_metadata_cache(metadata_pmids, metadata_cache, email=email, batch_size=metadata_batch_size)
+        metadata_results = _year_rows_from_planned_metadata_windows(metadata_windows, metadata_cache=metadata_cache)
+        if metadata_results:
+            batch_df = pd.DataFrame(metadata_results)
+            combined = clean_background_counts(pd.concat([existing, batch_df], ignore_index=True), key_col=entity_col)
+            atomic_write_parquet(combined, output_path, index=False)
             existing = combined
 
     return existing.sort_values([entity_col, "year"]).reset_index(drop=True)

@@ -81,10 +81,15 @@ def refresh_pubmed_metadata_cache(
     )
 
     new_rows: list[dict[str, object]] = []
-    total_batches = (len(missing_pmids) + batch_size - 1) // batch_size
-    for batch_idx, start in enumerate(range(0, len(missing_pmids), batch_size), start=1):
-        batch = missing_pmids[start : start + batch_size]
-        date_map, venue_map = fetch_pub_metadata(batch, email=email, batch_size=len(batch))
+
+    def _checkpoint_batch(
+        batch_idx: int,
+        total_batches: int,
+        batch: list[str],
+        date_map: dict[str, object],
+        venue_map: dict[str, str],
+    ) -> None:
+        nonlocal cache_df, new_rows
         for pmid in batch:
             pub_date = pd.to_datetime(date_map.get(pmid), errors="coerce")
             pub_year = pub_date.year if pd.notna(pub_date) else pd.NA
@@ -96,15 +101,25 @@ def refresh_pubmed_metadata_cache(
                     "venue": venue_map.get(pmid, "Unknown"),
                 }
             )
-        print(f"Fetched batch {batch_idx}/{total_batches} ({len(batch)} PMIDs).")
 
         if batch_idx % checkpoint_every_batches == 0 or batch_idx == total_batches:
-            checkpoint_df = pd.concat([cache_df, pd.DataFrame(new_rows)], ignore_index=True)
+            new_rows_df = pd.DataFrame(new_rows)
+            checkpoint_df = (
+                new_rows_df
+                if cache_df.empty
+                else pd.concat([cache_df, new_rows_df], ignore_index=True)
+            )
             save_pubmed_metadata_cache(checkpoint_df, cache_path)
             cache_df = load_pubmed_metadata_cache(cache_path)
             new_rows = []
             print(f"Checkpointed PubMed metadata cache to {cache_path}.")
 
+    fetch_pub_metadata(
+        missing_pmids,
+        email=email,
+        batch_size=batch_size,
+        on_batch_complete=_checkpoint_batch,
+    )
     return cache_df
 
 
