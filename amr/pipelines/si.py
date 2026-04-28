@@ -111,7 +111,7 @@ def rank_future_high_interest_pairs(
     rank_output_path: str | Path = "yearly_si_ranked_future.parquet",
     interesting_output_path: str | Path | None = "yearly_si_ranked_future_interesting.parquet",
     loess_frac: float = 0.6,
-    loess_degree: int = 2,
+    loess_degree: int = 1,
     tail_damping_years: Any = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:

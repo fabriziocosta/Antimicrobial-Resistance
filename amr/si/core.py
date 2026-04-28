@@ -346,11 +346,10 @@ def _loess_predict(
         raise ValueError("Cannot evaluate LOESS with no training points.")
     if train_years.size == 1:
         return np.full_like(query_years, float(train_values[0]), dtype=float)
-    if degree not in (1, 2):
-        raise ValueError("loess_degree must be 1 or 2 for skmisc.loess.")
+    if degree != 1:
+        raise ValueError("Only linear LOESS is supported; set loess_degree=1.")
     if loess is None:
-        fit_degree = min(int(degree), int(train_years.size - 1))
-        coeffs = np.polyfit(train_years, train_values, deg=fit_degree)
+        coeffs = np.polyfit(train_years, train_values, deg=1)
         return np.asarray(np.polyval(coeffs, query_years), dtype=float)
     model = loess(
         train_years,
@@ -400,37 +399,24 @@ def _fit_loess_log_count_curve(
             "poly_coeffs": None,
         }
 
+    if int(loess_degree) != 1:
+        raise ValueError("Only linear LOESS is supported; set loess_degree=1.")
+
     try:
-        fitted_log_counts = _loess_predict(years, log_counts, years, frac=loess_frac, degree=2)
-        fitted_degree = 2
-        fit_method = "loess_degree_2"
+        fitted_log_counts = _loess_predict(years, log_counts, years, frac=loess_frac, degree=1)
+        fitted_degree = 1
+        fit_method = "loess_degree_1"
         linear_slope = None
         linear_intercept = None
         poly_coeffs = None
     except ValueError:
-        try:
-            fitted_log_counts = _loess_predict(years, log_counts, years, frac=loess_frac, degree=1)
-            fitted_degree = 1
-            fit_method = "loess_degree_1"
-            linear_slope = None
-            linear_intercept = None
-            poly_coeffs = None
-        except ValueError:
-            try:
-                poly_coeffs = np.polyfit(years, log_counts, deg=2)
-                fitted_log_counts = np.polyval(poly_coeffs, years)
-                fitted_degree = 2
-                fit_method = "quadratic_regression"
-                linear_slope = None
-                linear_intercept = None
-            except np.linalg.LinAlgError:
-                slope, intercept = np.polyfit(years, log_counts, deg=1)
-                fitted_log_counts = intercept + slope * years
-                fitted_degree = 1
-                fit_method = "linear_regression"
-                linear_slope = float(slope)
-                linear_intercept = float(intercept)
-                poly_coeffs = None
+        slope, intercept = np.polyfit(years, log_counts, deg=1)
+        fitted_log_counts = intercept + slope * years
+        fitted_degree = 1
+        fit_method = "linear_regression"
+        linear_slope = float(slope)
+        linear_intercept = float(intercept)
+        poly_coeffs = None
 
     residuals = log_counts - fitted_log_counts
     residual_std = float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0
@@ -488,8 +474,6 @@ def _predict_loess_log_count_with_linear_tails(loess_fit: dict[str, Any], years:
     years = np.asarray(years, dtype=float)
     if loess_fit["constant_level"] is not None:
         return np.full_like(years, loess_fit["constant_level"], dtype=float)
-    if loess_fit.get("fit_method") == "quadratic_regression":
-        return np.polyval(np.asarray(loess_fit["poly_coeffs"], dtype=float), years)
     if loess_fit.get("fit_method") == "linear_regression":
         return loess_fit["linear_intercept"] + loess_fit["linear_slope"] * years
 
@@ -529,7 +513,7 @@ def fit_predict_yearly_si_loess(
     *,
     min_train_points: int = 3,
     loess_frac: float = 0.6,
-    loess_degree: int = 2,
+    loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     pair_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
@@ -644,7 +628,7 @@ def rank_yearly_pairs_by_future_si_shift(
     reference_year: int | None = None,
     min_train_points: int = 3,
     loess_frac: float = 0.6,
-    loess_degree: int = 2,
+    loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
     save_path: str | None = None,
     verbose: bool = False,
@@ -938,7 +922,7 @@ def plot_yearly_si_pair(
     num_additional_years: int = 20,
     *,
     loess_frac: float = 0.6,
-    loess_degree: int = 2,
+    loess_degree: int = 1,
     tail_damping_years: Any = None,
 ) -> dict[str, Any]:
     """Plot observed/predicted SI and counts for one pathogen-antibiotic pair."""

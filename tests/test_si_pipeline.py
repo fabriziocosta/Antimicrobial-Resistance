@@ -6,6 +6,7 @@ import pandas as pd
 
 from amr.si import (
     build_yearly_category_counts,
+    fit_predict_yearly_si_loess,
     summarize_si_change_drivers,
 )
 from amr.pipelines.si import (
@@ -112,10 +113,31 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                 verbose=False,
             )
         self.assertTrue((rank_df["status"] == "ok").any())
+        ok_degrees = set(rank_df.loc[rank_df["status"] == "ok", "loess_degree"].astype(int))
+        self.assertEqual(ok_degrees, {1})
         if not interesting_df.empty:
             kept_pairs = set(zip(interesting_df["pathogen"], interesting_df["antibiotic"]))
             self.assertIn(("p1", "a1"), kept_pairs)
             self.assertNotIn(("p2", "a2"), kept_pairs)
+
+    def test_quadratic_loess_is_rejected(self) -> None:
+        yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
+        si_df, _, _ = build_yearly_si_dataset(
+            yearly_amr_df,
+            pathogen_bg_df,
+            antibiotic_bg_df,
+            output_path=None,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Only linear LOESS"):
+            fit_predict_yearly_si_loess(
+                si_df,
+                pathogen="p1",
+                antibiotic="a1",
+                fit_start_year=2000,
+                fit_end_year=2008,
+                loess_degree=2,
+            )
 
     def test_build_yearly_category_counts_filters_and_aggregates(self) -> None:
         unified_df = pd.DataFrame(

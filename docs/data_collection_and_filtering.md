@@ -134,13 +134,13 @@ for canonical_pathogen in pathogens:
 
 ## Yearly Pair Counts
 
-The interval cache is exploded to one row per `(pathogen, antibiotic, PMID)` association. Publication metadata is fetched only for new pair-PMID associations not already present in `yearly_pair_pmid.parquet`.
+The interval cache is exploded to one row per `(pathogen, antibiotic, PMID)` association. Publication metadata is fetched only for new pair-PMID associations not already present in `candidate_amr_pair_pmid_links.parquet`.
 
 The enriched rows are aggregated by publication year:
 
-- `yearly_pair_pmid.parquet`: one row per candidate pair-PMID association.
+- `candidate_amr_pair_pmid_links.parquet`: one row per candidate pair-PMID association.
 - `pubmed_pmid_metadata.parquet`: PMID-level publication date and venue cache.
-- `yearly_amr_pairs.parquet`: yearly unscreened candidate counts by pathogen-antibiotic pair.
+- `candidate_amr_pair_year_counts.parquet`: yearly unscreened candidate counts by pathogen-antibiotic pair.
 
 ### Yearly Aggregation Pseudocode
 
@@ -148,7 +148,7 @@ The enriched rows are aggregated by publication year:
 interval_df = read pmids_results.parquet
 pair_pmid_raw = explode interval_df.pmids into pair-PMID rows
 
-existing_pair_pmids = read yearly_pair_pmid.parquet if it exists
+existing_pair_pmids = read candidate_amr_pair_pmid_links.parquet if it exists
 new_pair_pmids = pair_pmid_raw minus existing_pair_pmids
 write merged pair-PMID cache
 
@@ -156,9 +156,9 @@ metadata = fetch missing PubMed metadata for new_pair_pmids
 enriched = attach pub_year and venue to new_pair_pmids
 yearly_delta = group enriched by pathogen, antibiotic, pub_year
 
-existing_yearly = read yearly_amr_pairs.parquet if it exists
-yearly_amr_pairs = union PMID lists per pathogen, antibiotic, year
-write yearly_amr_pairs.parquet
+existing_yearly = read candidate_amr_pair_year_counts.parquet if it exists
+candidate_amr_pair_year_counts = union PMID lists per pathogen, antibiotic, year
+write candidate_amr_pair_year_counts.parquet
 ```
 
 ## Background Counts
@@ -167,7 +167,7 @@ Background counts estimate general publication attention for each pathogen and a
 
 Two modes are supported:
 
-- `observed_entities`: count only pathogens and antibiotics that appear in `yearly_amr_pairs.parquet`. This is faster and suitable for iterative runs.
+- `observed_entities`: count only pathogens and antibiotics that appear in `candidate_amr_pair_year_counts.parquet`. This is faster and suitable for iterative runs.
 - `all_entities`: count the full configured pathogen and antibiotic vocabulary. This is more complete but much slower.
 
 The count implementation avoids year-by-year queries when possible. It queries a missing year window, fetches all PMIDs when the count is below `BACKGROUND_FETCH_THRESHOLD`, and partitions counts locally by publication year.
@@ -176,8 +176,8 @@ The count implementation avoids year-by-year queries when possible. It queries a
 
 ```text
 if BACKGROUND_SCOPE == "observed_entities":
-  background_pathogens = unique pathogens in yearly_amr_pairs
-  background_antibiotics = unique antibiotics in yearly_amr_pairs
+  background_pathogens = unique pathogens in candidate_amr_pair_year_counts
+  background_antibiotics = unique antibiotics in candidate_amr_pair_year_counts
 else:
   background_pathogens = all configured pathogens
   background_antibiotics = all configured antibiotics
@@ -235,7 +235,7 @@ Rows without abstracts do not call the LLM. They receive deterministic weak-sign
 ### LLM Filtering Pseudocode
 
 ```text
-candidate_df = explode yearly_amr_pairs into one row per PMID, pathogen, antibiotic, year
+candidate_df = explode candidate_amr_pair_year_counts into one row per PMID, pathogen, antibiotic, year
 resume_df = read yearly_amr_unified_decisions.parquet if it exists
 
 for existing decision rows:
@@ -284,7 +284,7 @@ The default keeps uncertain papers for downstream SI modeling so potentially rel
 ### Screened Dataset Pseudocode
 
 ```text
-yearly_candidates = explode yearly_amr_pairs.pmids
+yearly_candidates = explode candidate_amr_pair_year_counts.pmids
 reviewed_keep_keys = unified decisions where decision in {"yes", "uncertain"}
 
 filtered = yearly_candidates inner join reviewed_keep_keys
@@ -300,9 +300,9 @@ write yearly_amr_screened_pairs.parquet
 ## Main Outputs
 
 - `pmids_results.parquet`: interval-level broad PubMed pair results.
-- `yearly_pair_pmid.parquet`: exploded candidate pair-PMID associations.
+- `candidate_amr_pair_pmid_links.parquet`: exploded candidate pair-PMID associations.
 - `pubmed_pmid_metadata.parquet`: PMID publication metadata cache.
-- `yearly_amr_pairs.parquet`: unscreened yearly candidate pair counts.
+- `candidate_amr_pair_year_counts.parquet`: unscreened yearly candidate pair counts.
 - `pathogen_tiab_counts.parquet`: pathogen background counts.
 - `antibiotic_tiab_counts.parquet`: antibiotic background counts.
 - `pmid_abstracts.parquet`: title/abstract cache.

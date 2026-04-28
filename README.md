@@ -71,7 +71,7 @@ Primary APIs:
 
 ## Canonical Data Contracts
 
-- `yearly_amr_pairs.parquet`
+- `candidate_amr_pair_year_counts.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
 - `yearly_amr_screened_pairs.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
@@ -119,7 +119,8 @@ The refactored pipeline is designed for yearly (or multi-year slice) updates:
 
 1. Run notebook 1 on a slice (for example `2027-2027` or `2025-2027`).
 2. Outputs merge into canonical stores:
-   - `yearly_amr_pairs.parquet`
+   - `candidate_amr_pair_year_counts.parquet`
+   - `candidate_amr_pair_pmid_links.parquet`
    - `yearly_amr_unified_decisions.parquet`
    - `yearly_amr_screened_pairs.parquet`
 3. Re-run notebook 2 with your chosen modeling window (for example `FIT_START_YEAR=1970`, `FIT_END_YEAR=2024`).
