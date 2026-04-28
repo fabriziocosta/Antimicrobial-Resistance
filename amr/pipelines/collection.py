@@ -1,755 +1,510 @@
-"""High-level data collection pipelines for PubMed AMR queries."""
+"""Yearly AMR collection pipelines built on top of interval PubMed retrieval."""
 
 from __future__ import annotations
 
-import json
-from collections import Counter
-from datetime import datetime, timedelta
-from typing import Optional, Sequence
+from datetime import datetime
+from pathlib import Path
+from typing import Sequence
 
 import pandas as pd
 
 from amr.io import atomic_write_parquet
-from amr.pubmed.queries import (
-    build_antibiotic_query,
-    build_pathogen_tiab_query,
+from amr.validation import clean_background_counts, clean_pair_pmid_df, clean_yearly_pair_counts
+from .collection import (
+    count_pmids_per_year_for_antibiotics_resumable,
+    count_pmids_per_year_for_pathogens_resumable,
+    fetch_pmids_intervals,
 )
-from amr.pubmed.search import (
-    esearch_count_for_year,
-    search_term_clause,
-    search_pmids,
-    retrieve_pmids,
-)
-from amr.pubmed.cache import (
-    merge_with_existing,
-    update_metadata_cache,
-    get_metadata,
+from ..pubmed.yearly import (
+    aggregate_pair_counts_by_year,
+    attach_pubmed_metadata,
+    explode_positive_pair_pmids,
+    refresh_pubmed_metadata_cache,
 )
 
-
-def count_pmids_per_year_for_pathogens(
-    pathogens: Sequence[str],
-    bacteria_synonym_df: pd.DataFrame,
-    *,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    email: str = "your_email@example.com",
-) -> pd.DataFrame:
-    """Return a DataFrame with yearly PMID counts for each pathogen (title/abstract match, synonym-aware).
-
-    Columns: pathogen, year, count
-    """
-    # Coerce to list to support numpy arrays/Series without ambiguous truth-value errors
-    pathogens = list(pathogens)
-    if len(pathogens) == 0:
-        return pd.DataFrame(columns=["pathogen", "year", "count"])
-    if start_year is None:
-        start_year = 1950
-    if end_year is None:
-        end_year = datetime.now().year
-    rows = []
-    total_tasks = len(pathogens) * (end_year - start_year + 1)
-    done = 0
-    for pathogen in pathogens:
-        clause = build_pathogen_tiab_query(pathogen, bacteria_synonym_df)
-        for year in range(start_year, end_year + 1):
-            cnt = esearch_count_for_year(clause, year, email=email)
-            if cnt is None:
-                raise RuntimeError(f"PubMed count failed for pathogen={pathogen!r}, year={year}.")
-            rows.append({"pathogen": pathogen, "year": year, "count": cnt})
-            done += 1
-            if done % 50 == 0:
-                print(f"Progress: {done}/{total_tasks} year-queries done")
-    return pd.DataFrame(rows)
+def _merge_pair_pmid_frames(existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
+    existing_df = clean_pair_pmid_df(existing_df) if not existing_df.empty else existing_df.copy()
+    new_df = clean_pair_pmid_df(new_df) if not new_df.empty else new_df.copy()
+    if existing_df.empty:
+        return new_df.copy()
+    if new_df.empty:
+        return existing_df.copy()
+    merged = pd.concat([existing_df, new_df], ignore_index=True)
+    key_cols = ["pathogen", "antibiotic", "pmid"]
+    return merged.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
 
 
-def count_pmids_per_year_for_antibiotics(
-    antibiotics: Sequence[str],
-    antibiotic_synonym_df: pd.DataFrame | None = None,
-    *,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    email: str = "your_email@example.com",
-) -> pd.DataFrame:
-    """Return a DataFrame with yearly PMID counts for each antibiotic (title/abstract match, dash/slash variants).
-
-    Columns: antibiotic, year, count
-    """
-    antibiotics = list(antibiotics)
-    if len(antibiotics) == 0:
-        return pd.DataFrame(columns=["antibiotic", "year", "count"])
-    if start_year is None:
-        start_year = 1950
-    if end_year is None:
-        end_year = datetime.now().year
-    rows = []
-    total_tasks = len(antibiotics) * (end_year - start_year + 1)
-    done = 0
-    for ab in antibiotics:
-        clause = build_antibiotic_query(ab, antibiotic_synonym_df, field="Title/Abstract")
-        for year in range(start_year, end_year + 1):
-            cnt = esearch_count_for_year(clause, year, email=email)
-            if cnt is None:
-                raise RuntimeError(f"PubMed count failed for antibiotic={ab!r}, year={year}.")
-            rows.append({"antibiotic": ab, "year": year, "count": cnt})
-            done += 1
-            if done % 50 == 0:
-                print(f"Progress: {done}/{total_tasks} year-queries done")
-    return pd.DataFrame(rows)
+def _as_pair_pmid_keyframe(df: pd.DataFrame) -> pd.DataFrame:
+    work = clean_pair_pmid_df(df) if not df.empty else df.copy()
+    if work.empty:
+        return pd.DataFrame(columns=["pathogen", "antibiotic", "pmid"])
+    return work[["pathogen", "antibiotic", "pmid"]].drop_duplicates().reset_index(drop=True)
 
 
-def fetch_pmids_by_date_and_keywords(
-    min_date: str,
-    max_date: str,
-    antibiotic: str,
-    pathogen: str,
-    bacteria_synonym_df: pd.DataFrame,
-    antibiotic_synonym_df: pd.DataFrame | None = None,
-    email: str = "your_email@example.com",
-    batch_size: int = 5000,
-    extra_clauses: Optional[Sequence[str]] = None,
-) -> list[str]:
-    """Retrieve PMIDs within a date range; splits queries that exceed PubMed limits."""
-    query, count, webenv, query_key = search_pmids(
-        antibiotic,
-        pathogen,
-        bacteria_synonym_df,
-        antibiotic_synonym_df=antibiotic_synonym_df,
-        extra_clauses=extra_clauses,
-        min_date=min_date,
-        max_date=max_date,
-        email=email,
+def _extract_new_pair_pmids(existing_pair_df: pd.DataFrame, current_pair_df: pd.DataFrame) -> pd.DataFrame:
+    """Return only pair-PMID rows not present in existing storage."""
+    existing_keys = _as_pair_pmid_keyframe(existing_pair_df)
+    current_keys = _as_pair_pmid_keyframe(current_pair_df)
+    if existing_keys.empty:
+        return current_pair_df.copy()
+    merged = current_keys.merge(
+        existing_keys,
+        on=["pathogen", "antibiotic", "pmid"],
+        how="left",
+        indicator=True,
     )
-    if count is None:
-        raise RuntimeError(
-            f"PubMed search failed for pathogen={pathogen!r}, antibiotic={antibiotic!r}, "
-            f"window={min_date}..{max_date}."
-        )
-    if count == 0:
-        return []
-    if count > 9999:
-        start_dt = datetime.strptime(min_date, "%Y/%m/%d")
-        end_dt = datetime.strptime(max_date, "%Y/%m/%d")
-        mid_year = (start_dt.year + end_dt.year) // 2
-        mid_dt = datetime(mid_year, 12, 31)
-
-        left_pmids = fetch_pmids_by_date_and_keywords(
-            min_date=min_date,
-            max_date=mid_dt.strftime("%Y/%m/%d"),
-            antibiotic=antibiotic,
-            pathogen=pathogen,
-            bacteria_synonym_df=bacteria_synonym_df,
-            antibiotic_synonym_df=antibiotic_synonym_df,
-            email=email,
-            batch_size=batch_size,
-            extra_clauses=extra_clauses,
-        )
-        right_pmids = fetch_pmids_by_date_and_keywords(
-            min_date=(mid_dt + timedelta(days=1)).strftime("%Y/%m/%d"),
-            max_date=max_date,
-            antibiotic=antibiotic,
-            pathogen=pathogen,
-            bacteria_synonym_df=bacteria_synonym_df,
-            antibiotic_synonym_df=antibiotic_synonym_df,
-            email=email,
-            batch_size=batch_size,
-            extra_clauses=extra_clauses,
-        )
-        return left_pmids + right_pmids
-    return retrieve_pmids(query, webenv, query_key, count, batch_size=batch_size)
+    new_keys = merged.loc[merged["_merge"] == "left_only", ["pathogen", "antibiotic", "pmid"]]
+    if new_keys.empty:
+        return current_pair_df.iloc[0:0].copy()
+    return current_pair_df.merge(new_keys, on=["pathogen", "antibiotic", "pmid"], how="inner")
 
 
-def fetch_pmids_intervals(
-    pathogens: Sequence[str],
-    antibiotics: Sequence[str],
-    bacteria_synonym_df: pd.DataFrame,
-    min_date: str,
-    max_date: str,
-    antibiotic_synonym_df: pd.DataFrame | None = None,
-    year_gap: int = 5,
-    email: str = "your_email@example.com",
-    parquet_path: str = "pmids_results.parquet",
-    save_every: int = 50,
-    extra_keywords: Optional[Sequence[str]] = None,
-    full_fetch_threshold: int = 9500,
-    summary_batch_size: int = 200,
-    verbose: int = 1,
-    progress_every: int = 200,
-) -> pd.DataFrame:
-    """Query PubMed in intervals for all pathogen/antibiotic combinations."""
-    import os
+def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.DataFrame) -> pd.DataFrame:
+    """Incrementally merge yearly pair counts by unioning PMID lists per key."""
+    if existing_df.empty:
+        out = clean_yearly_pair_counts(delta_df)
+        return out.sort_values(["pathogen", "antibiotic", "year"]).reset_index(drop=True)
+    if delta_df.empty:
+        return clean_yearly_pair_counts(existing_df).sort_values(["pathogen", "antibiotic", "year"]).reset_index(drop=True)
 
-    if os.path.exists(parquet_path):
-        existing_df = pd.read_parquet(parquet_path)
-        if "venue_histogram" not in existing_df.columns:
-            existing_df["venue_histogram"] = None
-    else:
-        existing_df = pd.DataFrame(
-            columns=[
-                "pathogen",
-                "antibiotic",
-                "start_date",
-                "end_date",
-                "pmids",
-                "count",
-                "venue_histogram",
-            ]
-        )
+    key_cols = ["pathogen", "antibiotic", "year"]
+    work_existing = clean_yearly_pair_counts(existing_df)
+    work_delta = clean_yearly_pair_counts(delta_df)
+    work_existing["year"] = pd.to_numeric(work_existing["year"], errors="coerce").astype("Int64")
+    work_delta["year"] = pd.to_numeric(work_delta["year"], errors="coerce").astype("Int64")
+    work_existing = work_existing.dropna(subset=["year"]).copy()
+    work_delta = work_delta.dropna(subset=["year"]).copy()
+    work_existing["year"] = work_existing["year"].astype(int)
+    work_delta["year"] = work_delta["year"].astype(int)
+    work_existing["pmids"] = work_existing["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+    work_delta["pmids"] = work_delta["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+    combined = pd.concat([work_existing, work_delta], ignore_index=True)
+    agg_spec: dict[str, tuple[str, object]] = {
+        "pmids": ("pmids", lambda rows: sorted({str(p) for row in rows for p in row})),
+        "count": ("count", "max"),
+    }
+    for col in ["collection_run_min_date", "collection_run_max_date"]:
+        if col in combined.columns:
+            agg_spec[col] = (col, lambda values: ";".join(sorted({str(v) for v in values if pd.notna(v)})))
+    merged = combined.groupby(key_cols, as_index=False).agg(**agg_spec).sort_values(key_cols).reset_index(drop=True)
+    merged["count"] = merged["pmids"].apply(len)
+    return merged
 
-    new_results: list[dict] = []
-    metadata_cache: dict[str, dict] = {}
 
-    overall_start_dt = datetime.strptime(min_date, "%Y/%m/%d")
-    overall_end_dt = datetime.strptime(max_date, "%Y/%m/%d")
+def _build_interval_windows(min_date: str, max_date: str, interval_year_gap: int) -> list[tuple[str, str]]:
+    overall_start_dt = pd.to_datetime(min_date, format="%Y/%m/%d")
+    overall_end_dt = pd.to_datetime(max_date, format="%Y/%m/%d")
 
-    intervals = []
+    intervals: list[tuple[str, str]] = []
     current = overall_start_dt
     while current <= overall_end_dt:
-        end = datetime(min(current.year + year_gap - 1, overall_end_dt.year), 12, 31)
+        end = pd.Timestamp(min(current.year + interval_year_gap - 1, overall_end_dt.year), 12, 31)
         if end > overall_end_dt:
             end = overall_end_dt
         intervals.append((current.strftime("%Y/%m/%d"), end.strftime("%Y/%m/%d")))
-        current = datetime(end.year + 1, 1, 1)
+        current = pd.Timestamp(end.year + 1, 1, 1)
+    return intervals
 
-    total_tasks = len(pathogens) * len(antibiotics)
-    task_counter = 0
-    event_counter = 0
-    progress_every = max(1, int(progress_every))
-    event_stats = {"cached": 0, "zero": 0, "full_fetch_partitioned": 0, "new": 0}
 
-    def _log_event(kind: str, message: str) -> None:
-        nonlocal event_counter
-        event_counter += 1
-        event_stats[kind] = event_stats.get(kind, 0) + 1
-        if verbose >= 2:
-            print(message)
-        elif verbose >= 1 and event_counter % progress_every == 0:
-            print(
-                f"Progress events {event_counter}: "
-                f"cached={event_stats.get('cached',0)} "
-                f"zero={event_stats.get('zero',0)} "
-                f"full_fetch={event_stats.get('full_fetch_partitioned',0)} "
-                f"new={event_stats.get('new',0)}"
-            )
-
-    for pathogen in pathogens:
-        for antibiotic in antibiotics:
-            task_counter += 1
-            task_progress = (task_counter / max(total_tasks, 1)) * 100
-
-            # Determine missing intervals for this pair
-            interval_entries = []
-            missing_entries = []
-            for interval_start, interval_end in intervals:
-                start_dt = datetime.strptime(interval_start, "%Y/%m/%d")
-                end_dt = datetime.strptime(interval_end, "%Y/%m/%d")
-
-                mask = (
-                    (existing_df["pathogen"] == pathogen)
-                    & (existing_df["antibiotic"] == antibiotic)
-                    & (existing_df["start_date"] == interval_start)
-                    & (existing_df["end_date"] == interval_end)
-                )
-
-                entry = {
-                    "start": interval_start,
-                    "end": interval_end,
-                    "start_dt": start_dt,
-                    "end_dt": end_dt,
-                    "cached": False,
-                    "count": 0,
-                }
-
-                if mask.any():
-                    entry["cached"] = True
-                    entry["count"] = int(existing_df.loc[mask, "count"].iloc[0])
-                    _log_event(
-                        "cached",
-                        f"[{task_counter:>3}/{total_tasks}] "
-                        f"({task_progress:5.1f}%) | "
-                        f"{pathogen:<40} | {antibiotic:<20} | "
-                        f"{interval_start} – {interval_end} | "
-                        f"{entry['count']:5} PMIDs (cached)"
-                    )
-                else:
-                    missing_entries.append(entry)
-                interval_entries.append(entry)
-
-            if not missing_entries:
-                continue
-
-            query, total_count, webenv, query_key = search_pmids(
-                antibiotic,
-                pathogen,
-                bacteria_synonym_df,
-                antibiotic_synonym_df=antibiotic_synonym_df,
-                extra_clauses=extra_keywords,
-                min_date=min_date,
-                max_date=max_date,
-                email=email,
-            )
-
-            if total_count is None:
-                raise RuntimeError(
-                    f"PubMed search failed for pathogen={pathogen!r}, antibiotic={antibiotic!r}, "
-                    f"window={min_date}..{max_date}; no zero rows were written."
-                )
-
-            if total_count == 0:
-                for entry in missing_entries:
-                    new_results.append(
-                        {
-                            "pathogen": pathogen,
-                            "antibiotic": antibiotic,
-                            "start_date": entry["start"],
-                            "end_date": entry["end"],
-                            "pmids": [],
-                            "count": 0,
-                            "venue_histogram": json.dumps({}),
-                        }
-                    )
-                    _log_event(
-                        "zero",
-                        f"[{task_counter:>3}/{total_tasks}] "
-                        f"({task_progress:5.1f}%) | "
-                        f"{pathogen:<40} | {antibiotic:<20} | "
-                        f"{entry['start']} – {entry['end']} | "
-                        f"{0:5} PMIDs (new)"
-                    )
-                if len(new_results) >= save_every:
-                    df_new = pd.DataFrame(new_results)
-                    existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
-                    new_results = []
-                continue
-
-            if total_count <= full_fetch_threshold:
-                pmids_all = retrieve_pmids(query, webenv, query_key, total_count)
-                update_metadata_cache(pmids_all, metadata_cache, email=email, batch_size=summary_batch_size)
-
-                for entry in missing_entries:
-                    pmids_interval = []
-                    venue_counter = Counter()
-                    for pmid in pmids_all:
-                        meta = get_metadata(pmid, metadata_cache)
-                        pub_date = meta["date"]
-                        if not pub_date:
-                            continue
-                        if not (overall_start_dt <= pub_date <= overall_end_dt):
-                            continue
-                        if entry["start_dt"] <= pub_date <= entry["end_dt"]:
-                            pmids_interval.append(pmid)
-                            venue_value = meta["venue"] or "Unknown"
-                            venue_counter[venue_value] += 1
-                    histogram_json = json.dumps(dict(venue_counter))
-                    new_results.append(
-                        {
-                            "pathogen": pathogen,
-                            "antibiotic": antibiotic,
-                            "start_date": entry["start"],
-                            "end_date": entry["end"],
-                            "pmids": pmids_interval,
-                            "count": len(pmids_interval),
-                            "venue_histogram": histogram_json,
-                        }
-                    )
-                    _log_event(
-                        "full_fetch_partitioned",
-                        f"[{task_counter:>3}/{total_tasks}] "
-                        f"({task_progress:5.1f}%) | "
-                        f"{pathogen:<40} | {antibiotic:<20} | "
-                        f"{entry['start']} – {entry['end']} | "
-                        f"{len(pmids_interval):5} PMIDs (full fetch partitioned)"
-                    )
-                    if len(new_results) >= save_every:
-                        df_new = pd.DataFrame(new_results)
-                        existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
-                        new_results = []
-                continue
-
-            for entry in missing_entries:
-                pmids_interval = fetch_pmids_by_date_and_keywords(
-                    min_date=entry["start"],
-                    max_date=entry["end"],
-                    antibiotic=antibiotic,
-                    pathogen=pathogen,
-                    bacteria_synonym_df=bacteria_synonym_df,
-                    antibiotic_synonym_df=antibiotic_synonym_df,
-                    email=email,
-                    extra_clauses=extra_keywords,
-                )
-                update_metadata_cache(pmids_interval, metadata_cache, email=email, batch_size=summary_batch_size)
-                from collections import Counter as _Counter
-
-                venue_counter = _Counter()
-                filtered_pmids = []
-                for pmid in pmids_interval:
-                    meta = get_metadata(pmid, metadata_cache)
-                    pub_date = meta["date"]
-                    if pub_date and not (entry["start_dt"] <= pub_date <= entry["end_dt"]):
-                        continue
-                    filtered_pmids.append(pmid)
-                    venue_value = meta["venue"] or "Unknown"
-                    venue_counter[venue_value] += 1
-                histogram_json = json.dumps(dict(venue_counter))
-                new_results.append(
-                    {
-                        "pathogen": pathogen,
-                        "antibiotic": antibiotic,
-                        "start_date": entry["start"],
-                        "end_date": entry["end"],
-                        "pmids": filtered_pmids,
-                        "count": len(filtered_pmids),
-                        "venue_histogram": histogram_json,
-                    }
-                )
-                _log_event(
-                    "new",
-                    f"[{task_counter:>3}/{total_tasks}] "
-                    f"({task_progress:5.1f}%) | "
-                    f"{pathogen:<40} | {antibiotic:<20} | "
-                    f"{entry['start']} – {entry['end']} | "
-                    f"{len(filtered_pmids):5} PMIDs (new)"
-                )
-                if len(new_results) >= save_every:
-                    df_new = pd.DataFrame(new_results)
-                    existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
-                    new_results = []
-
-    if new_results:
-        df_new = pd.DataFrame(new_results)
-        existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
-
-    if verbose >= 1:
-        print(
-            "Collection summary: "
-            f"events={event_counter}, "
-            f"cached={event_stats.get('cached',0)}, "
-            f"zero={event_stats.get('zero',0)}, "
-            f"full_fetch={event_stats.get('full_fetch_partitioned',0)}, "
-            f"new={event_stats.get('new',0)}"
-        )
-
+def _summarize_interval_cache(
+    *,
+    interval_df: pd.DataFrame,
+    intervals: list[tuple[str, str]],
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
+) -> dict[str, object]:
     pathogen_values = {str(value) for value in pathogens}
     antibiotic_values = {str(value) for value in antibiotics}
+    pathogen_count = len(pathogen_values)
+    antibiotic_count = len(antibiotic_values)
+    expected_rows = pathogen_count * antibiotic_count * len(intervals)
+    if interval_df.empty or not intervals:
+        return {
+            "intervals": intervals,
+            "expected_rows": expected_rows,
+            "cached_rows": 0,
+            "missing_rows": expected_rows,
+            "cached_pct": (0.0 if expected_rows else 100.0),
+            "unique_pairs": 0,
+            "unique_pathogens": 0,
+            "unique_antibiotics": 0,
+        }
+
     target_intervals = pd.DataFrame(intervals, columns=["start_date", "end_date"])
-    scoped_df = existing_df.copy()
-    scoped_df["pathogen"] = scoped_df["pathogen"].astype(str)
-    scoped_df["antibiotic"] = scoped_df["antibiotic"].astype(str)
-    scoped_df = scoped_df.loc[
-        scoped_df["pathogen"].isin(pathogen_values) & scoped_df["antibiotic"].isin(antibiotic_values)
+    work = interval_df.copy()
+    work["pathogen"] = work["pathogen"].astype(str)
+    work["antibiotic"] = work["antibiotic"].astype(str)
+    scoped = work.loc[
+        work["pathogen"].isin(pathogen_values) & work["antibiotic"].isin(antibiotic_values)
     ].merge(target_intervals, on=["start_date", "end_date"], how="inner")
-    return scoped_df.reset_index(drop=True)
+    cached_rows = len(scoped)
+    return {
+        "intervals": intervals,
+        "expected_rows": expected_rows,
+        "cached_rows": cached_rows,
+        "missing_rows": max(expected_rows - cached_rows, 0),
+        "cached_pct": (cached_rows / expected_rows * 100) if expected_rows else 100.0,
+        "unique_pairs": scoped[["pathogen", "antibiotic"]].drop_duplicates().shape[0],
+        "unique_pathogens": scoped["pathogen"].astype(str).nunique(),
+        "unique_antibiotics": scoped["antibiotic"].astype(str).nunique(),
+    }
+
+
+def _summarize_background_cache(
+    *,
+    df: pd.DataFrame,
+    key_col: str,
+    entities: Sequence[str],
+    start_year: int,
+    end_year: int,
+) -> dict[str, object]:
+    entity_values = {str(value) for value in entities}
+    entity_count = len(entity_values)
+    expected_rows = entity_count * (end_year - start_year + 1)
+    if df.empty:
+        return {
+            "cached_rows": 0,
+            "expected_rows": expected_rows,
+            "missing_rows": expected_rows,
+            "cached_pct": (0.0 if expected_rows else 100.0),
+            "years": (start_year, end_year),
+            "warning": None,
+        }
+
+    work = df.copy()
+    work[key_col] = work[key_col].astype(str)
+    work["year"] = pd.to_numeric(work["year"], errors="coerce")
+    work = work.dropna(subset=["year"]).copy()
+    work["year"] = work["year"].astype(int)
+    scoped = work.loc[
+        work[key_col].isin(entity_values) & work["year"].between(start_year, end_year),
+        [key_col, "year"],
+    ].drop_duplicates()
+    cached_rows = len(scoped)
+    warning = None
+    if cached_rows > expected_rows:
+        warning = (
+            f"cached rows exceed expected rows for {start_year}-{end_year}; "
+            "the cache likely includes duplicates or was built for a different entity set."
+        )
+    return {
+        "cached_rows": cached_rows,
+        "expected_rows": expected_rows,
+        "missing_rows": max(expected_rows - cached_rows, 0),
+        "cached_pct": (cached_rows / expected_rows * 100) if expected_rows else 100.0,
+        "years": (start_year, end_year),
+        "warning": warning,
+    }
+
+
+def build_collection_preflight_summary(
+    *,
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
+    min_date: str,
+    max_date: str,
+    interval_year_gap: int,
+    intervals_output_path: str | Path,
+    yearly_pair_pmid_path: str | Path,
+    yearly_output_path: str | Path,
+    pathogen_bg_path: str | Path,
+    antibiotic_bg_path: str | Path,
+    background_start_year: int,
+    background_end_year: int,
+    total_min_date: str | None = None,
+    total_max_date: str | None = None,
+    total_background_start_year: int | None = None,
+    total_background_end_year: int | None = None,
+) -> dict[str, object]:
+    """Summarize cached yearly-collection artifacts for a given run window."""
+    run_intervals = _build_interval_windows(min_date, max_date, interval_year_gap)
+    total_min_date = total_min_date or min_date
+    total_max_date = total_max_date or max_date
+    total_background_start_year = (
+        background_start_year if total_background_start_year is None else total_background_start_year
+    )
+    total_background_end_year = (
+        background_end_year if total_background_end_year is None else total_background_end_year
+    )
+
+    intervals_output_path = Path(intervals_output_path)
+    interval_df = pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date"])
+    if intervals_output_path.exists():
+        interval_df = pd.read_parquet(
+            intervals_output_path,
+            columns=["pathogen", "antibiotic", "start_date", "end_date"],
+        )
+    run_interval_summary = _summarize_interval_cache(
+        interval_df=interval_df,
+        intervals=run_intervals,
+        pathogens=pathogens,
+        antibiotics=antibiotics,
+    )
+    total_interval_summary = _summarize_interval_cache(
+        interval_df=interval_df,
+        intervals=_build_interval_windows(total_min_date, total_max_date, interval_year_gap),
+        pathogens=pathogens,
+        antibiotics=antibiotics,
+    )
+
+    yearly_rows = 0
+    yearly_year_min = None
+    yearly_year_max = None
+    yearly_rows_in_run_window = 0
+    yearly_rows_in_total_window = 0
+    yearly_output_path = Path(yearly_output_path)
+    if yearly_output_path.exists():
+        yearly_df = pd.read_parquet(yearly_output_path, columns=["year"])
+        yearly_rows = len(yearly_df)
+        if not yearly_df.empty:
+            years = pd.to_numeric(yearly_df["year"], errors="coerce").dropna().astype(int)
+            if not years.empty:
+                yearly_year_min = int(years.min())
+                yearly_year_max = int(years.max())
+                run_year_start = datetime.strptime(min_date, "%Y/%m/%d").year
+                run_year_end = datetime.strptime(max_date, "%Y/%m/%d").year
+                total_year_start = datetime.strptime(total_min_date, "%Y/%m/%d").year
+                total_year_end = datetime.strptime(total_max_date, "%Y/%m/%d").year
+                yearly_rows_in_run_window = int(years.between(run_year_start, run_year_end).sum())
+                yearly_rows_in_total_window = int(years.between(total_year_start, total_year_end).sum())
+
+    yearly_pair_pmid_rows = 0
+    yearly_pair_pmid_rows_in_run_window = 0
+    yearly_pair_pmid_rows_in_total_window = 0
+    yearly_pair_pmid_path = Path(yearly_pair_pmid_path)
+    if yearly_pair_pmid_path.exists():
+        pair_df = pd.read_parquet(yearly_pair_pmid_path, columns=["pmid", "start_date", "end_date"])
+        yearly_pair_pmid_rows = len(pair_df)
+        if not pair_df.empty:
+            pair_df = pair_df.copy()
+            pair_df["start_year"] = pd.to_datetime(pair_df["start_date"], errors="coerce").dt.year
+            pair_df["end_year"] = pd.to_datetime(pair_df["end_date"], errors="coerce").dt.year
+            run_year_start = datetime.strptime(min_date, "%Y/%m/%d").year
+            run_year_end = datetime.strptime(max_date, "%Y/%m/%d").year
+            total_year_start = datetime.strptime(total_min_date, "%Y/%m/%d").year
+            total_year_end = datetime.strptime(total_max_date, "%Y/%m/%d").year
+            yearly_pair_pmid_rows_in_run_window = int(
+                (
+                    pair_df["start_year"].ge(run_year_start).fillna(False)
+                    & pair_df["end_year"].le(run_year_end).fillna(False)
+                ).sum()
+            )
+            yearly_pair_pmid_rows_in_total_window = int(
+                (
+                    pair_df["start_year"].ge(total_year_start).fillna(False)
+                    & pair_df["end_year"].le(total_year_end).fillna(False)
+                ).sum()
+            )
+
+    pathogen_bg_path = Path(pathogen_bg_path)
+    pathogen_bg_df = pd.DataFrame(columns=["pathogen", "year"])
+    if pathogen_bg_path.exists():
+        pathogen_bg_df = pd.read_parquet(pathogen_bg_path, columns=["pathogen", "year"])
+
+    antibiotic_bg_path = Path(antibiotic_bg_path)
+    antibiotic_bg_df = pd.DataFrame(columns=["antibiotic", "year"])
+    if antibiotic_bg_path.exists():
+        antibiotic_bg_df = pd.read_parquet(antibiotic_bg_path, columns=["antibiotic", "year"])
+
+    run_pathogen_bg_summary = _summarize_background_cache(
+        df=pathogen_bg_df,
+        key_col="pathogen",
+        entities=pathogens,
+        start_year=background_start_year,
+        end_year=background_end_year,
+    )
+    total_pathogen_bg_summary = _summarize_background_cache(
+        df=pathogen_bg_df,
+        key_col="pathogen",
+        entities=pathogens,
+        start_year=total_background_start_year,
+        end_year=total_background_end_year,
+    )
+    run_antibiotic_bg_summary = _summarize_background_cache(
+        df=antibiotic_bg_df,
+        key_col="antibiotic",
+        entities=antibiotics,
+        start_year=background_start_year,
+        end_year=background_end_year,
+    )
+    total_antibiotic_bg_summary = _summarize_background_cache(
+        df=antibiotic_bg_df,
+        key_col="antibiotic",
+        entities=antibiotics,
+        start_year=total_background_start_year,
+        end_year=total_background_end_year,
+    )
+
+    return {
+        "run_window": {
+            "min_date": min_date,
+            "max_date": max_date,
+            "intervals": run_interval_summary["intervals"],
+            "interval_cache": run_interval_summary,
+            "yearly_rows": yearly_rows_in_run_window,
+            "yearly_pair_pmid_rows": yearly_pair_pmid_rows_in_run_window,
+            "pathogen_bg_cache": run_pathogen_bg_summary,
+            "antibiotic_bg_cache": run_antibiotic_bg_summary,
+        },
+        "total_window": {
+            "min_date": total_min_date,
+            "max_date": total_max_date,
+            "intervals": total_interval_summary["intervals"],
+            "interval_cache": total_interval_summary,
+            "yearly_rows": yearly_rows_in_total_window,
+            "yearly_pair_pmid_rows": yearly_pair_pmid_rows_in_total_window,
+            "pathogen_bg_cache": total_pathogen_bg_summary,
+            "antibiotic_bg_cache": total_antibiotic_bg_summary,
+        },
+        "yearly_rows": yearly_rows,
+        "yearly_year_min": yearly_year_min,
+        "yearly_year_max": yearly_year_max,
+        "yearly_pair_pmid_rows": yearly_pair_pmid_rows,
+    }
+
+
+def collect_yearly_background_counts(
+    *,
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
+    bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
+    start_year: int,
+    end_year: int,
+    email: str,
+    pathogen_output_path: str | Path = "pathogen_tiab_counts.parquet",
+    antibiotic_output_path: str | Path = "antibiotic_tiab_counts.parquet",
+    save_every: int = 200,
+    progress_every: int = 50,
+    fetch_threshold: int = 9500,
+    metadata_batch_size: int = 200,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Collect yearly background publication counts for pathogens and antibiotics."""
+    pathogen_counts_df = count_pmids_per_year_for_pathogens_resumable(
+        pathogens=pathogens,
+        bacteria_synonym_df=bacteria_synonym_df,
+        start_year=start_year,
+        end_year=end_year,
+        email=email,
+        output_path=str(pathogen_output_path),
+        save_every=save_every,
+        progress_every=progress_every,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
+    pathogen_counts_df = clean_background_counts(pathogen_counts_df, key_col="pathogen")
+    atomic_write_parquet(pathogen_counts_df, pathogen_output_path, index=False)
+    antibiotic_counts_df = count_pmids_per_year_for_antibiotics_resumable(
+        antibiotics=antibiotics,
+        antibiotic_synonym_df=antibiotic_synonym_df,
+        start_year=start_year,
+        end_year=end_year,
+        email=email,
+        output_path=str(antibiotic_output_path),
+        save_every=save_every,
+        progress_every=progress_every,
+        fetch_threshold=fetch_threshold,
+        metadata_batch_size=metadata_batch_size,
+    )
+    antibiotic_counts_df = clean_background_counts(antibiotic_counts_df, key_col="antibiotic")
+    atomic_write_parquet(antibiotic_counts_df, antibiotic_output_path, index=False)
+    return pathogen_counts_df, antibiotic_counts_df
+
+
+def collect_yearly_amr_dataset(
+    *,
+    pathogens: Sequence[str],
+    antibiotics: Sequence[str],
+    bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
+    min_date: str,
+    max_date: str,
+    email: str,
+    interval_year_gap: int = 5,
+    intervals_output_path: str | Path = "pmids_results.parquet",
+    yearly_pair_pmid_output_path: str | Path = "yearly_pair_pmid.parquet",
+    metadata_cache_path: str | Path = "pubmed_pmid_metadata.parquet",
+    output_path: str | Path = "yearly_amr_pairs.parquet",
+    save_every: int = 50,
+    extra_keywords: Sequence[str] | None = None,
+    full_fetch_threshold: int = 9500,
+    summary_batch_size: int = 200,
+    metadata_batch_size: int = 200,
+    metadata_checkpoint_every_batches: int = 10,
+    collection_verbose: int = 1,
+    collection_progress_every: int = 200,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build the canonical yearly pair dataset from interval PMIDs and publication dates.
+
+    Returns ``(yearly_df, pair_pmid_df, enriched_pair_pmid_df)``.
+    """
+    interval_df = fetch_pmids_intervals(
+        pathogens=pathogens,
+        antibiotics=antibiotics,
+        bacteria_synonym_df=bacteria_synonym_df,
+        antibiotic_synonym_df=antibiotic_synonym_df,
+        min_date=min_date,
+        max_date=max_date,
+        year_gap=interval_year_gap,
+        email=email,
+        parquet_path=str(intervals_output_path),
+        save_every=save_every,
+        extra_keywords=extra_keywords,
+        full_fetch_threshold=full_fetch_threshold,
+        summary_batch_size=summary_batch_size,
+        verbose=collection_verbose,
+        progress_every=collection_progress_every,
+    )
+
+    pair_pmid_df_raw = explode_positive_pair_pmids(interval_df)
+    if Path(yearly_pair_pmid_output_path).exists():
+        existing_pair_pmid_df = clean_pair_pmid_df(pd.read_parquet(yearly_pair_pmid_output_path))
+    else:
+        existing_pair_pmid_df = pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid"])
+
+    new_pair_pmid_df = _extract_new_pair_pmids(existing_pair_pmid_df, pair_pmid_df_raw)
+    if not new_pair_pmid_df.empty:
+        new_pair_pmid_df = new_pair_pmid_df.copy()
+        new_pair_pmid_df["collection_run_min_date"] = min_date
+        new_pair_pmid_df["collection_run_max_date"] = max_date
+    pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, new_pair_pmid_df)
+    Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_parquet(pair_pmid_df, yearly_pair_pmid_output_path, index=False)
+
+    metadata_df = refresh_pubmed_metadata_cache(
+        new_pair_pmid_df["pmid"].astype(str).tolist() if not new_pair_pmid_df.empty else [],
+        cache_path=metadata_cache_path,
+        email=email,
+        batch_size=metadata_batch_size,
+        checkpoint_every_batches=metadata_checkpoint_every_batches,
+    )
+    enriched_df = (
+        attach_pubmed_metadata(new_pair_pmid_df, metadata_df)
+        if not new_pair_pmid_df.empty
+        else pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"])
+    )
+    yearly_delta_df = (
+        aggregate_pair_counts_by_year(enriched_df)
+        if not enriched_df.empty
+        else pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+    )
+    if not yearly_delta_df.empty:
+        yearly_delta_df = yearly_delta_df.copy()
+        yearly_delta_df["collection_run_min_date"] = min_date
+        yearly_delta_df["collection_run_max_date"] = max_date
+    if Path(output_path).exists():
+        existing_yearly_df = clean_yearly_pair_counts(pd.read_parquet(output_path))
+    else:
+        existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+    yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_parquet(yearly_df, output_path, index=False)
+    return yearly_df, pair_pmid_df, enriched_df
 
 
 __all__ = [
-    "count_pmids_per_year_for_pathogens",
-    "count_pmids_per_year_for_antibiotics",
-    "fetch_pmids_by_date_and_keywords",
-    "fetch_pmids_intervals",
+    "build_collection_preflight_summary",
+    "collect_yearly_background_counts",
+    "collect_yearly_amr_dataset",
 ]
-
-
-def _year_count_rows(entity_col: str, entity_value: str, start_year: int, end_year: int, year_to_count: dict[int, int]) -> list[dict]:
-    return [
-        {entity_col: entity_value, "year": year, "count": int(year_to_count.get(year, 0))}
-        for year in range(start_year, end_year + 1)
-    ]
-
-
-def _count_pmids_per_year_via_windows(
-    *,
-    entity_value: str,
-    entity_col: str,
-    clause: str,
-    start_year: int,
-    end_year: int,
-    email: str,
-    metadata_cache: dict[str, dict],
-    fetch_threshold: int,
-    metadata_batch_size: int,
-) -> list[dict]:
-    """Count yearly PMIDs by recursively querying date windows and partitioning locally when feasible."""
-    if start_year > end_year:
-        return []
-
-    min_date = f"{start_year}/01/01"
-    max_date = f"{end_year}/12/31"
-    _, total_count, webenv, query_key = search_term_clause(
-        clause,
-        min_date=min_date,
-        max_date=max_date,
-        email=email,
-    )
-
-    if total_count is None:
-        raise RuntimeError(
-            f"PubMed background-count search failed for {entity_col}={entity_value!r}, "
-            f"years={start_year}-{end_year}; no zero rows were written."
-        )
-
-    if total_count == 0:
-        return _year_count_rows(entity_col, entity_value, start_year, end_year, {})
-
-    if start_year == end_year:
-        return [{entity_col: entity_value, "year": start_year, "count": int(total_count)}]
-
-    if total_count <= fetch_threshold and webenv and query_key:
-        query = f'({clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
-        pmids_all = list(dict.fromkeys(retrieve_pmids(query, webenv, query_key, total_count)))
-        update_metadata_cache(pmids_all, metadata_cache, email=email, batch_size=metadata_batch_size)
-        year_to_count: dict[int, int] = {}
-        for pmid in pmids_all:
-            meta = get_metadata(pmid, metadata_cache)
-            pub_date = meta["date"]
-            if not pub_date:
-                continue
-            pub_year = int(pub_date.year)
-            if start_year <= pub_year <= end_year:
-                year_to_count[pub_year] = year_to_count.get(pub_year, 0) + 1
-        return _year_count_rows(entity_col, entity_value, start_year, end_year, year_to_count)
-
-    mid_year = (start_year + end_year) // 2
-    left_rows = _count_pmids_per_year_via_windows(
-        entity_value=entity_value,
-        entity_col=entity_col,
-        clause=clause,
-        start_year=start_year,
-        end_year=mid_year,
-        email=email,
-        metadata_cache=metadata_cache,
-        fetch_threshold=fetch_threshold,
-        metadata_batch_size=metadata_batch_size,
-    )
-    right_rows = _count_pmids_per_year_via_windows(
-        entity_value=entity_value,
-        entity_col=entity_col,
-        clause=clause,
-        start_year=mid_year + 1,
-        end_year=end_year,
-        email=email,
-        metadata_cache=metadata_cache,
-        fetch_threshold=fetch_threshold,
-        metadata_batch_size=metadata_batch_size,
-    )
-    return left_rows + right_rows
-
-
-def _count_pmids_per_year_resumable(
-    *,
-    entity_values: Sequence[str],
-    entity_col: str,
-    clause_builder,
-    output_path: str,
-    start_year: int,
-    end_year: int,
-    email: str,
-    save_every: int,
-    progress_every: int,
-    fetch_threshold: int,
-    metadata_batch_size: int,
-) -> pd.DataFrame:
-    import os
-
-    entity_values = [str(v) for v in entity_values]
-    if len(entity_values) == 0:
-        return pd.DataFrame(columns=[entity_col, "year", "count"])
-
-    if os.path.exists(output_path):
-        try:
-            existing = pd.read_parquet(output_path)
-        except Exception:
-            try:
-                existing = pd.read_csv(output_path)
-            except Exception:
-                existing = pd.DataFrame(columns=[entity_col, "year", "count"])
-    else:
-        existing = pd.DataFrame(columns=[entity_col, "year", "count"])
-
-    if not {entity_col, "year", "count"}.issubset(existing.columns):
-        existing = pd.DataFrame(columns=[entity_col, "year", "count"])
-
-    existing[entity_col] = existing[entity_col].astype(str)
-    existing["year"] = pd.to_numeric(existing["year"], errors="coerce").astype("Int64")
-
-    tasks: list[tuple[str, int, int]] = []
-    years = list(range(start_year, end_year + 1))
-    for entity_value in entity_values:
-        completed_years = set(
-            existing.loc[existing[entity_col] == entity_value, "year"].dropna().astype(int).tolist()
-        )
-        missing_years = [year for year in years if year not in completed_years]
-        if not missing_years:
-            continue
-        window_start = missing_years[0]
-        prev_year = missing_years[0]
-        for year in missing_years[1:]:
-            if year == prev_year + 1:
-                prev_year = year
-                continue
-            tasks.append((entity_value, window_start, prev_year))
-            window_start = year
-            prev_year = year
-        tasks.append((entity_value, window_start, prev_year))
-
-    total = len(tasks)
-    if total == 0:
-        return existing.sort_values([entity_col, "year"]).reset_index(drop=True)
-
-    results: list[dict] = []
-    metadata_cache: dict[str, dict] = {}
-
-    import time
-    from collections import deque
-
-    recent_progress = deque()
-    RECENT_WINDOW_SEC = 900
-
-    try:
-        for idx, (entity_value, window_start, window_end) in enumerate(tasks, start=1):
-            clause = clause_builder(entity_value)
-            window_rows = _count_pmids_per_year_via_windows(
-                entity_value=entity_value,
-                entity_col=entity_col,
-                clause=clause,
-                start_year=window_start,
-                end_year=window_end,
-                email=email,
-                metadata_cache=metadata_cache,
-                fetch_threshold=fetch_threshold,
-                metadata_batch_size=metadata_batch_size,
-            )
-            results.extend(window_rows)
-
-            if progress_every and (idx % progress_every == 0):
-                now = time.time()
-                recent_progress.append((now, idx))
-                cutoff = now - RECENT_WINDOW_SEC
-                while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
-                    recent_progress.popleft()
-                eta_str = "[ETA --]"
-                if len(recent_progress) >= 2:
-                    dt = recent_progress[-1][0] - recent_progress[0][0]
-                    dp = recent_progress[-1][1] - recent_progress[0][1]
-                    if dt > 0 and dp > 0:
-                        rate = dp / dt
-                        remaining = max(0, total - idx)
-                        eta_sec = remaining / rate if rate > 0 else 0
-                        eta_h = int(eta_sec // 3600)
-                        eta_m = int((eta_sec % 3600) // 60)
-                        eta_str = f"[ETA {eta_h}h {eta_m} min]"
-                print(
-                    f"Progress: {idx}/{total} windows processed… {eta_str} | "
-                    f"{entity_col}={entity_value} | years={window_start}-{window_end}"
-                )
-
-            if save_every and (len(results) >= save_every):
-                batch_df = pd.DataFrame(results)
-                combined = pd.concat([existing, batch_df], ignore_index=True)
-                combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
-                atomic_write_parquet(combined, output_path, index=False)
-                existing = combined
-                results = []
-    except KeyboardInterrupt:
-        print("Interrupted. Saving partial results…")
-    finally:
-        if results:
-            batch_df = pd.DataFrame(results)
-            combined = pd.concat([existing, batch_df], ignore_index=True)
-            combined = combined.drop_duplicates(subset=[entity_col, "year"], keep="last")
-            try:
-                atomic_write_parquet(combined, output_path, index=False)
-            except Exception:
-                combined.to_csv(output_path, index=False)
-            existing = combined
-
-    return existing.sort_values([entity_col, "year"]).reset_index(drop=True)
-
-
-def count_pmids_per_year_for_pathogens_resumable(
-    pathogens: Sequence[str],
-    bacteria_synonym_df: pd.DataFrame,
-    *,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    email: str = "your_email@example.com",
-    output_path: str = "pathogen_tiab_counts.parquet",
-    save_every: int = 200,
-    progress_every: int = 50,
-    fetch_threshold: int = 9500,
-    metadata_batch_size: int = 200,
-) -> pd.DataFrame:
-    """Resumable variant of yearly PMID counts per pathogen (TIAB + synonyms).
-
-    - Skips (pathogen, year) pairs already present in ``output_path``.
-    - Periodically merges and saves results; safe to interrupt and resume.
-    - Deduplicates on (pathogen, year) when saving.
-    """
-    pathogens = list(pathogens)
-    if len(pathogens) == 0:
-        return pd.DataFrame(columns=["pathogen", "year", "count"])
-
-    if start_year is None:
-        start_year = 1950
-    if end_year is None:
-        end_year = datetime.now().year
-
-    return _count_pmids_per_year_resumable(
-        entity_values=pathogens,
-        entity_col="pathogen",
-        clause_builder=lambda pathogen: build_pathogen_tiab_query(pathogen, bacteria_synonym_df),
-        output_path=output_path,
-        start_year=start_year,
-        end_year=end_year,
-        email=email,
-        save_every=save_every,
-        progress_every=progress_every,
-        fetch_threshold=fetch_threshold,
-        metadata_batch_size=metadata_batch_size,
-    )
-
-
-def count_pmids_per_year_for_antibiotics_resumable(
-    antibiotics: Sequence[str],
-    antibiotic_synonym_df: pd.DataFrame | None = None,
-    *,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    email: str = "your_email@example.com",
-    output_path: str = "antibiotic_tiab_counts.parquet",
-    save_every: int = 200,
-    progress_every: int = 50,
-    fetch_threshold: int = 9500,
-    metadata_batch_size: int = 200,
-) -> pd.DataFrame:
-    """Resumable yearly PMID counts per antibiotic (Title/Abstract; synonym-aware).
-
-    - Uses canonical antibiotic names plus spelling/synonym variants when provided.
-    - Skips already-processed (antibiotic, year) pairs from ``output_path``.
-    - Saves incrementally and resumes safely after interruption.
-    """
-    antibiotics = list(antibiotics)
-    if len(antibiotics) == 0:
-        return pd.DataFrame(columns=["antibiotic", "year", "count"])
-
-    if start_year is None:
-        start_year = 1950
-    if end_year is None:
-        end_year = datetime.now().year
-
-    return _count_pmids_per_year_resumable(
-        entity_values=antibiotics,
-        entity_col="antibiotic",
-        clause_builder=lambda antibiotic: build_antibiotic_query(
-            antibiotic,
-            antibiotic_synonym_df,
-            field="Title/Abstract",
-        ),
-        output_path=output_path,
-        start_year=start_year,
-        end_year=end_year,
-        email=email,
-        save_every=save_every,
-        progress_every=progress_every,
-        fetch_threshold=fetch_threshold,
-        metadata_batch_size=metadata_batch_size,
-    )

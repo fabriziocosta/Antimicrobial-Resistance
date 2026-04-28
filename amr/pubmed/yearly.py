@@ -2,39 +2,21 @@
 
 from __future__ import annotations
 
-import ast
-from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import pandas as pd
 
 from amr.io import atomic_write_parquet
+from amr.validation import (
+    clean_enriched_pair_pmid_df,
+    clean_pair_pmid_df,
+    clean_pubmed_metadata_df,
+    clean_yearly_pair_counts,
+    coerce_pmid_list,
+)
+from .pmids import normalize_pmids
 from .search import fetch_pub_metadata
-
-
-def _coerce_pmid_list(value: object) -> list[str]:
-    """Normalize a stored PMID collection into a list of string PMIDs."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return []
-        if text.startswith("[") and text.endswith("]"):
-            try:
-                parsed = ast.literal_eval(text)
-            except (SyntaxError, ValueError):
-                parsed = [text]
-            return [str(item).strip() for item in parsed if str(item).strip()]
-        return [text]
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray, dict)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if pd.api.types.is_scalar(value) and pd.isna(value):
-        return []
-    return [str(value).strip()]
 
 
 def explode_positive_pair_pmids(positive_df: pd.DataFrame) -> pd.DataFrame:
@@ -45,15 +27,9 @@ def explode_positive_pair_pmids(positive_df: pd.DataFrame) -> pd.DataFrame:
         raise KeyError(f"positive_df is missing required columns: {sorted(missing)}")
 
     work = positive_df.loc[:, ["pathogen", "antibiotic", "start_date", "end_date", "pmids"]].copy()
-    work["pmids"] = work["pmids"].apply(_coerce_pmid_list)
+    work["pmids"] = work["pmids"].apply(coerce_pmid_list)
     pair_pmid_df = work.explode("pmids", ignore_index=True).rename(columns={"pmids": "pmid"})
-    pair_pmid_df["pmid"] = pair_pmid_df["pmid"].astype(str).str.strip()
-    pair_pmid_df = pair_pmid_df.loc[pair_pmid_df["pmid"] != ""].copy()
-    pair_pmid_df = pair_pmid_df.drop_duplicates(
-        subset=["pathogen", "antibiotic", "pmid"],
-        keep="first",
-    ).reset_index(drop=True)
-    return pair_pmid_df
+    return clean_pair_pmid_df(pair_pmid_df)
 
 
 def load_pubmed_metadata_cache(cache_path: str | Path) -> pd.DataFrame:
@@ -67,25 +43,14 @@ def load_pubmed_metadata_cache(cache_path: str | Path) -> pd.DataFrame:
     for col in expected_cols:
         if col not in cache_df.columns:
             cache_df[col] = pd.NA
-    cache_df = cache_df.loc[:, expected_cols].copy()
-    cache_df["pmid"] = cache_df["pmid"].astype(str)
-    cache_df["pub_date"] = pd.to_datetime(cache_df["pub_date"], errors="coerce")
-    cache_df["pub_year"] = pd.to_numeric(cache_df["pub_year"], errors="coerce").astype("Int64")
-    cache_df["venue"] = cache_df["venue"].fillna("Unknown").astype(str)
-    cache_df = cache_df.drop_duplicates(subset=["pmid"], keep="last").reset_index(drop=True)
-    return cache_df
+    return clean_pubmed_metadata_df(cache_df.loc[:, expected_cols])
 
 
 def save_pubmed_metadata_cache(cache_df: pd.DataFrame, cache_path: str | Path) -> None:
     """Persist PMID metadata cache to parquet."""
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    work = cache_df.copy()
-    work["pmid"] = work["pmid"].astype(str)
-    work["pub_date"] = pd.to_datetime(work["pub_date"], errors="coerce")
-    work["pub_year"] = pd.to_numeric(work["pub_year"], errors="coerce").astype("Int64")
-    work["venue"] = work["venue"].fillna("Unknown").astype(str)
-    work = work.drop_duplicates(subset=["pmid"], keep="last").sort_values("pmid").reset_index(drop=True)
+    work = clean_pubmed_metadata_df(cache_df)
     atomic_write_parquet(work, cache_path, index=False)
 
 
@@ -103,7 +68,7 @@ def refresh_pubmed_metadata_cache(
 
     cache_df = load_pubmed_metadata_cache(cache_path)
     cached_pmids = set(cache_df["pmid"].astype(str))
-    unique_pmids = [str(pmid) for pmid in pd.Index(pmids).dropna().astype(str).unique()]
+    unique_pmids = normalize_pmids(pd.Index(pmids).dropna().tolist())
     missing_pmids = [pmid for pmid in unique_pmids if pmid not in cached_pmids]
 
     if not missing_pmids:
@@ -158,12 +123,9 @@ def attach_pubmed_metadata(
     if missing_meta_cols:
         raise KeyError(f"metadata_df is missing required columns: {sorted(missing_meta_cols)}")
 
-    work = pair_pmid_df.copy()
-    work["pmid"] = work["pmid"].astype(str)
+    work = clean_pair_pmid_df(pair_pmid_df)
     meta = metadata_df.loc[:, ["pmid", "pub_date", "pub_year", "venue"]].copy()
-    meta["pmid"] = meta["pmid"].astype(str)
-    meta["pub_date"] = pd.to_datetime(meta["pub_date"], errors="coerce")
-    meta["pub_year"] = pd.to_numeric(meta["pub_year"], errors="coerce").astype("Int64")
+    meta = clean_pubmed_metadata_df(meta)
     merged = work.merge(meta, on="pmid", how="left")
     merged["interval_start_year"] = pd.to_datetime(merged["start_date"], errors="coerce").dt.year.astype("Int64")
     merged["interval_end_year"] = pd.to_datetime(merged["end_date"], errors="coerce").dt.year.astype("Int64")
@@ -182,10 +144,7 @@ def aggregate_pair_counts_by_year(enriched_df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise KeyError(f"enriched_df is missing required columns: {sorted(missing)}")
 
-    work = enriched_df.copy()
-    work["pmid"] = work["pmid"].astype(str)
-    work["pub_year"] = pd.to_numeric(work["pub_year"], errors="coerce").astype("Int64")
-    work = work.dropna(subset=["pub_year"]).copy()
+    work = clean_enriched_pair_pmid_df(enriched_df)
     work["year"] = work["pub_year"].astype(int)
 
     yearly_df = (
@@ -197,7 +156,7 @@ def aggregate_pair_counts_by_year(enriched_df: pd.DataFrame) -> pd.DataFrame:
         .sort_values(["pathogen", "antibiotic", "year"])
         .reset_index(drop=True)
     )
-    return yearly_df
+    return clean_yearly_pair_counts(yearly_df)
 
 
 def summarize_metadata_coverage(enriched_df: pd.DataFrame) -> pd.DataFrame:

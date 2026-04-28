@@ -17,6 +17,7 @@ from amr.config import (
     EUTILS_BACKOFF_FACTOR as BACKOFF_FACTOR,
     EUTILS_RATE_LIMIT_DELAY as RATE_LIMIT_DELAY,
 )
+from .pmids import normalize_pmids
 from .queries import build_antibiotic_pathogen_query
 
 
@@ -277,6 +278,7 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
 def fetch_pub_metadata(pmids: Sequence[str], email: str = "your_email@example.com", batch_size: int = 200):
     """Fetch publication dates and venues for a list of PMIDs."""
     _configure_entrez(email)
+    pmids = normalize_pmids(pmids)
     date_map: Dict[str, datetime] = {}
     venue_map: Dict[str, str] = {}
 

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from amr.pubmed.yearly import explode_positive_pair_pmids
 from amr.filtering import (
     AMR_CATEGORY_COLUMNS,
     build_yearly_screened_pairs,
@@ -62,6 +63,21 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(list(out.columns), ["pmid", "pathogen", "antibiotic", "year"])
         self.assertEqual(len(out), 3)
         self.assertEqual(set(out["pmid"]), {"111", "222", "333"})
+
+    def test_explode_positive_pair_pmids_drops_nan_like_pmids(self) -> None:
+        source = pd.DataFrame(
+            {
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "start_date": ["2020/01/01"],
+                "end_date": ["2024/12/31"],
+                "pmids": [["111", float("nan"), "nan", None, "PMID:222"]],
+            }
+        )
+
+        out = explode_positive_pair_pmids(source)
+
+        self.assertEqual(out["pmid"].tolist(), ["111", "222"])
 
     @patch("amr.filtering.fetch_pubmed_abstracts_batch")
     @patch("amr.filtering.fetch_pubmed_abstract")

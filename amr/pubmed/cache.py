@@ -10,6 +10,8 @@ from typing import Dict, Sequence
 import pandas as pd
 
 from amr.io import atomic_write_parquet
+from amr.validation import clean_interval_results
+from .pmids import normalize_pmids
 from .search import fetch_pub_metadata
 
 
@@ -20,15 +22,11 @@ def merge_with_existing(new_df: pd.DataFrame, parquet_path: str = "pmids_results
         for df in (old_df, new_df):
             if "venue_histogram" not in df.columns:
                 df["venue_histogram"] = json.dumps({})
-        merged_df = pd.concat([old_df, new_df], ignore_index=True)
-        merged_df = merged_df.drop_duplicates(
-            subset=["pathogen", "antibiotic", "start_date", "end_date"],
-            keep="last",
-        )
+        merged_df = clean_interval_results(pd.concat([old_df, new_df], ignore_index=True))
     else:
         if "venue_histogram" not in new_df.columns:
             new_df["venue_histogram"] = json.dumps({})
-        merged_df = new_df
+        merged_df = clean_interval_results(new_df)
 
     for attempt in range(3):
         try:
@@ -43,7 +41,7 @@ def merge_with_existing(new_df: pd.DataFrame, parquet_path: str = "pmids_results
 
 def update_metadata_cache(pmids: Sequence[str], metadata_cache: Dict[str, dict], email: str = "your_email@example.com", batch_size: int = 200):
     """Populate metadata cache with publication date and venue details."""
-    missing = [pmid for pmid in pmids if pmid not in metadata_cache]
+    missing = [pmid for pmid in normalize_pmids(pmids) if pmid not in metadata_cache]
     if not missing:
         return
     date_map, venue_map = fetch_pub_metadata(missing, email=email, batch_size=batch_size)
