@@ -3,8 +3,9 @@
 This project now uses a module-first workflow with three active notebooks:
 
 1. `notebooks/00_prepare_inputs.ipynb`
-2. `notebooks/01_collect_yearly_data.ipynb`
-3. `notebooks/02_model_scientific_interest.ipynb`
+2. `notebooks/01_query_examples.ipynb`
+3. `notebooks/01_collect_yearly_data.ipynb`
+4. `notebooks/02_model_scientific_interest.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -20,6 +21,8 @@ Detailed project documents live in `docs/`:
 
 - `assets/`: static lookup inputs used by the notebooks and PubMed query builders.
 - `notebooks/`: active notebook workflow entrypoints.
+- `outputs/parquets/`: generated parquet tables and caches.
+- `outputs/figures/`: generated plots.
 - `amr/pubmed/`: PubMed query construction, Entrez retrieval, metadata, and yearly PMID transforms.
 - `amr/screening/`: LLM-assisted abstract screening and screened-pair dataset builders.
 - `amr/si/`: scientific-interest modeling, forecasting, ranking, driver summaries, and plots.
@@ -27,7 +30,7 @@ Detailed project documents live in `docs/`:
 
 ## Active Workflow
 
-Static lookup inputs live in `assets/`; generated parquet outputs stay at the project root by default.
+Static lookup inputs live in `assets/`; generated parquet outputs are written under `outputs/parquets/`.
 
 ### Notebook 0: `notebooks/00_prepare_inputs.ipynb`
 
@@ -35,6 +38,10 @@ Prepares static input assets. It downloads/validates the pathogen priority list 
 
 - `assets/antibiotic_synonym_lookup.csv`
 - `assets/antibiotic_coarsening_lookup.csv`
+
+### Notebook 1 Preview: `notebooks/01_query_examples.ipynb`
+
+Prints example PubMed queries, cache preflight summaries, and prompt templates before collection.
 
 ### Notebook 1: `notebooks/01_collect_yearly_data.ipynb`
 
@@ -71,14 +78,14 @@ Primary APIs:
 
 ## Canonical Data Contracts
 
-- `candidate_amr_pair_year_counts.parquet`
+- `outputs/parquets/candidate_amr_pair_year_counts.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
-- `yearly_amr_screened_pairs.parquet`
+- `outputs/parquets/yearly_amr_screened_pairs.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
   - Built from unified decisions, default include set: `yes` + `uncertain`
-- `yearly_si.parquet`
+- `outputs/parquets/yearly_si.parquet`
   - Includes `bg_pathogen_n`, `bg_antibiotic_n`, `expected_log_count_global`, `SI`
-- `yearly_si_ranked_future.parquet`
+- `outputs/parquets/yearly_si_ranked_future.parquet`
   - Per-pair forecast and rank-shift outputs for future SI
 
 ## Installation
@@ -119,8 +126,8 @@ The refactored pipeline is designed for yearly (or multi-year slice) updates:
 
 1. Run notebook 1 on a slice (for example `2027-2027` or `2025-2027`).
 2. Outputs merge into canonical stores:
-   - `candidate_amr_pair_year_counts.parquet`
-   - `candidate_amr_pair_pmid_links.parquet`
-   - `yearly_amr_unified_decisions.parquet`
-   - `yearly_amr_screened_pairs.parquet`
+   - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
+   - `outputs/parquets/candidate_amr_pair_pmid_links.parquet`
+   - `outputs/parquets/yearly_amr_unified_decisions.parquet`
+   - `outputs/parquets/yearly_amr_screened_pairs.parquet`
 3. Re-run notebook 2 with your chosen modeling window (for example `FIT_START_YEAR=1970`, `FIT_END_YEAR=2024`).

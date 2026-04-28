@@ -46,22 +46,26 @@ def slugify_analysis_level(analysis_level: str) -> str:
 
 
 def build_si_analysis_paths(data_dir: str | Path, analysis_level: str = "antibiotic") -> dict[str, Path]:
-    """Build SI output paths, preserving legacy filenames for individual-antibiotic analysis."""
+    """Build SI output paths under the shared generated-output directory."""
     data_dir = Path(data_dir)
-    figure_dir = data_dir / "figures"
+    output_dir = data_dir / "outputs"
+    parquet_dir = output_dir / "parquets"
+    figure_dir = output_dir / "figures"
     slug = slugify_analysis_level(analysis_level)
     is_antibiotic = slug == "antibiotic"
     return {
-        "yearly_si": data_dir / ("yearly_si.parquet" if is_antibiotic else f"yearly_si_{slug}.parquet"),
-        "rank_output": data_dir
+        "output_dir": output_dir,
+        "parquet_dir": parquet_dir,
+        "yearly_si": parquet_dir / ("yearly_si.parquet" if is_antibiotic else f"yearly_si_{slug}.parquet"),
+        "rank_output": parquet_dir
         / ("yearly_si_ranked_future.parquet" if is_antibiotic else f"yearly_si_ranked_future_{slug}.parquet"),
-        "interesting_output": data_dir
+        "interesting_output": parquet_dir
         / (
             "yearly_si_ranked_future_interesting.parquet"
             if is_antibiotic
             else f"yearly_si_ranked_future_interesting_{slug}.parquet"
         ),
-        "driver_output": data_dir
+        "driver_output": parquet_dir
         / (
             "yearly_si_driver_explanations.parquet"
             if is_antibiotic

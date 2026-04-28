@@ -13,6 +13,7 @@ EUTILS_API_KEY: str | None = os.getenv("NCBI_API_KEY") or os.getenv("EUTILS_API_
 EUTILS_RETRIES: int = 3
 EUTILS_BACKOFF_FACTOR: int = 5
 EUTILS_RATE_LIMIT_DELAY: float = 0.11 if EUTILS_API_KEY else 0.34
+EUTILS_TIMEOUT_SECONDS: float = float(os.getenv("EUTILS_TIMEOUT_SECONDS", "45"))
 
 # PubMed efetch endpoint
 PUBMED_EFETCH_URL: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -22,5 +23,6 @@ __all__ = [
     "EUTILS_RETRIES",
     "EUTILS_BACKOFF_FACTOR",
     "EUTILS_RATE_LIMIT_DELAY",
+    "EUTILS_TIMEOUT_SECONDS",
     "PUBMED_EFETCH_URL",
 ]

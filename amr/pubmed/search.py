@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import socket
 import time
 from datetime import datetime, timedelta
 from typing import Callable, Dict, Optional, Sequence, Tuple, List
@@ -16,6 +17,7 @@ from amr.config import (
     EUTILS_RETRIES as RETRIES,
     EUTILS_BACKOFF_FACTOR as BACKOFF_FACTOR,
     EUTILS_RATE_LIMIT_DELAY as RATE_LIMIT_DELAY,
+    EUTILS_TIMEOUT_SECONDS as TIMEOUT_SECONDS,
 )
 from .pmids import normalize_pmids
 from .queries import build_antibiotic_pathogen_query
@@ -35,12 +37,14 @@ MONTH_LOOKUP = {
     "nov": 11,
     "dec": 12,
 }
+NETWORK_EXCEPTIONS = (HTTPError, URLError, TimeoutError, socket.timeout)
 
 
 def _configure_entrez(email: str) -> None:
     Entrez.email = email
     if API_KEY:
         Entrez.api_key = API_KEY
+    socket.setdefaulttimeout(TIMEOUT_SECONDS)
 
 
 def _format_duration_hms(seconds: float | int) -> str:
@@ -96,7 +100,7 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int | 
                     continue
             handle.close()
             return int(record.get("Count", 0))
-        except (HTTPError, URLError) as e:
+        except NETWORK_EXCEPTIONS as e:
             delay = BACKOFF_FACTOR * (2**i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay}s...")
             time.sleep(delay)
@@ -148,7 +152,7 @@ def search_term_clause(
                 print("Warning: missing WebEnv or QueryKey — treating search as failed.")
                 return query, None, None, None
             return query, total_count, webenv, query_key
-        except (HTTPError, URLError) as e:
+        except NETWORK_EXCEPTIONS as e:
             delay = BACKOFF_FACTOR * (2**i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay} seconds...")
             time.sleep(delay)
@@ -216,7 +220,7 @@ def search_pmids(
 
             return query, total_count, webenv, query_key
 
-        except (HTTPError, URLError) as e:
+        except NETWORK_EXCEPTIONS as e:
             delay = BACKOFF_FACTOR * (2**i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay} seconds...")
             time.sleep(delay)
@@ -264,7 +268,7 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
 
                 pmids.extend(record.get("IdList", []))
                 break
-            except (HTTPError, URLError) as e:
+            except NETWORK_EXCEPTIONS as e:
                 delay = BACKOFF_FACTOR * (2**attempt)
                 print(f"Network error fetching PMIDs: {e}. Retrying in {delay}s...")
                 time.sleep(delay)
@@ -354,7 +358,7 @@ def fetch_pub_metadata(
                     batch_venue_map[pmid] = venue
                 batch_completed = True
                 break
-            except (HTTPError, URLError) as e:
+            except NETWORK_EXCEPTIONS as e:
                 delay = BACKOFF_FACTOR * (2**attempt)
                 print(f"HTTP/Network error in fetch_pub_metadata: {e}. Retrying in {delay}s...")
                 time.sleep(delay)

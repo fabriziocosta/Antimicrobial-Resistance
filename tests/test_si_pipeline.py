@@ -10,6 +10,8 @@ from amr.si import (
     build_yearly_category_counts,
     fit_predict_yearly_si_loess,
     plot_yearly_category_driver_counts,
+    plot_yearly_si_pair,
+    rank_yearly_pairs_by_future_si_shift,
     summarize_si_change_drivers,
 )
 from amr.si.core import AMR_DRIVER_CATEGORY_COLORS
@@ -23,16 +25,20 @@ from amr.pipelines.si import (
 class ScientificInterestPipelineTests(unittest.TestCase):
     def test_analysis_paths_use_format_neutral_plot_directories(self) -> None:
         paths = build_si_analysis_paths("/tmp/amr", "antibiotic")
-        self.assertEqual(paths["figure_dir"].as_posix(), "/tmp/amr/figures")
-        self.assertEqual(paths["interesting_plot_dir"].parent.name, "figures")
-        self.assertEqual(paths["driver_plot_dir"].parent.name, "figures")
+        self.assertEqual(paths["output_dir"].as_posix(), "/tmp/amr/outputs")
+        self.assertEqual(paths["parquet_dir"].as_posix(), "/tmp/amr/outputs/parquets")
+        self.assertEqual(paths["yearly_si"].as_posix(), "/tmp/amr/outputs/parquets/yearly_si.parquet")
+        self.assertEqual(paths["figure_dir"].as_posix(), "/tmp/amr/outputs/figures")
+        self.assertEqual(paths["interesting_plot_dir"].parent.as_posix(), "/tmp/amr/outputs/figures")
+        self.assertEqual(paths["driver_plot_dir"].parent.as_posix(), "/tmp/amr/outputs/figures")
         self.assertEqual(paths["interesting_plot_dir"].name, "interesting_yearly_si_plots")
         self.assertEqual(paths["driver_plot_dir"].name, "interesting_yearly_si_driver_plots")
 
         class_paths = build_si_analysis_paths("/tmp/amr", "Class")
-        self.assertEqual(class_paths["figure_dir"].as_posix(), "/tmp/amr/figures")
-        self.assertEqual(class_paths["interesting_plot_dir"].parent.name, "figures")
-        self.assertEqual(class_paths["driver_plot_dir"].parent.name, "figures")
+        self.assertEqual(class_paths["yearly_si"].as_posix(), "/tmp/amr/outputs/parquets/yearly_si_class.parquet")
+        self.assertEqual(class_paths["figure_dir"].as_posix(), "/tmp/amr/outputs/figures")
+        self.assertEqual(class_paths["interesting_plot_dir"].parent.as_posix(), "/tmp/amr/outputs/figures")
+        self.assertEqual(class_paths["driver_plot_dir"].parent.as_posix(), "/tmp/amr/outputs/figures")
         self.assertEqual(class_paths["interesting_plot_dir"].name, "interesting_yearly_si_plots_class")
         self.assertEqual(class_paths["driver_plot_dir"].name, "interesting_yearly_si_driver_plots_class")
 
@@ -88,6 +94,60 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertFalse(si_df["expected_log_count_global"].isna().any())
         self.assertFalse(si_df["SI"].isna().any())
         self.assertIn("coverage_report", si_df.attrs)
+
+    def test_rank_output_includes_latest_count_fields_for_interactive_plots(self) -> None:
+        yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
+        si_df, _, _ = build_yearly_si_dataset(
+            yearly_amr_df,
+            pathogen_bg_df,
+            antibiotic_bg_df,
+            output_path=None,
+        )
+        with NamedTemporaryFile(suffix=".parquet") as tmp_rank:
+            rank_df = rank_yearly_pairs_by_future_si_shift(
+                si_df,
+                fit_start_year=2000,
+                fit_end_year=2008,
+                num_future_years=2,
+                save_path=tmp_rank.name,
+                verbose=False,
+            )
+            saved_rank_df = pd.read_parquet(tmp_rank.name)
+
+        for col in [
+            "latest_available_count",
+            "latest_available_predicted_SI",
+            "n_count_error_years",
+            "post_fit_count_abs_pct_error_mean",
+        ]:
+            self.assertIn(col, rank_df.columns)
+            self.assertIn(col, saved_rank_df.columns)
+
+    def test_yearly_si_plot_includes_zero_reference_line(self) -> None:
+        yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
+        si_df, _, _ = build_yearly_si_dataset(
+            yearly_amr_df,
+            pathogen_bg_df,
+            antibiotic_bg_df,
+            output_path=None,
+        )
+
+        result = plot_yearly_si_pair(
+            si_df,
+            pathogen="p1",
+            antibiotic="a1",
+            fit_start_year=2000,
+            fit_end_year=2008,
+            num_additional_years=2,
+        )
+        zero_lines = [
+            line
+            for line in result["ax_si"].lines
+            if line.get_linestyle() == ":" and all(float(y) == 0.0 for y in line.get_ydata())
+        ]
+        plt.close(result["figure"])
+
+        self.assertEqual(len(zero_lines), 1)
 
     def test_build_yearly_si_dataset_warns_when_background_rows_are_dropped(self) -> None:
         yearly_amr_df = pd.DataFrame(
