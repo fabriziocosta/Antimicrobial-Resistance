@@ -592,6 +592,31 @@ def run_unified_llm_filter(
             "last_attempt_ts": str(row.last_attempt_ts) if pd.notna(row.last_attempt_ts) else "",
         }
 
+    def _candidate_key(row: object) -> tuple[str, str, str, int]:
+        return (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+
+    def _has_exhausted_failure_retries(key: tuple[str, str, str, int]) -> bool:
+        if max_failure_retries is None:
+            return False
+        existing_failure = failure_map.get(key)
+        return bool(existing_failure and int(existing_failure.get("fail_count", 0)) >= int(max_failure_retries))
+
+    progress_seen_keys = set(seen_keys)
+    skipped_existing_rows = 0
+    skipped_retry_exhausted_rows = 0
+    pending_candidate_rows = 0
+    for row in candidate_df.itertuples(index=False):
+        key = _candidate_key(row)
+        if key in progress_seen_keys:
+            skipped_existing_rows += 1
+            continue
+        if _has_exhausted_failure_retries(key):
+            skipped_retry_exhausted_rows += 1
+            progress_seen_keys.add(key)
+            continue
+        pending_candidate_rows += 1
+        progress_seen_keys.add(key)
+
     abstract_cache: dict[str, tuple[str, str]] = {}
     cache_dirty = False
     session = requests.Session()
@@ -608,8 +633,8 @@ def run_unified_llm_filter(
     if prefetch_abstracts and not dry_run:
         candidate_pmids = []
         for row in candidate_df.itertuples(index=False):
-            key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
-            if key not in seen_keys:
+            key = _candidate_key(row)
+            if key not in seen_keys and not _has_exhausted_failure_retries(key):
                 candidate_pmids.append(str(row.pmid))
         candidate_pmids = pd.Index(candidate_pmids).dropna().unique().tolist()
         missing_pmids = [pmid for pmid in candidate_pmids if pmid not in abstract_cache]
@@ -769,22 +794,24 @@ def run_unified_llm_filter(
         return out
 
     results: list[dict] = []
-    total = len(candidate_df)
+    total = pending_candidate_rows
     llm_calls_used = 0
     pending_batch: list[dict] = []
     run_started_at = time.time()
     if verbose >= 1:
-        _progress(f"[unified_filter] starting run for {total} candidate rows")
+        _progress(
+            f"[unified_filter] starting run for {total} pending candidate rows "
+            f"({len(candidate_df)} input rows; skipped {skipped_existing_rows} already complete"
+            f"{', skipped ' + str(skipped_retry_exhausted_rows) + ' retry-exhausted' if skipped_retry_exhausted_rows else ''})"
+        )
 
     for row in candidate_df.itertuples(index=False):
-        key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+        key = _candidate_key(row)
         if key in seen_keys:
             continue
 
-        if max_failure_retries is not None:
-            existing_failure = failure_map.get(key)
-            if existing_failure and int(existing_failure.get("fail_count", 0)) >= int(max_failure_retries):
-                continue
+        if _has_exhausted_failure_retries(key):
+            continue
 
         pmid = str(row.pmid)
         pathogen = str(row.pathogen)

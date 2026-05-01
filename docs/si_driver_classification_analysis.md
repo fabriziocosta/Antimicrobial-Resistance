@@ -31,14 +31,21 @@ This means the driver analysis follows the same inclusion logic as the screened 
 
 For each reviewed abstract, the LLM assigns one primary category:
 
-- `RESISTANCE_PREVALENCE_SURVEILLANCE`
-- `RESISTANCE_MECHANISM`
-- `TREATMENT_EFFECTIVENESS`
-- `TREATMENT_REUSE_OR_SALVAGE`
-- `DIAGNOSTIC_STEWARDSHIP`
-- `GUIDELINE_POLICY_STEWARDSHIP`
-- `ONE_HEALTH_ENVIRONMENTAL_RESERVOIR`
-- `CO_OCCURRENCE_OR_WEAK_SIGNAL`
+- `RESISTANCE_PREVALENCE_SURVEILLANCE`: The abstract mainly reports how often resistance or reduced susceptibility is observed for the target pathogen-antibiotic pair. This includes resistance rates, susceptibility frequencies, incidence, prevalence, temporal trends, geographic spread, outbreak burden, surveillance studies, antibiograms, epidemiology, and routine monitoring outputs. A rise in this category means the pair is increasingly appearing in descriptive resistance-burden literature.
+
+- `RESISTANCE_MECHANISM`: The abstract mainly explains why or how resistance occurs biologically for the target pair. This includes resistance genes, beta-lactamases, carbapenemases, ESBLs, KPC, NDM, OXA, CTX-M, plasmids, integrons, transposons, horizontal gene transfer, mutations, porin loss, efflux pumps, target modification, and genomic analyses focused on resistance. This category takes priority over prevalence/surveillance when an abstract both reports rates and explains the mechanism.
+
+- `TREATMENT_EFFECTIVENESS`: The abstract mainly evaluates whether treatment involving the target antibiotic or antibiotic class works against the target pathogen in clinical or patient-outcome terms. This includes treatment success, failure, mortality, cure, relapse, comparative therapy, clinical outcomes, and effectiveness studies. This category takes priority over prevalence/surveillance when the main contribution is patient response to therapy, even if susceptibility data are also reported.
+
+- `TREATMENT_REUSE_OR_SALVAGE`: The abstract mainly frames the antibiotic as an older, neglected, non-first-line, revived, repurposed, niche, salvage, suppressive, oral step-down, or susceptibility-guided treatment option for the target pathogen. This is distinct from general treatment-effectiveness literature because the scientific interest comes from renewed or special-case use of an agent rather than routine therapy evaluation.
+
+- `DIAGNOSTIC_STEWARDSHIP`: The abstract mainly concerns how resistance for the target pair is detected, tested, reported, interpreted, or operationalized in the laboratory or clinical workflow. This includes susceptibility testing methods, molecular detection, diagnostic workflows, breakpoint interpretation, reporting systems, rapid diagnostics, laboratory methods, and decision support. It is used when the central contribution is measurement or interpretation rather than prevalence, mechanism, or treatment outcome.
+
+- `GUIDELINE_POLICY_STEWARDSHIP`: The abstract mainly concerns prescribing behavior, antimicrobial stewardship, guidelines, policy, formulary restrictions, antibiotic consumption, implementation of recommendations, healthcare policy, or institutional programs involving the target pathogen-antibiotic pair. It captures literature where the pair matters because it is part of a management, governance, or stewardship decision rather than a biological or clinical efficacy finding.
+
+- `ONE_HEALTH_ENVIRONMENTAL_RESERVOIR`: The abstract mainly studies the target pair outside a narrowly human-clinical setting or in cross-sector AMR ecology. This includes animals, farms, food, agriculture, wastewater, environmental reservoirs, transmission reservoirs, zoonotic or foodborne pathways, and One Health surveillance. It is used when the main contribution is reservoir, transmission, or ecological context.
+
+- `CO_OCCURRENCE_OR_WEAK_SIGNAL`: The abstract mentions both the target pathogen and the target antibiotic or class, but the target pair is not central, the evidence is too thin to assign a stronger category, or the relationship is incidental. It is also used when the abstract is ambiguous, lacks enough detail, or contains AMR-related keywords without a clear pair-centered contribution. A high share of this category means the SI signal may be driven partly by broad co-occurrence rather than strong pathogen-antibiotic AMR evidence.
 
 The notebook aggregates these rows into yearly category counts:
 

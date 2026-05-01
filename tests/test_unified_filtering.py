@@ -230,6 +230,54 @@ class UnifiedFilteringTests(unittest.TestCase):
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_progress_reports_pending_rows(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {"222": ("t", "clinical resistant isolates", "ok")}
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111", "222"],
+                "pathogen": ["p1", "p1"],
+                "antibiotic": ["a1", "a1"],
+                "year": [2020, 2020],
+            }
+        )
+        existing = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "unified_decision": ["yes"],
+                "unified_raw_decision": ["yes"],
+                "unified_rationale": ["cached"],
+                "title": [""],
+                "abstract": [""],
+                **self._complete_amr_fields(),
+            }
+        )
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            existing.to_parquet(tmp.name, index=False)
+            with patch("builtins.print") as mock_print:
+                run_unified_llm_filter(
+                    candidates,
+                    _FakeLLM(),
+                    output_path=tmp.name,
+                    auto_resume_from_output=True,
+                    verbose=1,
+                    abstract_cache_path=None,
+                    failed_retry_path=None,
+                    progress_every=1,
+                )
+
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("[unified_filter] starting run for 1 pending candidate rows", printed)
+        self.assertIn("2 input rows; skipped 1 already complete", printed)
+        self.assertIn("Processed      1/1", printed)
+        self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
     def test_run_unified_llm_filter_backfills_missing_category_fields(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:

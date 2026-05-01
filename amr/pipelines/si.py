@@ -140,6 +140,12 @@ def load_yearly_si_inputs(
 
     if verbose:
         print(f"yearly_screened rows: {len(yearly_screened_df):,}")
+        if {"pathogen", "antibiotic", "year"}.issubset(yearly_screened_df.columns):
+            years = pd.to_numeric(yearly_screened_df["year"], errors="coerce").dropna()
+            year_span = f"{int(years.min())} - {int(years.max())}" if not years.empty else "none"
+            print(f"yearly_screened unique pathogens: {yearly_screened_df['pathogen'].nunique():,}")
+            print(f"yearly_screened unique antibiotics: {yearly_screened_df['antibiotic'].nunique():,}")
+            print(f"yearly_screened year range: {year_span}")
         print(f"pathogen bg rows: {len(pathogen_bg_df):,}")
         print(f"antibiotic bg rows: {len(antibiotic_bg_df):,}")
         print(f"unified decision rows available for driver analysis: {len(unified_decisions_df):,}")
