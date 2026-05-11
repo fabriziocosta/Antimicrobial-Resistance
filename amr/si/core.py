@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+import warnings
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -18,6 +21,7 @@ except ImportError:  # pragma: no cover - environment-dependent fallback
 
 _AUTO_TAIL_DAMPING = object()
 WEAK_SIGNAL_CATEGORY = "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+MISSING_LLM_INFORMATION_CATEGORY = "MISSING_LLM_INFORMATION"
 AMR_DRIVER_CATEGORY_ORDER = [
     "RESISTANCE_PREVALENCE_SURVEILLANCE",
     "RESISTANCE_MECHANISM",
@@ -27,6 +31,7 @@ AMR_DRIVER_CATEGORY_ORDER = [
     "GUIDELINE_POLICY_STEWARDSHIP",
     "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR",
     WEAK_SIGNAL_CATEGORY,
+    MISSING_LLM_INFORMATION_CATEGORY,
 ]
 AMR_DRIVER_CATEGORY_COLORS = {
     "RESISTANCE_PREVALENCE_SURVEILLANCE": "#4e79a7",
@@ -37,6 +42,7 @@ AMR_DRIVER_CATEGORY_COLORS = {
     "GUIDELINE_POLICY_STEWARDSHIP": "#edc948",
     "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR": "#b07aa1",
     WEAK_SIGNAL_CATEGORY: "#9c755f",
+    MISSING_LLM_INFORMATION_CATEGORY: "#bab0ac",
 }
 AMR_DRIVER_CATEGORY_COLUMNS = [
     "pathogen",
@@ -69,6 +75,15 @@ def _log_transform(values: pd.Series | np.ndarray | float) -> pd.Series | np.nda
 
 def _inverse_log_transform(values: pd.Series | np.ndarray | float) -> pd.Series | np.ndarray | float:
     return np.power(10.0, values) - 1.0
+
+
+def _normalise_driver_category_series(work: pd.DataFrame, category_col: str) -> pd.Series:
+    categories = work[category_col].where(work[category_col].notna(), MISSING_LLM_INFORMATION_CATEGORY)
+    categories = categories.astype(str).str.strip().replace({"": MISSING_LLM_INFORMATION_CATEGORY})
+    if "unified_rationale" in work.columns:
+        llm_failure_mask = work["unified_rationale"].astype(str).str.startswith("LLM failure:")
+        categories = categories.mask(llm_failure_mask, MISSING_LLM_INFORMATION_CATEGORY)
+    return categories
 
 
 def fit_global_pooled_si_model(
@@ -186,10 +201,7 @@ def build_yearly_category_counts(
         return pd.DataFrame(columns=AMR_DRIVER_CATEGORY_COLUMNS)
 
     work["year"] = work["year"].astype(int)
-    work["amr_primary_category"] = work[category_col].where(work[category_col].notna(), WEAK_SIGNAL_CATEGORY)
-    work["amr_primary_category"] = (
-        work["amr_primary_category"].astype(str).str.strip().replace({"": WEAK_SIGNAL_CATEGORY})
-    )
+    work["amr_primary_category"] = _normalise_driver_category_series(work, category_col)
 
     return (
         work.groupby(["pathogen", "antibiotic", "year", "amr_primary_category"], as_index=False)
@@ -240,10 +252,7 @@ def summarize_si_change_drivers(
         return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
 
     work["year"] = work["year"].astype(int)
-    work["amr_primary_category"] = work[category_col].where(work[category_col].notna(), WEAK_SIGNAL_CATEGORY)
-    work["amr_primary_category"] = (
-        work["amr_primary_category"].astype(str).str.strip().replace({"": WEAK_SIGNAL_CATEGORY})
-    )
+    work["amr_primary_category"] = _normalise_driver_category_series(work, category_col)
     work["amr_pair_centrality"] = work["amr_pair_centrality"].astype(str).str.strip().str.lower()
     manual = work["amr_needs_manual_review"]
     if manual.dtype == object:
@@ -264,9 +273,13 @@ def summarize_si_change_drivers(
 
         recent_counts = recent["amr_primary_category"].value_counts()
         previous_counts = previous["amr_primary_category"].value_counts()
+        recent_total = int(len(recent))
+        previous_total = int(len(previous))
+        recent_shares = recent_counts / recent_total if recent_total else pd.Series(dtype=float)
+        previous_shares = previous_counts / previous_total if previous_total else pd.Series(dtype=float)
         all_categories = sorted(set(recent_counts.index).union(previous_counts.index))
         changes = {
-            category: int(recent_counts.get(category, 0) - previous_counts.get(category, 0))
+            category: float(recent_shares.get(category, 0.0) - previous_shares.get(category, 0.0))
             for category in all_categories
         }
 
@@ -285,7 +298,6 @@ def summarize_si_change_drivers(
         else:
             fastest_category, fastest_change = None, 0
 
-        recent_total = int(len(recent))
         weak_count = int((recent["amr_primary_category"] == WEAK_SIGNAL_CATEGORY).sum()) if recent_total else 0
         centrality_counts = recent["amr_pair_centrality"].value_counts()
         rows.append(
@@ -293,12 +305,12 @@ def summarize_si_change_drivers(
                 "pathogen": pair.pathogen,
                 "antibiotic": pair.antibiotic,
                 "driver_recent_total": recent_total,
-                "driver_previous_total": int(len(previous)),
-                "driver_count_change": recent_total - int(len(previous)),
+                "driver_previous_total": previous_total,
+                "driver_count_change": recent_total - previous_total,
                 "driver_dominant_category": dominant_category,
                 "driver_dominant_category_count": dominant_count,
                 "driver_fastest_growing_category": fastest_category,
-                "driver_fastest_growing_category_change": int(fastest_change),
+                "driver_fastest_growing_category_change": float(fastest_change),
                 "driver_weak_signal_share": weak_count / recent_total if recent_total else 0.0,
                 "driver_manual_review_share": float(recent["manual_review_bool"].mean()) if recent_total else 0.0,
                 "driver_central_count": int(centrality_counts.get("central", 0)),
@@ -1228,6 +1240,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     width: int = 1400,
     height: int = 900,
     html_path: str | None = None,
+    pdf_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Plot latest observed AMR count against future-minus-latest smoothed SI shift."""
     required_cols = {
@@ -1371,7 +1384,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                 textfont=dict(size=9),
                 marker=dict(
                     color=pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
-                    colorscale=[[0.0, "#2166ac"], [0.5, "#f7f7f7"], [1.0, "#b2182b"]],
+                    colorscale=[[0.0, "#2166ac"], [1.0, "#ffffff"]],
                     cmin=float(min_count_abs_pct_error_mean),
                     cmax=float(max_count_abs_pct_error_mean),
                     size=np.where(plot_df["is_glass_pair"], 13, 10),
@@ -1455,10 +1468,28 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
 
     if html_path:
         fig.write_html(str(html_path), include_plotlyjs="cdn")
+    saved_pdf_path = None
+    pdf_error = None
+    if pdf_path:
+        pdf_path = Path(pdf_path)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fig.write_image(str(pdf_path), format="pdf", width=int(width), height=int(height))
+            saved_pdf_path = str(pdf_path)
+        except Exception as exc:  # pragma: no cover - depends on optional static export backend/browser
+            pdf_error = str(exc)
+            warnings.warn(
+                "Could not save Plotly figure as PDF. Interactive plot display will continue. "
+                "Plotly PDF export requires Kaleido and a working Chrome/Chromium install; "
+                "try `choreo_get_chrome` or `plotly_get_chrome` if Chrome is the issue. "
+                f"Original error: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": plot_df}
+    return {"figure": fig, "plot_df": plot_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
 
 
 def plot_yearly_category_driver_counts(
@@ -1466,15 +1497,21 @@ def plot_yearly_category_driver_counts(
     pathogen: str,
     antibiotic: str,
     *,
+    si_df: pd.DataFrame | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
     fit_end_year: int | None = None,
 ) -> dict[str, Any]:
-    """Plot yearly LLM category counts for one pathogen-antibiotic pair."""
+    """Plot yearly LLM category shares for one pathogen-antibiotic pair."""
     required = set(AMR_DRIVER_CATEGORY_COLUMNS)
     missing = required - set(category_counts_df.columns)
     if missing:
         raise KeyError(f"category_counts_df missing required columns: {sorted(missing)}")
+    if si_df is not None:
+        required_si_columns = {"pathogen", "antibiotic", "year", "SI"}
+        missing_si_columns = required_si_columns - set(si_df.columns)
+        if missing_si_columns:
+            raise KeyError(f"si_df missing required columns: {sorted(missing_si_columns)}")
 
     pair_df = category_counts_df.loc[
         (category_counts_df["pathogen"] == pathogen) & (category_counts_df["antibiotic"] == antibiotic)
@@ -1482,7 +1519,7 @@ def plot_yearly_category_driver_counts(
     if pair_df.empty:
         raise ValueError(f"No category counts found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
 
-    pivot = (
+    count_pivot = (
         pair_df.pivot_table(
             index="year",
             columns="amr_primary_category",
@@ -1492,15 +1529,37 @@ def plot_yearly_category_driver_counts(
         )
         .sort_index()
     )
+    if si_df is not None and "count" in si_df.columns:
+        si_count_df = si_df.loc[
+            (si_df["pathogen"] == pathogen) & (si_df["antibiotic"] == antibiotic),
+            ["year", "count"],
+        ].copy()
+        if not si_count_df.empty:
+            si_count_df["year"] = pd.to_numeric(si_count_df["year"], errors="coerce")
+            si_count_df["count"] = pd.to_numeric(si_count_df["count"], errors="coerce")
+            si_count_df = si_count_df.dropna(subset=["year", "count"])
+            if not si_count_df.empty:
+                observed_totals = si_count_df.groupby(si_count_df["year"].astype(int))["count"].sum()
+                count_pivot = count_pivot.reindex(count_pivot.index.union(observed_totals.index), fill_value=0)
+                classified_totals = count_pivot.sum(axis=1)
+                missing_counts = (observed_totals.reindex(count_pivot.index, fill_value=0) - classified_totals).clip(lower=0)
+                if missing_counts.gt(0).any():
+                    if MISSING_LLM_INFORMATION_CATEGORY not in count_pivot.columns:
+                        count_pivot[MISSING_LLM_INFORMATION_CATEGORY] = 0
+                    count_pivot[MISSING_LLM_INFORMATION_CATEGORY] = (
+                        count_pivot[MISSING_LLM_INFORMATION_CATEGORY] + missing_counts
+                    )
     if start_year is not None or end_year is not None:
-        first_year = int(start_year) if start_year is not None else int(pivot.index.min())
-        last_year = int(end_year) if end_year is not None else int(pivot.index.max())
+        first_year = int(start_year) if start_year is not None else int(count_pivot.index.min())
+        last_year = int(end_year) if end_year is not None else int(count_pivot.index.max())
         if last_year < first_year:
             raise ValueError("end_year must be >= start_year.")
-        pivot = pivot.reindex(range(first_year, last_year + 1), fill_value=0)
-    ordered_categories = [category for category in AMR_DRIVER_CATEGORY_ORDER if category in pivot.columns]
-    extra_categories = sorted(category for category in pivot.columns if category not in AMR_DRIVER_CATEGORY_COLORS)
-    pivot = pivot[ordered_categories + extra_categories]
+        count_pivot = count_pivot.reindex(range(first_year, last_year + 1), fill_value=0)
+    ordered_categories = [category for category in AMR_DRIVER_CATEGORY_ORDER if category in count_pivot.columns]
+    extra_categories = sorted(category for category in count_pivot.columns if category not in AMR_DRIVER_CATEGORY_COLORS)
+    count_pivot = count_pivot[ordered_categories + extra_categories]
+    row_totals = count_pivot.sum(axis=1)
+    pivot = count_pivot.div(row_totals.replace(0, np.nan), axis=0).fillna(0.0)
     fallback_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
     colors = [
         AMR_DRIVER_CATEGORY_COLORS.get(category, fallback_colors[idx % len(fallback_colors)] if fallback_colors else "#999999")
@@ -1508,6 +1567,35 @@ def plot_yearly_category_driver_counts(
     ]
     fig, ax = plt.subplots(figsize=(12, 5))
     pivot.plot(kind="bar", stacked=True, ax=ax, width=0.85, color=colors)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    si_ax = None
+    if si_df is not None:
+        si_pair_df = si_df.loc[
+            (si_df["pathogen"] == pathogen) & (si_df["antibiotic"] == antibiotic),
+            ["year", "SI"],
+        ].copy()
+        if not si_pair_df.empty:
+            year_positions = {int(year): idx for idx, year in enumerate(pivot.index)}
+            si_pair_df["year"] = si_pair_df["year"].astype(int)
+            si_pair_df = si_pair_df.loc[si_pair_df["year"].isin(year_positions)].sort_values("year")
+            if not si_pair_df.empty:
+                si_ax = ax.twinx()
+                si_ax.set_zorder(ax.get_zorder() + 1)
+                si_ax.patch.set_visible(False)
+                si_ax.plot(
+                    si_pair_df["year"].map(year_positions),
+                    si_pair_df["SI"],
+                    color="#111111",
+                    marker="o",
+                    lw=2.6,
+                    markersize=6.0,
+                    markerfacecolor="#f8fbff",
+                    markeredgecolor="#111111",
+                    markeredgewidth=1.6,
+                    label="Observed SI",
+                    zorder=4,
+                )
+                si_ax.set_ylabel("Scientific interest (SI)")
     if fit_end_year is not None and not pivot.empty:
         years = list(pivot.index)
         if int(fit_end_year) in years:
@@ -1519,15 +1607,23 @@ def plot_yearly_category_driver_counts(
                 label="Fit end year",
             )
     ax.set_xlabel("Year")
-    ax.set_ylabel("LLM-classified AMR publication count")
+    ax.set_ylabel("Share of LLM-classified AMR publications")
     ax.set_title(f"{pathogen} vs {antibiotic} | AMR category drivers")
     ax.grid(axis="y", alpha=0.2)
-    ax.legend(loc="best", fontsize=8)
+    handles, labels = ax.get_legend_handles_labels()
+    if si_ax is not None:
+        si_handles, si_labels = si_ax.get_legend_handles_labels()
+        handles.extend(si_handles)
+        labels.extend(si_labels)
+    ax.legend(handles, labels, loc="best", fontsize=8)
     fig.tight_layout()
-    return {"figure": fig, "ax": ax, "pivot": pivot}
+    return {"figure": fig, "ax": ax, "si_ax": si_ax, "pivot": pivot, "count_pivot": count_pivot}
 
 
 __all__ = [
+    "WEAK_SIGNAL_CATEGORY",
+    "MISSING_LLM_INFORMATION_CATEGORY",
+    "AMR_DRIVER_CATEGORY_COLORS",
     "fit_global_pooled_si_model",
     "build_pair_si_yearly_series",
     "fit_predict_yearly_si_loess",

@@ -30,6 +30,8 @@ loess = [
 ]
 notebooks = [
     "jupyter",
+    "kaleido",
+    "plotly",
 ]
 
 [tool.pytest.ini_options]

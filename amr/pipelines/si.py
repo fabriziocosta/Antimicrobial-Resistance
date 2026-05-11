@@ -584,6 +584,7 @@ def _display_figure(figure: Any) -> None:
 def save_category_driver_plots(
     *,
     category_counts_df: pd.DataFrame,
+    si_df: pd.DataFrame | None = None,
     interesting_df: pd.DataFrame,
     output_dir: str | Path,
     start_year: int | None = None,
@@ -612,6 +613,7 @@ def save_category_driver_plots(
                 category_counts_df=category_counts_df,
                 pathogen=row.pathogen,
                 antibiotic=row.antibiotic,
+                si_df=si_df,
                 start_year=start_year,
                 end_year=end_year,
                 fit_end_year=fit_end_year,

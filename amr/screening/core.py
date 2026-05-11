@@ -554,6 +554,9 @@ def run_unified_llm_filter(
                 complete_mask &= existing["amr_evidence_phrases"].apply(
                     lambda v: isinstance(v, (list, tuple)) or hasattr(v, "tolist")
                 )
+            if "unified_rationale" in existing.columns:
+                llm_failure_mask = existing["unified_rationale"].astype(str).str.startswith("LLM failure:")
+                complete_mask &= ~llm_failure_mask
             complete_existing = existing.loc[complete_mask].copy()
             incomplete_existing = existing.loc[~complete_mask].copy()
             if category_backfill_set is not None and not incomplete_existing.empty:
@@ -565,7 +568,8 @@ def run_unified_llm_filter(
                     incomplete_existing = incomplete_existing.loc[~defer_mask].copy()
             if not incomplete_existing.empty:
                 _append_log(
-                    f"Requeueing {len(incomplete_existing)} existing unified rows missing AMR category fields."
+                    f"Requeueing {len(incomplete_existing)} existing unified rows missing AMR category fields "
+                    "or from prior LLM failures."
                 )
             existing = complete_existing
             for row in existing[key_cols].itertuples(index=False):

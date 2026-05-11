@@ -24,6 +24,7 @@ __all__ = [
     "load_si_and_clean_glass_list",
     "load_yearly_si_inputs",
     "plot_future_si_vs_si_shift",
+    "plot_latest_si_vs_future_si",
     "print_collection_preflight",
     "print_si_dataset_summary",
     "print_pubmed_query_examples",
@@ -80,6 +81,7 @@ _GLASS_SI_EXPORTS = {
     "load_or_build_interactive_rank",
     "load_si_and_clean_glass_list",
     "plot_future_si_vs_si_shift",
+    "plot_latest_si_vs_future_si",
 }
 
 

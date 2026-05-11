@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -169,48 +170,62 @@ def _add_plot_labels(
     return plot_df
 
 
-def plot_future_si_vs_si_shift(
-    plot_df: pd.DataFrame,
+def _write_plotly_outputs(
+    fig: Any,
     *,
-    min_count_abs_pct_error_mean: float = 0.0,
-    max_count_abs_pct_error_mean: float = 10.0,
-    display_name: bool = False,
-    max_text_labels: int | None = None,
-    always_label_glass: bool = True,
-    title: str = "Predicted future SI vs predicted SI shift",
-    width: int = 1400,
-    height: int = 900,
-    show: bool = True,
-    html_path: str | Path | None = None,
-) -> dict[str, Any]:
-    """Plot predicted future SI against future-minus-latest smoothed SI shift."""
-    required_cols = {
-        "pathogen",
-        "antibiotic",
-        "latest_available_year",
-        "future_year",
-        "latest_available_count",
-        "latest_smoothed_SI",
-        "future_predicted_SI",
-        "future_predicted_count",
-        "future_minus_latest_smoothed_SI",
-        "post_fit_count_abs_pct_error_mean",
-        "n_count_error_years",
-        "is_glass_pair",
-        "glass_group_column",
-    }
-    missing = required_cols - set(plot_df.columns)
-    if missing:
-        raise KeyError(f"plot_df is missing required columns: {sorted(missing)}")
+    html_path: str | Path | None,
+    pdf_path: str | Path | None,
+    width: int,
+    height: int,
+) -> tuple[str | None, str | None]:
+    if html_path:
+        fig.write_html(str(html_path), include_plotlyjs="cdn")
+    saved_pdf_path = None
+    pdf_error = None
+    if pdf_path:
+        pdf_path = Path(pdf_path)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fig.write_image(str(pdf_path), format="pdf", width=int(width), height=int(height))
+            saved_pdf_path = str(pdf_path)
+        except Exception as exc:  # pragma: no cover - depends on optional static export backend/browser
+            pdf_error = str(exc)
+            warnings.warn(
+                "Could not save Plotly figure as PDF. Interactive plot display will continue. "
+                "Plotly PDF export requires Kaleido and a working Chrome/Chromium install; "
+                "try `choreo_get_chrome` or `plotly_get_chrome` if Chrome is the issue. "
+                f"Original error: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    return saved_pdf_path, pdf_error
 
+
+def _build_glass_si_scatter(
+    scatter_df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    title: str,
+    xaxis_title: str,
+    yaxis_title: str,
+    min_count_abs_pct_error_mean: float,
+    max_count_abs_pct_error_mean: float,
+    display_name: bool,
+    max_text_labels: int | None,
+    always_label_glass: bool,
+    width: int,
+    height: int,
+    add_zero_lines: bool,
+    add_identity_line: bool,
+) -> tuple[Any, pd.DataFrame]:
     try:
         import plotly.graph_objects as go
-        import plotly.io as pio
     except ImportError as exc:  # pragma: no cover - optional notebook dependency
         raise ImportError("plotly is required for interactive SI plots.") from exc
 
     scatter_df = _add_plot_labels(
-        plot_df.copy(),
+        scatter_df.copy(),
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
@@ -220,15 +235,15 @@ def plot_future_si_vs_si_shift(
     fig = go.Figure(
         data=[
             go.Scatter(
-                x=scatter_df["future_predicted_SI"],
-                y=scatter_df["future_minus_latest_smoothed_SI"],
+                x=scatter_df[x_col],
+                y=scatter_df[y_col],
                 mode="markers+text" if show_text else "markers",
                 text=scatter_df["display_label"] if show_text else None,
                 textposition="middle right",
                 textfont=dict(size=9),
                 marker=dict(
                     color=pd.to_numeric(scatter_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
-                    colorscale=[[0.0, "#2166ac"], [0.5, "#f7f7f7"], [1.0, "#b2182b"]],
+                    colorscale=[[0.0, "#2166ac"], [1.0, "#ffffff"]],
                     cmin=float(min_count_abs_pct_error_mean),
                     cmax=float(max_count_abs_pct_error_mean),
                     size=np.where(scatter_df["is_glass_pair"], 13, 10),
@@ -275,22 +290,159 @@ def plot_future_si_vs_si_shift(
     fig.update_layout(
         title=title,
         dragmode="pan",
-        xaxis_title="Predicted future SI",
-        yaxis_title="Predicted future SI - smoothed SI at latest available year",
+        xaxis_title=xaxis_title,
+        yaxis_title=yaxis_title,
         template="plotly_white",
         width=int(width),
         height=int(height),
         margin=dict(l=100, r=150, t=90, b=80),
     )
-    fig.add_hline(y=0.0, line_dash="dot", line_color="#111827", line_width=2, opacity=0.9)
-    fig.add_vline(x=0.0, line_dash="dot", line_color="#111827", line_width=2, opacity=0.9)
+    if add_zero_lines:
+        fig.add_hline(y=0.0, line_dash="dot", line_color="#111827", line_width=2, opacity=0.9)
+        fig.add_vline(x=0.0, line_dash="dot", line_color="#111827", line_width=2, opacity=0.9)
+    if add_identity_line:
+        fig.add_shape(
+            type="line",
+            x0=0,
+            y0=0,
+            x1=1,
+            y1=1,
+            xref="x domain",
+            yref="y domain",
+            line=dict(color="#111827", dash="dot", width=2),
+            opacity=0.9,
+        )
+    return fig, scatter_df
 
-    if html_path:
-        fig.write_html(str(html_path), include_plotlyjs="cdn")
+
+def plot_future_si_vs_si_shift(
+    plot_df: pd.DataFrame,
+    *,
+    min_count_abs_pct_error_mean: float = 0.0,
+    max_count_abs_pct_error_mean: float = 10.0,
+    display_name: bool = False,
+    max_text_labels: int | None = None,
+    always_label_glass: bool = True,
+    title: str = "Predicted future SI vs predicted SI shift",
+    width: int = 1400,
+    height: int = 900,
+    show: bool = True,
+    html_path: str | Path | None = None,
+    pdf_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Plot predicted future SI against future-minus-latest smoothed SI shift."""
+    required_cols = {
+        "pathogen",
+        "antibiotic",
+        "latest_available_year",
+        "future_year",
+        "latest_available_count",
+        "latest_smoothed_SI",
+        "future_predicted_SI",
+        "future_predicted_count",
+        "future_minus_latest_smoothed_SI",
+        "post_fit_count_abs_pct_error_mean",
+        "n_count_error_years",
+        "is_glass_pair",
+        "glass_group_column",
+    }
+    missing = required_cols - set(plot_df.columns)
+    if missing:
+        raise KeyError(f"plot_df is missing required columns: {sorted(missing)}")
+
+    try:
+        import plotly.io as pio
+    except ImportError as exc:  # pragma: no cover - optional notebook dependency
+        raise ImportError("plotly is required for interactive SI plots.") from exc
+
+    fig, scatter_df = _build_glass_si_scatter(
+        plot_df,
+        x_col="future_predicted_SI",
+        y_col="future_minus_latest_smoothed_SI",
+        title=title,
+        xaxis_title="Predicted future SI",
+        yaxis_title="Predicted future SI - smoothed SI at latest available year",
+        min_count_abs_pct_error_mean=min_count_abs_pct_error_mean,
+        max_count_abs_pct_error_mean=max_count_abs_pct_error_mean,
+        display_name=display_name,
+        max_text_labels=max_text_labels,
+        always_label_glass=always_label_glass,
+        width=width,
+        height=height,
+        add_zero_lines=True,
+        add_identity_line=False,
+    )
+
+    saved_pdf_path, pdf_error = _write_plotly_outputs(fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height)
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": scatter_df}
+    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
+
+
+def plot_latest_si_vs_future_si(
+    plot_df: pd.DataFrame,
+    *,
+    min_count_abs_pct_error_mean: float = 0.0,
+    max_count_abs_pct_error_mean: float = 10.0,
+    display_name: bool = False,
+    max_text_labels: int | None = None,
+    always_label_glass: bool = True,
+    title: str = "Latest available SI vs predicted future SI",
+    width: int = 1400,
+    height: int = 900,
+    show: bool = True,
+    html_path: str | Path | None = None,
+    pdf_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Plot latest available smoothed SI against predicted future SI."""
+    required_cols = {
+        "pathogen",
+        "antibiotic",
+        "latest_available_year",
+        "future_year",
+        "latest_available_count",
+        "latest_smoothed_SI",
+        "future_predicted_SI",
+        "future_predicted_count",
+        "future_minus_latest_smoothed_SI",
+        "post_fit_count_abs_pct_error_mean",
+        "n_count_error_years",
+        "is_glass_pair",
+        "glass_group_column",
+    }
+    missing = required_cols - set(plot_df.columns)
+    if missing:
+        raise KeyError(f"plot_df is missing required columns: {sorted(missing)}")
+
+    try:
+        import plotly.io as pio
+    except ImportError as exc:  # pragma: no cover - optional notebook dependency
+        raise ImportError("plotly is required for interactive SI plots.") from exc
+
+    fig, scatter_df = _build_glass_si_scatter(
+        plot_df,
+        x_col="latest_smoothed_SI",
+        y_col="future_predicted_SI",
+        title=title,
+        xaxis_title="Smoothed SI at latest available year",
+        yaxis_title="Predicted future SI",
+        min_count_abs_pct_error_mean=min_count_abs_pct_error_mean,
+        max_count_abs_pct_error_mean=max_count_abs_pct_error_mean,
+        display_name=display_name,
+        max_text_labels=max_text_labels,
+        always_label_glass=always_label_glass,
+        width=width,
+        height=height,
+        add_zero_lines=True,
+        add_identity_line=True,
+    )
+
+    saved_pdf_path, pdf_error = _write_plotly_outputs(fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height)
+    if show:
+        pio.renderers.default = "notebook_connected"
+        fig.show()
+    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
 
 
 __all__ = [
@@ -302,4 +454,5 @@ __all__ = [
     "load_or_build_interactive_rank",
     "load_si_and_clean_glass_list",
     "plot_future_si_vs_si_shift",
+    "plot_latest_si_vs_future_si",
 ]

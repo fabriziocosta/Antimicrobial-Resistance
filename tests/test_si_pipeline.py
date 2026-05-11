@@ -14,7 +14,7 @@ from amr.si import (
     rank_yearly_pairs_by_future_si_shift,
     summarize_si_change_drivers,
 )
-from amr.si.core import AMR_DRIVER_CATEGORY_COLORS
+from amr.si.core import AMR_DRIVER_CATEGORY_COLORS, MISSING_LLM_INFORMATION_CATEGORY
 from amr.pipelines.si import (
     build_si_analysis_paths,
     build_yearly_si_dataset,
@@ -385,15 +385,24 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "unified_decision": "yes",
                     "amr_primary_category": None,
                 },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2024,
+                    "unified_decision": "uncertain",
+                    "amr_primary_category": "CO_OCCURRENCE_OR_WEAK_SIGNAL",
+                    "unified_rationale": "LLM failure: OpenAI completion failed: Error code: 429",
+                },
             ]
         )
 
         out = build_yearly_category_counts(unified_df, include_decisions=("yes", "uncertain"))
 
         mechanism = out.loc[out["amr_primary_category"] == "RESISTANCE_MECHANISM"]
-        weak = out.loc[out["amr_primary_category"] == "CO_OCCURRENCE_OR_WEAK_SIGNAL"]
+        missing = out.loc[out["amr_primary_category"] == MISSING_LLM_INFORMATION_CATEGORY]
         self.assertEqual(int(mechanism.iloc[0]["count"]), 2)
-        self.assertEqual(int(weak.iloc[0]["count"]), 1)
+        self.assertEqual(int(missing["count"].sum()), 2)
+        self.assertNotIn("CO_OCCURRENCE_OR_WEAK_SIGNAL", set(out["amr_primary_category"]))
         self.assertNotIn("TREATMENT_EFFECTIVENESS", set(out["amr_primary_category"]))
 
     def test_summarize_si_change_drivers_reports_mix_and_growth(self) -> None:
@@ -469,6 +478,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertEqual(row["driver_previous_total"], 1)
         self.assertEqual(row["driver_dominant_category"], "RESISTANCE_MECHANISM")
         self.assertEqual(row["driver_fastest_growing_category"], "RESISTANCE_MECHANISM")
+        self.assertAlmostEqual(row["driver_fastest_growing_category_change"], 2 / 3)
         self.assertAlmostEqual(row["driver_weak_signal_share"], 1 / 3)
         self.assertAlmostEqual(row["driver_manual_review_share"], 2 / 3)
         self.assertEqual(row["driver_central_count"], 1)
@@ -508,7 +518,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "amr_primary_category": MISSING_LLM_INFORMATION_CATEGORY,
                     "count": 1,
                 },
                 {
@@ -526,11 +536,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         try:
             treatment_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS["TREATMENT_EFFECTIVENESS"])
-            treatment_index_with_mechanism = list(result_with_mechanism["pivot"].columns).index("TREATMENT_EFFECTIVENESS")
+            missing_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS[MISSING_LLM_INFORMATION_CATEGORY])
+            missing_index_with_mechanism = list(result_with_mechanism["pivot"].columns).index(
+                MISSING_LLM_INFORMATION_CATEGORY
+            )
             treatment_index_without_mechanism = list(result_without_mechanism["pivot"].columns).index("TREATMENT_EFFECTIVENESS")
             self.assertEqual(
-                result_with_mechanism["ax"].containers[treatment_index_with_mechanism].patches[0].get_facecolor(),
-                treatment_rgba,
+                result_with_mechanism["ax"].containers[missing_index_with_mechanism].patches[0].get_facecolor(),
+                missing_rgba,
             )
             self.assertEqual(
                 result_without_mechanism["ax"].containers[treatment_index_without_mechanism].patches[0].get_facecolor(),
@@ -539,6 +552,82 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         finally:
             plt.close(result_with_mechanism["figure"])
             plt.close(result_without_mechanism["figure"])
+
+    def test_category_driver_plot_keeps_all_missing_llm_years_gray(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2020,
+                    "amr_primary_category": MISSING_LLM_INFORMATION_CATEGORY,
+                    "count": 10,
+                }
+            ]
+        )
+
+        result = plot_yearly_category_driver_counts(category_counts_df, "p1", "a1")
+
+        try:
+            missing_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS[MISSING_LLM_INFORMATION_CATEGORY])
+            missing_index = list(result["pivot"].columns).index(MISSING_LLM_INFORMATION_CATEGORY)
+            self.assertAlmostEqual(float(result["pivot"].loc[2020, MISSING_LLM_INFORMATION_CATEGORY]), 1.0)
+            self.assertEqual(
+                result["ax"].containers[missing_index].patches[0].get_facecolor(),
+                missing_rgba,
+            )
+        finally:
+            plt.close(result["figure"])
+
+    def test_category_driver_plot_fills_unclassified_observed_counts_from_si_df(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2021,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 3,
+                },
+            ]
+        )
+        si_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2020, "SI": 0.1, "count": 5},
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2021, "SI": 0.2, "count": 2},
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2022, "SI": 0.3, "count": 5},
+            ]
+        )
+
+        result = plot_yearly_category_driver_counts(
+            category_counts_df,
+            "p1",
+            "a1",
+            si_df=si_df,
+            start_year=2020,
+            end_year=2022,
+        )
+
+        try:
+            missing_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS[MISSING_LLM_INFORMATION_CATEGORY])
+            missing_index = list(result["pivot"].columns).index(MISSING_LLM_INFORMATION_CATEGORY)
+            self.assertAlmostEqual(float(result["pivot"].loc[2020, MISSING_LLM_INFORMATION_CATEGORY]), 1.0)
+            self.assertAlmostEqual(float(result["pivot"].loc[2022, MISSING_LLM_INFORMATION_CATEGORY]), 2 / 5)
+            self.assertEqual(float(result["count_pivot"].loc[2020, MISSING_LLM_INFORMATION_CATEGORY]), 5.0)
+            self.assertEqual(float(result["count_pivot"].loc[2022, MISSING_LLM_INFORMATION_CATEGORY]), 2.0)
+            self.assertEqual(
+                result["ax"].containers[missing_index].patches[0].get_facecolor(),
+                missing_rgba,
+            )
+        finally:
+            plt.close(result["figure"])
 
     def test_category_driver_plot_can_use_fixed_year_window(self) -> None:
         category_counts_df = pd.DataFrame(
@@ -572,9 +661,58 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             self.assertEqual(result["pivot"].index.tolist(), [2000, 2001, 2002, 2003, 2004, 2005])
             self.assertEqual(int(result["pivot"].loc[2000].sum()), 0)
             self.assertEqual(int(result["pivot"].loc[2003].sum()), 0)
+            self.assertAlmostEqual(float(result["pivot"].loc[2002].sum()), 1.0)
+            self.assertEqual(int(result["count_pivot"].loc[2002].sum()), 2)
+            self.assertEqual(result["ax"].get_ylabel(), "Share of LLM-classified AMR publications")
             fit_lines = [line for line in result["ax"].lines if line.get_linestyle() == "--"]
             self.assertEqual(len(fit_lines), 1)
             self.assertAlmostEqual(float(fit_lines[0].get_xdata()[0]), 3.5)
+        finally:
+            plt.close(result["figure"])
+
+    def test_category_driver_plot_can_overlay_observed_si(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2002,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2004,
+                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "count": 1,
+                },
+            ]
+        )
+        si_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2002, "SI": 0.25},
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2004, "SI": 0.75},
+                {"pathogen": "p1", "antibiotic": "a2", "year": 2004, "SI": 2.0},
+            ]
+        )
+
+        result = plot_yearly_category_driver_counts(
+            category_counts_df,
+            "p1",
+            "a1",
+            si_df=si_df,
+            start_year=2002,
+            end_year=2004,
+        )
+        try:
+            self.assertIsNotNone(result["si_ax"])
+            si_lines = result["si_ax"].lines
+            self.assertEqual(len(si_lines), 1)
+            self.assertEqual(si_lines[0].get_label(), "Observed SI")
+            self.assertEqual(si_lines[0].get_xdata().tolist(), [0, 2])
+            self.assertEqual(si_lines[0].get_ydata().tolist(), [0.25, 0.75])
+            self.assertEqual(result["si_ax"].get_ylabel(), "Scientific interest (SI)")
         finally:
             plt.close(result["figure"])
 
