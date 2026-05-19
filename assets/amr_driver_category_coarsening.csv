@@ -1,0 +1,10 @@
+amr_primary_category,amr_coarse_category,coarse_order,coarse_color,coarse_description
+RESISTANCE_PREVALENCE_SURVEILLANCE,Resistance burden and biology,1,#4e79a7,"Resistance is being measured, tracked, or mechanistically explained."
+RESISTANCE_MECHANISM,Resistance burden and biology,1,#4e79a7,"Resistance is being measured, tracked, or mechanistically explained."
+TREATMENT_EFFECTIVENESS,Clinical use and treatment,2,#59a14f,"The antibiotic is being evaluated or reconsidered as therapy for the pathogen."
+TREATMENT_REUSE_OR_SALVAGE,Clinical use and treatment,2,#59a14f,"The antibiotic is being evaluated or reconsidered as therapy for the pathogen."
+DIAGNOSTIC_STEWARDSHIP,"Stewardship, diagnostics, and policy",3,#edc948,"The pair is being detected, reported, interpreted, prescribed, restricted, or governed."
+GUIDELINE_POLICY_STEWARDSHIP,"Stewardship, diagnostics, and policy",3,#edc948,"The pair is being detected, reported, interpreted, prescribed, restricted, or governed."
+ONE_HEALTH_ENVIRONMENTAL_RESERVOIR,Reservoirs and transmission ecology,4,#b07aa1,"The pair is important in reservoirs, transmission pathways, or cross-sector AMR ecology."
+CO_OCCURRENCE_OR_WEAK_SIGNAL,Weak or missing evidence,5,#bab0ac,"The pair-centered evidence is thin, incidental, ambiguous, or unavailable."
+MISSING_LLM_INFORMATION,Weak or missing evidence,5,#bab0ac,"The pair-centered evidence is thin, incidental, ambiguous, or unavailable."

@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 
 from amr.io import atomic_write_parquet
 from amr.si.core import (
+    AMR_DRIVER_COARSE_CATEGORY_COLORS,
+    AMR_DRIVER_COARSE_CATEGORY_ORDER,
     build_yearly_category_counts,
     fit_global_pooled_si_model,
     plot_yearly_category_driver_counts,
@@ -30,6 +32,7 @@ DEFAULT_DRIVER_REQUIRED_COLUMNS = {
     "amr_pair_centrality",
     "amr_needs_manual_review",
 }
+DEFAULT_DRIVER_CATEGORY_COARSENING_PATH = Path(__file__).resolve().parents[2] / "assets" / "amr_driver_category_coarsening.csv"
 
 DEFAULT_INTERESTING_SUMMARY_COLUMNS = [
     "pathogen",
@@ -480,6 +483,73 @@ def print_si_dataset_summary(si_df: pd.DataFrame) -> None:
     """Print a short yearly SI dataset summary for notebooks."""
     print(f"SI rows: {len(si_df):,}")
     print(f"SI pairs: {si_df[['pathogen', 'antibiotic']].drop_duplicates().shape[0]:,}")
+    if "pathogen" in si_df:
+        print(f"SI pathogens: {si_df['pathogen'].nunique():,}")
+
+
+def summarize_pathogen_coverage(
+    *,
+    source_df: pd.DataFrame,
+    modeled_df: pd.DataFrame,
+    source_label: str = "source",
+    modeled_label: str = "modeled",
+    print_summary: bool = True,
+) -> pd.DataFrame:
+    """Summarize which pathogens survive from a source table into a modeled table."""
+    for label, df in [(source_label, source_df), (modeled_label, modeled_df)]:
+        if "pathogen" not in df.columns:
+            raise KeyError(f"{label} dataframe is missing required column: 'pathogen'")
+
+    def _pathogen_stats(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+        grouped = df.groupby("pathogen", dropna=False).size().reset_index(name=f"{prefix}_rows")
+        if "count" in df.columns:
+            counts = (
+                df.assign(count=pd.to_numeric(df["count"], errors="coerce").fillna(0))
+                .groupby("pathogen", dropna=False)["count"]
+                .sum()
+                .reset_index(name=f"{prefix}_publications")
+            )
+            grouped = grouped.merge(counts, on="pathogen", how="left")
+        if {"pathogen", "antibiotic"}.issubset(df.columns):
+            pairs = (
+                df[["pathogen", "antibiotic"]]
+                .drop_duplicates()
+                .groupby("pathogen", dropna=False)
+                .size()
+                .reset_index(name=f"{prefix}_pairs")
+            )
+            grouped = grouped.merge(pairs, on="pathogen", how="left")
+        return grouped
+
+    source_stats = _pathogen_stats(source_df, "source")
+    modeled_stats = _pathogen_stats(modeled_df, "modeled")
+    summary_df = source_stats.merge(modeled_stats, on="pathogen", how="outer")
+    summary_df["in_source"] = summary_df["source_rows"].notna()
+    summary_df["in_modeled"] = summary_df["modeled_rows"].notna()
+
+    for col in summary_df.columns:
+        if col.endswith(("_rows", "_pairs", "_publications")):
+            summary_df[col] = summary_df[col].fillna(0)
+
+    summary_df["status"] = "present_in_both"
+    summary_df.loc[summary_df["in_source"] & ~summary_df["in_modeled"], "status"] = "missing_from_modeled"
+    summary_df.loc[~summary_df["in_source"] & summary_df["in_modeled"], "status"] = "only_in_modeled"
+    summary_df = summary_df.sort_values(["status", "pathogen"]).reset_index(drop=True)
+
+    if print_summary:
+        source_pathogens = int(summary_df["in_source"].sum())
+        modeled_pathogens = int(summary_df["in_modeled"].sum())
+        missing = summary_df.loc[summary_df["status"].eq("missing_from_modeled"), "pathogen"].astype(str).tolist()
+        extra = summary_df.loc[summary_df["status"].eq("only_in_modeled"), "pathogen"].astype(str).tolist()
+        print(f"{source_label} pathogens: {source_pathogens:,}")
+        print(f"{modeled_label} pathogens: {modeled_pathogens:,}")
+        if missing:
+            print(f"Pathogens present in {source_label} but absent from {modeled_label}: {len(missing):,}")
+            print(", ".join(missing))
+        if extra:
+            print(f"Pathogens present in {modeled_label} but absent from {source_label}: {len(extra):,}")
+            print(", ".join(extra))
+    return summary_df
 
 
 def rank_future_high_interest_pairs(
@@ -581,6 +651,72 @@ def _display_figure(figure: Any) -> None:
     display(figure)
 
 
+def _load_driver_category_coarsening(
+    category_coarsening_path: str | Path | None,
+    category_coarsening_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Load fine-to-coarse AMR driver category mapping."""
+    if category_coarsening_df is not None:
+        lookup_df = category_coarsening_df.copy()
+    else:
+        lookup_path = DEFAULT_DRIVER_CATEGORY_COARSENING_PATH if category_coarsening_path is None else Path(category_coarsening_path)
+        lookup_df = pd.read_csv(lookup_path)
+    required = {"amr_primary_category", "amr_coarse_category"}
+    missing = required - set(lookup_df.columns)
+    if missing:
+        raise KeyError(f"category coarsening lookup missing required columns: {sorted(missing)}")
+    lookup_df = lookup_df.copy()
+    lookup_df["amr_primary_category"] = lookup_df["amr_primary_category"].astype(str).str.strip()
+    lookup_df["amr_coarse_category"] = lookup_df["amr_coarse_category"].astype(str).str.strip()
+    lookup_df = lookup_df.loc[
+        lookup_df["amr_primary_category"].ne("") & lookup_df["amr_coarse_category"].ne("")
+    ].drop_duplicates(subset=["amr_primary_category"], keep="first")
+    return lookup_df
+
+
+def coarsen_category_counts(
+    category_counts_df: pd.DataFrame,
+    *,
+    category_coarsening_path: str | Path | None = None,
+    category_coarsening_df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str], dict[str, str]]:
+    """Map fine AMR driver categories to coarse groups and aggregate counts."""
+    required = {"pathogen", "antibiotic", "year", "amr_primary_category", "count"}
+    missing = required - set(category_counts_df.columns)
+    if missing:
+        raise KeyError(f"category_counts_df missing required columns: {sorted(missing)}")
+    lookup_df = _load_driver_category_coarsening(category_coarsening_path, category_coarsening_df)
+    work = category_counts_df.copy()
+    work["amr_primary_category"] = work["amr_primary_category"].astype(str).str.strip()
+    work = work.merge(lookup_df, on="amr_primary_category", how="left")
+    work["amr_primary_category"] = work["amr_coarse_category"].fillna(work["amr_primary_category"])
+    grouped_df = (
+        work.groupby(["pathogen", "antibiotic", "year", "amr_primary_category"], as_index=False)["count"]
+        .sum()
+        .sort_values(["pathogen", "antibiotic", "year", "amr_primary_category"])
+        .reset_index(drop=True)
+    )
+
+    order_df = lookup_df[["amr_coarse_category"]].drop_duplicates().copy()
+    if "coarse_order" in lookup_df.columns:
+        order_df = (
+            lookup_df[["amr_coarse_category", "coarse_order"]]
+            .drop_duplicates(subset=["amr_coarse_category"])
+            .assign(coarse_order=lambda df: pd.to_numeric(df["coarse_order"], errors="coerce"))
+            .sort_values(["coarse_order", "amr_coarse_category"], na_position="last")
+        )
+    category_order = order_df["amr_coarse_category"].dropna().astype(str).tolist()
+    category_order = category_order or AMR_DRIVER_COARSE_CATEGORY_ORDER
+
+    category_colors = AMR_DRIVER_COARSE_CATEGORY_COLORS.copy()
+    if "coarse_color" in lookup_df.columns:
+        color_df = lookup_df[["amr_coarse_category", "coarse_color"]].dropna().drop_duplicates(
+            subset=["amr_coarse_category"], keep="first"
+        )
+        category_colors.update(dict(color_df.itertuples(index=False, name=None)))
+    return grouped_df, category_order, category_colors
+
+
 def save_category_driver_plots(
     *,
     category_counts_df: pd.DataFrame,
@@ -592,6 +728,9 @@ def save_category_driver_plots(
     fit_end_year: int,
     max_plots: int = 25,
     figure_format: str = "pdf",
+    driver_category_level: str = "original",
+    category_coarsening_path: str | Path | None = None,
+    category_coarsening_df: pd.DataFrame | None = None,
     display_plots: bool = False,
     max_display_plots: int | None = None,
     verbose: bool = True,
@@ -606,23 +745,46 @@ def save_category_driver_plots(
         if verbose:
             print("No category count curves available to plot.")
         return saved_plots
+    driver_category_level = str(driver_category_level).strip().lower()
+    if driver_category_level in {"original", "fine", "primary"}:
+        plot_category_counts_df = category_counts_df
+        category_order = None
+        category_colors = None
+        category_label = "AMR category drivers"
+        missing_information_category = None
+        filename_suffix = "drivers"
+    elif driver_category_level in {"coarse", "coarsened"}:
+        plot_category_counts_df, category_order, category_colors = coarsen_category_counts(
+            category_counts_df,
+            category_coarsening_path=category_coarsening_path,
+            category_coarsening_df=category_coarsening_df,
+        )
+        category_label = "Coarse AMR category drivers"
+        missing_information_category = "Weak or missing evidence"
+        filename_suffix = "coarse_drivers"
+    else:
+        raise ValueError("driver_category_level must be one of: 'original', 'fine', 'primary', 'coarse', 'coarsened'.")
 
     for row in interesting_df.head(max_plots).itertuples(index=False):
         try:
             result = plot_yearly_category_driver_counts(
-                category_counts_df=category_counts_df,
+                category_counts_df=plot_category_counts_df,
                 pathogen=row.pathogen,
                 antibiotic=row.antibiotic,
                 si_df=si_df,
                 start_year=start_year,
                 end_year=end_year,
                 fit_end_year=fit_end_year,
+                category_order=category_order,
+                category_colors=category_colors,
+                category_label=category_label,
+                **({} if missing_information_category is None else {"missing_information_category": missing_information_category}),
             )
         except ValueError:
             continue
         pathogen_slug = str(row.pathogen).replace("/", "_").replace(" ", "_")
         antibiotic_slug = str(row.antibiotic).replace("/", "_").replace(" ", "_")
-        out_path = output_dir / f"{pathogen_slug}__{antibiotic_slug}__drivers.{figure_format}"
+        out_path = output_dir / f"{pathogen_slug}__{antibiotic_slug}__{filename_suffix}.{figure_format}"
         result["figure"].savefig(out_path, bbox_inches="tight")
         if display_plots and (max_display_plots is None or displayed_plots < max_display_plots):
             _display_figure(result["figure"])
@@ -631,7 +793,7 @@ def save_category_driver_plots(
         saved_plots += 1
 
     if verbose:
-        print(f"Saved {saved_plots} category driver plots to {output_dir}")
+        print(f"Saved {saved_plots} {driver_category_level} category driver plots to {output_dir}")
         if display_plots:
             print(f"Displayed {displayed_plots} category driver plots inline.")
     return saved_plots
@@ -703,9 +865,11 @@ def select_existing_columns(df: pd.DataFrame, columns: Sequence[str], *, head: i
 
 __all__ = [
     "build_antibiotic_group_mapping",
+    "coarsen_category_counts",
     "build_si_analysis_paths",
     "build_si_driver_analysis",
     "build_yearly_si_dataset",
+    "DEFAULT_DRIVER_CATEGORY_COARSENING_PATH",
     "DEFAULT_DRIVER_SUMMARY_COLUMNS",
     "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
     "filter_model_inputs_by_average_amr_publications",
@@ -718,4 +882,5 @@ __all__ = [
     "select_existing_columns",
     "slugify_analysis_level",
     "summarize_pair_publication_rates",
+    "summarize_pathogen_coverage",
 ]

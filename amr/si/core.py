@@ -44,6 +44,20 @@ AMR_DRIVER_CATEGORY_COLORS = {
     WEAK_SIGNAL_CATEGORY: "#9c755f",
     MISSING_LLM_INFORMATION_CATEGORY: "#bab0ac",
 }
+AMR_DRIVER_COARSE_CATEGORY_ORDER = [
+    "Resistance burden and biology",
+    "Clinical use and treatment",
+    "Stewardship, diagnostics, and policy",
+    "Reservoirs and transmission ecology",
+    "Weak or missing evidence",
+]
+AMR_DRIVER_COARSE_CATEGORY_COLORS = {
+    "Resistance burden and biology": "#4e79a7",
+    "Clinical use and treatment": "#59a14f",
+    "Stewardship, diagnostics, and policy": "#edc948",
+    "Reservoirs and transmission ecology": "#b07aa1",
+    "Weak or missing evidence": "#bab0ac",
+}
 AMR_DRIVER_CATEGORY_COLUMNS = [
     "pathogen",
     "antibiotic",
@@ -1501,6 +1515,10 @@ def plot_yearly_category_driver_counts(
     start_year: int | None = None,
     end_year: int | None = None,
     fit_end_year: int | None = None,
+    category_order: list[str] | tuple[str, ...] | None = None,
+    category_colors: dict[str, str] | None = None,
+    category_label: str = "AMR category drivers",
+    missing_information_category: str = MISSING_LLM_INFORMATION_CATEGORY,
 ) -> dict[str, Any]:
     """Plot yearly LLM category shares for one pathogen-antibiotic pair."""
     required = set(AMR_DRIVER_CATEGORY_COLUMNS)
@@ -1544,25 +1562,25 @@ def plot_yearly_category_driver_counts(
                 classified_totals = count_pivot.sum(axis=1)
                 missing_counts = (observed_totals.reindex(count_pivot.index, fill_value=0) - classified_totals).clip(lower=0)
                 if missing_counts.gt(0).any():
-                    if MISSING_LLM_INFORMATION_CATEGORY not in count_pivot.columns:
-                        count_pivot[MISSING_LLM_INFORMATION_CATEGORY] = 0
-                    count_pivot[MISSING_LLM_INFORMATION_CATEGORY] = (
-                        count_pivot[MISSING_LLM_INFORMATION_CATEGORY] + missing_counts
-                    )
+                    if missing_information_category not in count_pivot.columns:
+                        count_pivot[missing_information_category] = 0
+                    count_pivot[missing_information_category] = count_pivot[missing_information_category] + missing_counts
     if start_year is not None or end_year is not None:
         first_year = int(start_year) if start_year is not None else int(count_pivot.index.min())
         last_year = int(end_year) if end_year is not None else int(count_pivot.index.max())
         if last_year < first_year:
             raise ValueError("end_year must be >= start_year.")
         count_pivot = count_pivot.reindex(range(first_year, last_year + 1), fill_value=0)
-    ordered_categories = [category for category in AMR_DRIVER_CATEGORY_ORDER if category in count_pivot.columns]
-    extra_categories = sorted(category for category in count_pivot.columns if category not in AMR_DRIVER_CATEGORY_COLORS)
+    category_order = list(AMR_DRIVER_CATEGORY_ORDER if category_order is None else category_order)
+    category_colors = AMR_DRIVER_CATEGORY_COLORS if category_colors is None else category_colors
+    ordered_categories = [category for category in category_order if category in count_pivot.columns]
+    extra_categories = sorted(category for category in count_pivot.columns if category not in category_colors)
     count_pivot = count_pivot[ordered_categories + extra_categories]
     row_totals = count_pivot.sum(axis=1)
     pivot = count_pivot.div(row_totals.replace(0, np.nan), axis=0).fillna(0.0)
     fallback_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
     colors = [
-        AMR_DRIVER_CATEGORY_COLORS.get(category, fallback_colors[idx % len(fallback_colors)] if fallback_colors else "#999999")
+        category_colors.get(category, fallback_colors[idx % len(fallback_colors)] if fallback_colors else "#999999")
         for idx, category in enumerate(pivot.columns)
     ]
     fig, ax = plt.subplots(figsize=(12, 5))
@@ -1608,7 +1626,7 @@ def plot_yearly_category_driver_counts(
             )
     ax.set_xlabel("Year")
     ax.set_ylabel("Share of LLM-classified AMR publications")
-    ax.set_title(f"{pathogen} vs {antibiotic} | AMR category drivers")
+    ax.set_title(f"{pathogen} vs {antibiotic} | {category_label}")
     ax.grid(axis="y", alpha=0.2)
     handles, labels = ax.get_legend_handles_labels()
     if si_ax is not None:
@@ -1624,6 +1642,8 @@ __all__ = [
     "WEAK_SIGNAL_CATEGORY",
     "MISSING_LLM_INFORMATION_CATEGORY",
     "AMR_DRIVER_CATEGORY_COLORS",
+    "AMR_DRIVER_COARSE_CATEGORY_ORDER",
+    "AMR_DRIVER_COARSE_CATEGORY_COLORS",
     "fit_global_pooled_si_model",
     "build_pair_si_yearly_series",
     "fit_predict_yearly_si_loess",

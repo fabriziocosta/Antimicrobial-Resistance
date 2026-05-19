@@ -29,6 +29,34 @@ This means the driver analysis follows the same inclusion logic as the screened 
 
 ## Category Share Curves
 
+The fine-grained LLM categories can also be read through a coarser split when the individual categories are too detailed for interpretation. This coarser view keeps the original category labels intact in the data and plots, but groups them conceptually into fewer higher-level drivers:
+
+| Coarse concept | Fine categories |
+| --- | --- |
+| Resistance burden and biology | `RESISTANCE_PREVALENCE_SURVEILLANCE`, `RESISTANCE_MECHANISM` |
+| Clinical use and treatment | `TREATMENT_EFFECTIVENESS`, `TREATMENT_REUSE_OR_SALVAGE` |
+| Stewardship, diagnostics, and policy | `DIAGNOSTIC_STEWARDSHIP`, `GUIDELINE_POLICY_STEWARDSHIP` |
+| Reservoirs and transmission ecology | `ONE_HEALTH_ENVIRONMENTAL_RESERVOIR` |
+| Weak or missing evidence | `CO_OCCURRENCE_OR_WEAK_SIGNAL`, `MISSING_LLM_INFORMATION` |
+
+The reusable lookup for this split is saved in:
+
+```text
+assets/amr_driver_category_coarsening.csv
+```
+
+Notebook plotting can use either level through `DRIVER_CATEGORY_LEVEL = "original"` or `DRIVER_CATEGORY_LEVEL = "coarse"`. The `save_category_driver_plots` helper keeps `"original"` as the default API behavior, while the notebooks can opt into the coarser grouping by passing `driver_category_level="coarse"` and the lookup path.
+
+`Resistance burden and biology` captures papers where the pathogen-antibiotic pair is scientifically important because resistance is being measured, tracked, or mechanistically explained. This group combines descriptive epidemiology with molecular/genomic mechanism work, so a rise means attention is increasing around either the observed burden of resistance or the biological explanation for that resistance.
+
+`Clinical use and treatment` captures papers where the pair matters because the antibiotic is being evaluated or reconsidered as a therapy for the pathogen. It includes both conventional outcome/effectiveness studies and literature about revived, salvage, niche, or susceptibility-guided use, so a rise points to increasing clinical decision relevance rather than only resistance surveillance.
+
+`Stewardship, diagnostics, and policy` captures papers focused on how the pair is detected, reported, interpreted, prescribed, restricted, or governed. This group is useful when the scientific-interest signal is driven by operational changes in laboratories, clinical workflows, prescribing programs, guidelines, or policy rather than by new burden estimates or treatment outcomes.
+
+`Reservoirs and transmission ecology` captures papers where the pair is important in animals, food, farms, wastewater, environmental reservoirs, zoonotic routes, or broader One Health settings. A rise in this group suggests that attention is shifting toward ecological sources, transmission pathways, or cross-sector AMR monitoring.
+
+`Weak or missing evidence` captures cases where the pair-centered evidence is thin, incidental, ambiguous, or unavailable. `CO_OCCURRENCE_OR_WEAK_SIGNAL` means the abstract mentions the pathogen and antibiotic without a strong pair-centered AMR contribution, while `MISSING_LLM_INFORMATION` means category metadata is absent or came from an LLM failure. A high share of this group should be interpreted as an uncertainty flag rather than as a substantive biological or clinical driver.
+
 For each reviewed abstract, the LLM assigns one primary category:
 
 - `RESISTANCE_PREVALENCE_SURVEILLANCE`: The abstract mainly reports how often resistance or reduced susceptibility is observed for the target pathogen-antibiotic pair. This includes resistance rates, susceptibility frequencies, incidence, prevalence, temporal trends, geographic spread, outbreak burden, surveillance studies, antibiograms, epidemiology, and routine monitoring outputs. A rise in this category means the pair is increasingly appearing in descriptive resistance-burden literature.

@@ -82,6 +82,7 @@ def load_or_build_interactive_rank(
     si_df: pd.DataFrame,
     rank_output_path: str | Path,
     *,
+    source_path: str | Path | None = None,
     fit_start_year: int,
     fit_end_year: int,
     num_future_years: int,
@@ -99,9 +100,17 @@ def load_or_build_interactive_rank(
         rank_df = pd.DataFrame()
         missing_rank_columns = REQUIRED_INTERACTIVE_RANK_COLUMNS
 
-    if rank_df.empty or missing_rank_columns:
+    cache_is_stale = False
+    if source_path is not None and rank_output_path.exists():
+        source_path = Path(source_path)
+        if source_path.exists():
+            cache_is_stale = rank_output_path.stat().st_mtime < source_path.stat().st_mtime
+
+    if rank_df.empty or missing_rank_columns or cache_is_stale:
         if verbose and missing_rank_columns:
             print(f"Recomputing rank data because cached file is missing: {sorted(missing_rank_columns)}")
+        if verbose and cache_is_stale:
+            print(f"Recomputing rank data because {rank_output_path} is older than {source_path}")
         rank_df = rank_yearly_pairs_by_future_si_shift(
             si_df,
             fit_start_year=fit_start_year,
@@ -177,9 +186,13 @@ def _write_plotly_outputs(
     pdf_path: str | Path | None,
     width: int,
     height: int,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
+    saved_html_path = None
     if html_path:
+        html_path = Path(html_path)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
         fig.write_html(str(html_path), include_plotlyjs="cdn")
+        saved_html_path = str(html_path)
     saved_pdf_path = None
     pdf_error = None
     if pdf_path:
@@ -189,16 +202,29 @@ def _write_plotly_outputs(
             fig.write_image(str(pdf_path), format="pdf", width=int(width), height=int(height))
             saved_pdf_path = str(pdf_path)
         except Exception as exc:  # pragma: no cover - depends on optional static export backend/browser
-            pdf_error = str(exc)
+            if saved_html_path is None:
+                fallback_html_path = pdf_path.with_suffix(".html")
+                fig.write_html(str(fallback_html_path), include_plotlyjs="cdn")
+                saved_html_path = str(fallback_html_path)
+            pdf_error = _format_plotly_pdf_error(exc, saved_html_path)
             warnings.warn(
-                "Could not save Plotly figure as PDF. Interactive plot display will continue. "
-                "Plotly PDF export requires Kaleido and a working Chrome/Chromium install; "
-                "try `choreo_get_chrome` or `plotly_get_chrome` if Chrome is the issue. "
-                f"Original error: {exc}",
+                pdf_error,
                 RuntimeWarning,
                 stacklevel=2,
             )
-    return saved_pdf_path, pdf_error
+    return saved_pdf_path, pdf_error, saved_html_path
+
+
+def _format_plotly_pdf_error(exc: Exception, html_path: str | None) -> str:
+    message = str(exc)
+    if "/snap/bin/chromium" in message or "browser seemed to close immediately" in message.lower():
+        reason = "Kaleido could not start the Chrome/Chromium browser it found, likely the Snap Chromium install."
+    elif "chrome" in message.lower() or "chromium" in message.lower():
+        reason = "Kaleido could not start a working Chrome/Chromium browser."
+    else:
+        reason = f"Plotly PDF export failed: {message}"
+    fallback = f" Saved interactive HTML fallback: {html_path}." if html_path else ""
+    return f"{reason}{fallback} Install a working Chrome with `plotly_get_chrome` or `choreo_get_chrome` to enable PDF export."
 
 
 def _build_glass_si_scatter(
@@ -373,11 +399,13 @@ def plot_future_si_vs_si_shift(
         add_identity_line=False,
     )
 
-    saved_pdf_path, pdf_error = _write_plotly_outputs(fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height)
+    saved_pdf_path, pdf_error, saved_html_path = _write_plotly_outputs(
+        fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height
+    )
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
+    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error, "html_path": saved_html_path}
 
 
 def plot_latest_si_vs_future_si(
@@ -438,11 +466,13 @@ def plot_latest_si_vs_future_si(
         add_identity_line=True,
     )
 
-    saved_pdf_path, pdf_error = _write_plotly_outputs(fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height)
+    saved_pdf_path, pdf_error, saved_html_path = _write_plotly_outputs(
+        fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height
+    )
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
+    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error, "html_path": saved_html_path}
 
 
 __all__ = [

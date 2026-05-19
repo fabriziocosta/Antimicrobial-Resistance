@@ -1,6 +1,7 @@
 import unittest
 import warnings
-from tempfile import NamedTemporaryFile
+from pathlib import Path
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
@@ -18,8 +19,10 @@ from amr.si.core import AMR_DRIVER_CATEGORY_COLORS, MISSING_LLM_INFORMATION_CATE
 from amr.pipelines.si import (
     build_si_analysis_paths,
     build_yearly_si_dataset,
+    coarsen_category_counts,
     filter_model_inputs_by_average_amr_publications,
     rank_future_high_interest_pairs,
+    save_category_driver_plots,
 )
 
 
@@ -715,6 +718,117 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             self.assertEqual(result["si_ax"].get_ylabel(), "Scientific interest (SI)")
         finally:
             plt.close(result["figure"])
+
+    def test_coarsen_category_counts_groups_fine_driver_categories(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_PREVALENCE_SURVEILLANCE",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 3,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": MISSING_LLM_INFORMATION_CATEGORY,
+                    "count": 1,
+                },
+            ]
+        )
+
+        coarse_df, category_order, category_colors = coarsen_category_counts(category_counts_df)
+
+        self.assertIn("Resistance burden and biology", category_order)
+        self.assertIn("Weak or missing evidence", category_colors)
+        burden_count = coarse_df.loc[
+            coarse_df["amr_primary_category"].eq("Resistance burden and biology"),
+            "count",
+        ].item()
+        weak_count = coarse_df.loc[
+            coarse_df["amr_primary_category"].eq("Weak or missing evidence"),
+            "count",
+        ].item()
+        self.assertEqual(int(burden_count), 5)
+        self.assertEqual(int(weak_count), 1)
+
+    def test_category_driver_plot_can_fill_missing_counts_into_coarse_group(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 2,
+                }
+            ]
+        )
+        si_df = pd.DataFrame(
+            [{"pathogen": "p1", "antibiotic": "a1", "year": 2022, "SI": 0.1, "count": 5}]
+        )
+        coarse_df, category_order, category_colors = coarsen_category_counts(category_counts_df)
+
+        result = plot_yearly_category_driver_counts(
+            coarse_df,
+            "p1",
+            "a1",
+            si_df=si_df,
+            category_order=category_order,
+            category_colors=category_colors,
+            missing_information_category="Weak or missing evidence",
+        )
+        try:
+            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Resistance burden and biology"]), 2 / 5)
+            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Weak or missing evidence"]), 3 / 5)
+            self.assertNotIn(MISSING_LLM_INFORMATION_CATEGORY, result["pivot"].columns)
+        finally:
+            plt.close(result["figure"])
+
+    def test_save_category_driver_plots_can_use_coarse_categories(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_PREVALENCE_SURVEILLANCE",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2022,
+                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "count": 3,
+                },
+            ]
+        )
+        interesting_df = pd.DataFrame([{"pathogen": "p1", "antibiotic": "a1"}])
+
+        with TemporaryDirectory() as tmpdir:
+            saved = save_category_driver_plots(
+                category_counts_df=category_counts_df,
+                interesting_df=interesting_df,
+                output_dir=tmpdir,
+                fit_end_year=2022,
+                max_plots=1,
+                figure_format="png",
+                driver_category_level="coarse",
+                verbose=False,
+            )
+
+            self.assertEqual(saved, 1)
+            self.assertTrue((Path(tmpdir) / "p1__a1__coarse_drivers.png").exists())
 
 
 if __name__ == "__main__":

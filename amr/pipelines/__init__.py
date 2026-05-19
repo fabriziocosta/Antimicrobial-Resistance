@@ -11,7 +11,9 @@ __all__ = [
     "build_collection_preflight_summary",
     "collect_yearly_amr_dataset",
     "collect_yearly_background_counts",
+    "coarsen_category_counts",
     "build_yearly_si_dataset",
+    "DEFAULT_DRIVER_CATEGORY_COARSENING_PATH",
     "DEFAULT_DRIVER_SUMMARY_COLUMNS",
     "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
     "filter_model_inputs_by_average_amr_publications",
@@ -36,6 +38,7 @@ __all__ = [
     "select_existing_columns",
     "slugify_analysis_level",
     "summarize_pair_publication_rates",
+    "summarize_pathogen_coverage",
 ]
 
 _PUBMED_INTERVAL_EXPORTS = {
@@ -60,6 +63,8 @@ _COLLECTION_PREVIEW_EXPORTS = {
 }
 _SI_EXPORTS = {
     "build_yearly_si_dataset",
+    "coarsen_category_counts",
+    "DEFAULT_DRIVER_CATEGORY_COARSENING_PATH",
     "DEFAULT_DRIVER_SUMMARY_COLUMNS",
     "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
     "filter_model_inputs_by_average_amr_publications",
@@ -74,6 +79,7 @@ _SI_EXPORTS = {
     "select_existing_columns",
     "slugify_analysis_level",
     "summarize_pair_publication_rates",
+    "summarize_pathogen_coverage",
 }
 _GLASS_SI_EXPORTS = {
     "build_glass_match_table",
