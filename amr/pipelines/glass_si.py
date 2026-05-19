@@ -17,6 +17,9 @@ REQUIRED_INTERACTIVE_RANK_COLUMNS = {
     "latest_available_predicted_SI",
     "post_fit_count_abs_pct_error_mean",
     "n_count_error_years",
+    "curve_fit_end_year",
+    "post_fit_validation_end_year",
+    "si_loess_residual_variance_mean",
 }
 
 GLASS_MATCH_COLUMNS = [
@@ -86,6 +89,8 @@ def load_or_build_interactive_rank(
     fit_start_year: int,
     fit_end_year: int,
     num_future_years: int,
+    curve_fit_end_year: int | None = None,
+    post_fit_validation_end_year: int | None = None,
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: int | None = None,
@@ -106,15 +111,44 @@ def load_or_build_interactive_rank(
         if source_path.exists():
             cache_is_stale = rank_output_path.stat().st_mtime < source_path.stat().st_mtime
 
-    if rank_df.empty or missing_rank_columns or cache_is_stale:
+    def _cached_value_matches(column: str, expected: int | float | None) -> bool:
+        if expected is None or rank_df.empty or column not in rank_df.columns:
+            return True
+        values = pd.to_numeric(rank_df[column], errors="coerce").dropna().unique()
+        return len(values) == 1 and float(values[0]) == float(expected)
+
+    metadata_mismatch = False
+    if not rank_df.empty:
+        expected_curve_fit_end_year = fit_end_year if curve_fit_end_year is None else curve_fit_end_year
+        if post_fit_validation_end_year is None:
+            observed_years = pd.to_numeric(si_df["year"], errors="coerce").dropna().astype(int)
+            complete_observed_years = observed_years.loc[observed_years < pd.Timestamp.today().year]
+            expected_post_fit_validation_end_year = (
+                fit_end_year if complete_observed_years.empty else int(complete_observed_years.max())
+            )
+        else:
+            expected_post_fit_validation_end_year = post_fit_validation_end_year
+        metadata_mismatch = not (
+            _cached_value_matches("fit_start_year", fit_start_year)
+            and _cached_value_matches("fit_end_year", fit_end_year)
+            and _cached_value_matches("curve_fit_end_year", expected_curve_fit_end_year)
+            and _cached_value_matches("post_fit_validation_end_year", expected_post_fit_validation_end_year)
+            and _cached_value_matches("num_future_years", num_future_years)
+        )
+
+    if rank_df.empty or missing_rank_columns or cache_is_stale or metadata_mismatch:
         if verbose and missing_rank_columns:
             print(f"Recomputing rank data because cached file is missing: {sorted(missing_rank_columns)}")
         if verbose and cache_is_stale:
             print(f"Recomputing rank data because {rank_output_path} is older than {source_path}")
+        if verbose and metadata_mismatch:
+            print("Recomputing rank data because cached fit metadata does not match the requested endpoints.")
         rank_df = rank_yearly_pairs_by_future_si_shift(
             si_df,
             fit_start_year=fit_start_year,
             fit_end_year=fit_end_year,
+            curve_fit_end_year=curve_fit_end_year,
+            post_fit_validation_end_year=post_fit_validation_end_year,
             num_future_years=num_future_years,
             save_path=str(rank_output_path),
             loess_frac=loess_frac,

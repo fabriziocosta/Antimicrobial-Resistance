@@ -13,6 +13,7 @@ from amr.si import (
     plot_yearly_category_driver_counts,
     plot_yearly_si_pair,
     rank_yearly_pairs_by_future_si_shift,
+    select_interesting_yearly_rank_cases,
     summarize_si_change_drivers,
 )
 from amr.si.core import AMR_DRIVER_CATEGORY_COLORS, MISSING_LLM_INFORMATION_CATEGORY
@@ -155,9 +156,114 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             "latest_available_predicted_SI",
             "n_count_error_years",
             "post_fit_count_abs_pct_error_mean",
+            "si_loess_residual_variance_mean",
+            "si_loess_residual_std",
         ]:
             self.assertIn(col, rank_df.columns)
             self.assertIn(col, saved_rank_df.columns)
+
+    def test_rank_uses_separate_validation_and_curve_fit_windows(self) -> None:
+        si_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": year,
+                    "count": 10 + (year - 2000),
+                    "bg_pathogen_n": 100 + year - 2000,
+                    "bg_antibiotic_n": 80 + year - 2000,
+                    "expected_count_global": 8.0 + 0.2 * (year - 2000),
+                    "expected_log_count_global": 1.0 + 0.01 * (year - 2000),
+                    "SI": 0.2 + 0.03 * (year - 2000),
+                }
+                for year in range(2000, 2027)
+            ]
+        )
+
+        rank_df = rank_yearly_pairs_by_future_si_shift(
+            si_df,
+            fit_start_year=2000,
+            fit_end_year=2023,
+            curve_fit_end_year=2025,
+            post_fit_validation_end_year=2025,
+            num_future_years=2,
+            save_path=None,
+            verbose=False,
+        )
+        row = rank_df.loc[rank_df["status"] == "ok"].iloc[0]
+        curve_result = fit_predict_yearly_si_loess(
+            si_df,
+            pathogen="p1",
+            antibiotic="a1",
+            fit_start_year=2000,
+            fit_end_year=2025,
+            num_additional_years=2,
+        )
+        curve_pred_df = curve_result["pred_df"].set_index("year")
+        expected_si_change = (
+            float(curve_pred_df.loc[2027, "predicted_SI"])
+            - float(curve_pred_df.loc[2025, "predicted_SI"])
+        )
+        curve_fit_comparison_df = curve_result["detailed_comparison_df"].query("year >= 2000 and year <= 2025")
+        expected_variance = float((curve_fit_comparison_df["prediction_error"] ** 2).mean())
+
+        self.assertEqual(int(row["reference_year"]), 2025)
+        self.assertEqual(int(row["future_year"]), 2027)
+        self.assertEqual(int(row["curve_fit_end_year"]), 2025)
+        self.assertEqual(int(row["post_fit_validation_end_year"]), 2025)
+        self.assertEqual(int(row["raw_latest_available_year"]), 2026)
+        self.assertEqual(int(row["latest_available_year"]), 2025)
+        self.assertEqual(int(row["n_post_fit_observed_years"]), 2)
+        self.assertEqual(int(row["latest_post_fit_observed_year"]), 2025)
+        self.assertAlmostEqual(float(row["si_change"]), expected_si_change)
+        self.assertAlmostEqual(float(row["si_loess_residual_variance_mean"]), expected_variance)
+
+    def test_interesting_selection_can_filter_noisy_si_loess_curves(self) -> None:
+        rank_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "status": "ok",
+                    "current_predicted_count": 20.0,
+                    "future_predicted_count": 30.0,
+                    "future_predicted_SI": 1.0,
+                    "si_change": 0.5,
+                    "n_post_fit_observed_years": 1,
+                    "post_fit_si_abs_error_mean": 0.1,
+                    "post_fit_si_abs_pct_error_mean": 5.0,
+                    "si_loess_residual_variance_mean": 0.05,
+                },
+                {
+                    "pathogen": "p2",
+                    "antibiotic": "a2",
+                    "status": "ok",
+                    "current_predicted_count": 20.0,
+                    "future_predicted_count": 30.0,
+                    "future_predicted_SI": 2.0,
+                    "si_change": 0.5,
+                    "n_post_fit_observed_years": 1,
+                    "post_fit_si_abs_error_mean": 0.1,
+                    "post_fit_si_abs_pct_error_mean": 5.0,
+                    "si_loess_residual_variance_mean": 1.5,
+                },
+            ]
+        )
+
+        selected = select_interesting_yearly_rank_cases(
+            rank_df,
+            min_current_predicted_count=1.0,
+            min_future_predicted_count=1.0,
+            min_si_change=0.0,
+            min_post_fit_observed_years=1,
+            max_post_fit_si_abs_error_mean=1.0,
+            max_post_fit_si_abs_pct_error_mean=100.0,
+            max_si_loess_residual_variance_mean=0.1,
+            fallback_top_n=0,
+        )
+
+        self.assertEqual(set(zip(selected["pathogen"], selected["antibiotic"])), {("p1", "a1")})
+        self.assertTrue(selected["passes_si_loess_residual_variance"].all())
 
     def test_yearly_si_plot_includes_zero_reference_line(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()

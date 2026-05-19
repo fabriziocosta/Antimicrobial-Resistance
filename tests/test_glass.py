@@ -9,6 +9,7 @@ from amr.glass import load_and_clean_glass_list
 from amr.pipelines.glass_si import (
     build_glass_match_table,
     build_novel_prediction_table,
+    load_or_build_interactive_rank,
     plot_future_si_vs_si_shift,
     plot_latest_si_vs_future_si,
 )
@@ -73,6 +74,45 @@ class GlassCleaningTests(unittest.TestCase):
             self.assertIn(("Escherichia coli", "Sulfamethoxazole/trimethoprim"), pairs)
             self.assertIn(("Salmonella enterica", "Cefotaxime"), pairs)
             self.assertFalse(cleaned_df["Class"].isna().any())
+
+    def test_interactive_rank_cache_rebuilds_when_curve_fit_endpoint_changes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rank_path = Path(tmpdir) / "rank.parquet"
+            cached_df = pd.DataFrame(
+                [
+                    {
+                        "pathogen": "p1",
+                        "antibiotic": "a1",
+                        "fit_start_year": 2000,
+                        "fit_end_year": 2023,
+                        "curve_fit_end_year": 2023,
+                        "post_fit_validation_end_year": 2025,
+                        "num_future_years": 2,
+                        "latest_available_count": 10,
+                        "latest_available_predicted_SI": 0.1,
+                        "post_fit_count_abs_pct_error_mean": 5.0,
+                        "n_count_error_years": 2,
+                    }
+                ]
+            )
+            cached_df.to_parquet(rank_path, index=False)
+            rebuilt_df = cached_df.copy()
+            rebuilt_df["curve_fit_end_year"] = 2025
+
+            with patch("amr.pipelines.glass_si.rank_yearly_pairs_by_future_si_shift", return_value=rebuilt_df) as mocked_rank:
+                rank_df = load_or_build_interactive_rank(
+                    pd.DataFrame({"pathogen": ["p1"], "antibiotic": ["a1"], "year": [2025], "SI": [0.1]}),
+                    rank_path,
+                    fit_start_year=2000,
+                    fit_end_year=2023,
+                    curve_fit_end_year=2025,
+                    post_fit_validation_end_year=2025,
+                    num_future_years=2,
+                    verbose=False,
+                )
+
+            mocked_rank.assert_called_once()
+            self.assertEqual(int(rank_df["curve_fit_end_year"].iloc[0]), 2025)
 
     def test_glass_si_tables_and_scatter_plot_use_shared_visual_encoding(self) -> None:
         plot_df = pd.DataFrame(

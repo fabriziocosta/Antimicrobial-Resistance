@@ -41,6 +41,7 @@ DEFAULT_INTERESTING_SUMMARY_COLUMNS = [
     "si_change",
     "current_predicted_count",
     "future_predicted_count",
+    "si_loess_residual_variance_mean",
     "post_fit_si_abs_pct_error_mean",
 ]
 
@@ -558,11 +559,14 @@ def rank_future_high_interest_pairs(
     fit_start_year: int = 1970,
     fit_end_year: int | None = None,
     num_future_years: int = 20,
+    curve_fit_end_year: int | None = None,
+    post_fit_validation_end_year: int | None = None,
     min_current_predicted_count: float = 10.0,
     min_future_predicted_count: float = 10.0,
     min_si_change: float = 0.1,
     min_post_fit_observed_years: int = 1,
     max_post_fit_si_abs_pct_error_mean: float = 40.0,
+    max_si_loess_residual_variance_mean: float | None = None,
     fallback_top_n: int = 0,
     rank_output_path: str | Path = "yearly_si_ranked_future.parquet",
     interesting_output_path: str | Path | None = "yearly_si_ranked_future_interesting.parquet",
@@ -576,6 +580,8 @@ def rank_future_high_interest_pairs(
         si_df,
         fit_start_year=fit_start_year,
         fit_end_year=fit_end_year,
+        curve_fit_end_year=curve_fit_end_year,
+        post_fit_validation_end_year=post_fit_validation_end_year,
         num_future_years=num_future_years,
         save_path=str(rank_output_path),
         loess_frac=loess_frac,
@@ -590,6 +596,7 @@ def rank_future_high_interest_pairs(
         min_si_change=min_si_change,
         min_post_fit_observed_years=min_post_fit_observed_years,
         max_post_fit_si_abs_pct_error_mean=max_post_fit_si_abs_pct_error_mean,
+        max_si_loess_residual_variance_mean=max_si_loess_residual_variance_mean,
         fallback_top_n=fallback_top_n,
     )
     if interesting_output_path:
@@ -807,6 +814,7 @@ def save_interesting_si_plots(
     fit_start_year: int,
     fit_end_year: int,
     num_future_years: int,
+    curve_fit_end_year: int | None = None,
     pathogen_background_df: pd.DataFrame | None = None,
     antibiotic_background_df: pd.DataFrame | None = None,
     max_plots: int = 25,
@@ -825,13 +833,14 @@ def save_interesting_si_plots(
     figure_format = str(figure_format).strip().lstrip(".") or "pdf"
     saved_plots = 0
     displayed_plots = 0
+    plot_fit_end_year = fit_end_year if curve_fit_end_year is None else int(curve_fit_end_year)
     for row in interesting_df.head(max_plots).itertuples(index=False):
         result = plot_yearly_si_pair(
             si_df=si_df,
             pathogen=row.pathogen,
             antibiotic=row.antibiotic,
             fit_start_year=fit_start_year,
-            fit_end_year=fit_end_year,
+            fit_end_year=plot_fit_end_year,
             num_additional_years=num_future_years,
             loess_frac=loess_frac,
             loess_degree=loess_degree,

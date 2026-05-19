@@ -673,6 +673,8 @@ def rank_yearly_pairs_by_future_si_shift(
     *,
     fit_start_year: int = 1970,
     fit_end_year: int | None = None,
+    curve_fit_end_year: int | None = None,
+    post_fit_validation_end_year: int | None = None,
     num_future_years: int = 20,
     reference_year: int | None = None,
     min_train_points: int = 3,
@@ -692,13 +694,26 @@ def rank_yearly_pairs_by_future_si_shift(
 
     if fit_end_year is None:
         fit_end_year = int(pd.to_numeric(si_df["year"], errors="coerce").max())
+    if curve_fit_end_year is None:
+        curve_fit_end_year = int(fit_end_year)
     if reference_year is None:
-        reference_year = int(fit_end_year)
+        reference_year = int(curve_fit_end_year)
     if fit_end_year < fit_start_year:
         raise ValueError("fit_end_year must be >= fit_start_year.")
+    if curve_fit_end_year < fit_start_year:
+        raise ValueError("curve_fit_end_year must be >= fit_start_year.")
 
     reference_year = int(reference_year)
     fit_end_year = int(fit_end_year)
+    curve_fit_end_year = int(curve_fit_end_year)
+    observed_years = pd.to_numeric(si_df["year"], errors="coerce").dropna().astype(int)
+    if post_fit_validation_end_year is None:
+        complete_observed_years = observed_years.loc[observed_years < pd.Timestamp.today().year]
+        if complete_observed_years.empty:
+            post_fit_validation_end_year = fit_end_year
+        else:
+            post_fit_validation_end_year = int(complete_observed_years.max())
+    post_fit_validation_end_year = int(post_fit_validation_end_year)
     target_year = int(reference_year + int(num_future_years))
     pair_lookup = _build_pair_lookup(si_df)
     pair_index_df = (
@@ -724,21 +739,42 @@ def rank_yearly_pairs_by_future_si_shift(
             print(f"[{idx}/{total_pairs}] ranking {pathogen} vs {antibiotic}", flush=True)
         try:
             pair_df = pair_lookup[(pathogen, antibiotic)].copy()
-            latest_available_year = int(pair_df["year"].max())
-            horizon_years = max(int(num_future_years), target_year - latest_available_year, 0)
-            result = fit_predict_yearly_si_loess(
+            raw_latest_available_year = int(pair_df["year"].max())
+            curve_horizon_years = max(int(num_future_years), target_year - raw_latest_available_year, 0)
+            validation_horizon_years = max(
+                post_fit_validation_end_year - raw_latest_available_year,
+                curve_horizon_years if curve_fit_end_year == fit_end_year else 0,
+                0,
+            )
+            validation_result = fit_predict_yearly_si_loess(
                 si_df=si_df,
                 pathogen=pathogen,
                 antibiotic=antibiotic,
                 fit_start_year=fit_start_year,
                 fit_end_year=fit_end_year,
-                num_additional_years=horizon_years,
+                num_additional_years=validation_horizon_years,
                 min_train_points=min_train_points,
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
                 tail_damping_years=tail_damping_years,
                 pair_df=pair_df,
             )
+            if curve_fit_end_year == fit_end_year:
+                result = validation_result
+            else:
+                result = fit_predict_yearly_si_loess(
+                    si_df=si_df,
+                    pathogen=pathogen,
+                    antibiotic=antibiotic,
+                    fit_start_year=fit_start_year,
+                    fit_end_year=curve_fit_end_year,
+                    num_additional_years=curve_horizon_years,
+                    min_train_points=min_train_points,
+                    loess_frac=loess_frac,
+                    loess_degree=loess_degree,
+                    tail_damping_years=tail_damping_years,
+                    pair_df=pair_df,
+                )
             pred_df = result["pred_df"]
             current_row = pred_df.loc[pred_df["year"] == reference_year]
             future_row = pred_df.loc[pred_df["year"] == target_year]
@@ -754,6 +790,7 @@ def rank_yearly_pairs_by_future_si_shift(
             current_count = (
                 float(observed_current_df["count"].iloc[0]) if not observed_current_df.empty and "count" in observed_current_df.columns else np.nan
             )
+            latest_available_year = reference_year
             latest_available_df = pair_df.loc[pair_df["year"] == latest_available_year]
             latest_available_count = (
                 float(latest_available_df["count"].iloc[0])
@@ -776,10 +813,22 @@ def rank_yearly_pairs_by_future_si_shift(
                 if not latest_available_pred_df.empty
                 else np.nan
             )
-            holdout_df = result["detailed_comparison_df"].loc[result["detailed_comparison_df"]["year"] > fit_end_year].copy()
+            validation_comparison_df = validation_result["detailed_comparison_df"]
+            curve_fit_comparison_df = result["detailed_comparison_df"].loc[
+                result["detailed_comparison_df"]["year"].between(fit_start_year, curve_fit_end_year)
+            ].copy()
+            if curve_fit_comparison_df.empty:
+                si_loess_residual_variance_mean = np.nan
+                si_loess_residual_std = np.nan
+            else:
+                si_loess_residual_variance_mean = float(np.square(curve_fit_comparison_df["prediction_error"]).mean())
+                si_loess_residual_std = float(np.sqrt(si_loess_residual_variance_mean))
+            holdout_df = validation_comparison_df.loc[
+                validation_comparison_df["year"].between(fit_end_year + 1, post_fit_validation_end_year)
+            ].copy()
             holdout_df["si_pct_error"] = _safe_pct_error(holdout_df["prediction_error"], holdout_df["observed_SI"])
-            count_error_df = result["detailed_comparison_df"].loc[
-                result["detailed_comparison_df"]["year"].between(fit_end_year, latest_available_year)
+            count_error_df = validation_comparison_df.loc[
+                validation_comparison_df["year"].between(fit_end_year + 1, post_fit_validation_end_year)
             ].copy()
             count_error_df["count_pct_error_loess"] = _safe_pct_error(
                 count_error_df["count_prediction_error_loess"],
@@ -834,6 +883,9 @@ def rank_yearly_pairs_by_future_si_shift(
                     "num_future_years": int(num_future_years),
                     "fit_start_year": fit_start_year,
                     "fit_end_year": fit_end_year,
+                    "curve_fit_end_year": curve_fit_end_year,
+                    "post_fit_validation_end_year": post_fit_validation_end_year,
+                    "raw_latest_available_year": raw_latest_available_year,
                     "latest_available_year": latest_available_year,
                     "n_pair_years": int(pair_df["year"].nunique()),
                     "current_si_source": current_source,
@@ -866,9 +918,14 @@ def rank_yearly_pairs_by_future_si_shift(
                     "post_fit_si_abs_error_mean": post_fit_si_abs_error_mean,
                     "post_fit_si_pct_error_mean": post_fit_si_pct_error_mean,
                     "post_fit_si_abs_pct_error_mean": post_fit_si_abs_pct_error_mean,
+                    "si_loess_residual_variance_mean": si_loess_residual_variance_mean,
+                    "si_loess_residual_std": si_loess_residual_std,
                     "loess_frac": float(result["loess_fit"]["frac"]),
                     "loess_degree": int(result["loess_fit"]["degree"]),
                     "tail_damping_years": result["loess_fit"]["tail_damping_years"],
+                    "validation_loess_frac": float(validation_result["loess_fit"]["frac"]),
+                    "validation_loess_degree": int(validation_result["loess_fit"]["degree"]),
+                    "validation_tail_damping_years": validation_result["loess_fit"]["tail_damping_years"],
                     "status": "ok",
                     "error": None,
                 }
@@ -883,6 +940,9 @@ def rank_yearly_pairs_by_future_si_shift(
                     "num_future_years": int(num_future_years),
                     "fit_start_year": fit_start_year,
                     "fit_end_year": fit_end_year,
+                    "curve_fit_end_year": curve_fit_end_year,
+                    "post_fit_validation_end_year": post_fit_validation_end_year,
+                    "raw_latest_available_year": np.nan,
                     "latest_available_year": np.nan,
                     "n_pair_years": np.nan,
                     "current_si_source": None,
@@ -915,9 +975,14 @@ def rank_yearly_pairs_by_future_si_shift(
                     "post_fit_si_abs_error_mean": np.nan,
                     "post_fit_si_pct_error_mean": np.nan,
                     "post_fit_si_abs_pct_error_mean": np.nan,
+                    "si_loess_residual_variance_mean": np.nan,
+                    "si_loess_residual_std": np.nan,
                     "loess_frac": float(loess_frac),
                     "loess_degree": int(loess_degree),
                     "tail_damping_years": np.nan if tail_damping_years in (_AUTO_TAIL_DAMPING, None) else float(tail_damping_years),
+                    "validation_loess_frac": float(loess_frac),
+                    "validation_loess_degree": int(loess_degree),
+                    "validation_tail_damping_years": np.nan if tail_damping_years in (_AUTO_TAIL_DAMPING, None) else float(tail_damping_years),
                     "status": "failed",
                     "error": str(exc),
                 }
@@ -951,6 +1016,7 @@ def select_interesting_yearly_rank_cases(
     min_post_fit_observed_years: int = 3,
     max_post_fit_si_abs_error_mean: float = 0.5,
     max_post_fit_si_abs_pct_error_mean: float = 50.0,
+    max_si_loess_residual_variance_mean: float | None = None,
     require_post_fit_validation: bool = True,
     fallback_top_n: int = 50,
     max_count_for_scoring: float = 1e4,
@@ -965,7 +1031,12 @@ def select_interesting_yearly_rank_cases(
         raise KeyError(f"rank_df is missing required columns: {sorted(missing)}")
 
     work = rank_df.loc[rank_df["status"].eq("ok")].copy()
-    for col in ["post_fit_si_abs_error_mean", "post_fit_si_abs_pct_error_mean", "n_post_fit_observed_years"]:
+    for col in [
+        "post_fit_si_abs_error_mean",
+        "post_fit_si_abs_pct_error_mean",
+        "n_post_fit_observed_years",
+        "si_loess_residual_variance_mean",
+    ]:
         if col not in work.columns:
             work[col] = np.nan
 
@@ -977,6 +1048,12 @@ def select_interesting_yearly_rank_cases(
     work["passes_si_change"] = pd.to_numeric(work["si_change"], errors="coerce") >= float(min_si_change)
     work["passes_future_count_ceiling"] = True if max_future_predicted_count is None else (future_count <= float(max_future_predicted_count))
     work["passes_future_growth_ratio"] = True if max_future_to_current_ratio is None else (work["future_to_current_ratio"] <= float(max_future_to_current_ratio))
+    si_loess_residual_variance = pd.to_numeric(work["si_loess_residual_variance_mean"], errors="coerce")
+    work["passes_si_loess_residual_variance"] = (
+        True
+        if max_si_loess_residual_variance_mean is None
+        else si_loess_residual_variance <= float(max_si_loess_residual_variance_mean)
+    )
 
     post_fit_years = pd.to_numeric(work["n_post_fit_observed_years"], errors="coerce")
     post_fit_abs_error = pd.to_numeric(work["post_fit_si_abs_error_mean"], errors="coerce")
@@ -1001,6 +1078,7 @@ def select_interesting_yearly_rank_cases(
         & work["passes_future_count_ceiling"]
         & work["passes_future_growth_ratio"]
         & work["passes_si_change"]
+        & work["passes_si_loess_residual_variance"]
         & work["passes_validation"]
     )
 
