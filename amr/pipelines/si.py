@@ -15,6 +15,7 @@ from amr.si.core import (
     AMR_DRIVER_COARSE_CATEGORY_COLORS,
     AMR_DRIVER_COARSE_CATEGORY_ORDER,
     build_yearly_category_counts,
+    fit_predict_yearly_si_loess,
     fit_global_pooled_si_model,
     plot_yearly_category_driver_counts,
     plot_yearly_si_pair,
@@ -58,6 +59,39 @@ DEFAULT_DRIVER_SUMMARY_COLUMNS = [
     "driver_fastest_growing_category",
     "driver_weak_signal_share",
     "driver_manual_review_share",
+]
+
+DEFAULT_DECREASING_SI_SUMMARY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "reference_year",
+    "future_year",
+    "current_predicted_SI",
+    "future_predicted_SI",
+    "si_change",
+    "current_predicted_count",
+    "future_predicted_count",
+    "si_loess_residual_variance_mean",
+    "post_fit_si_abs_pct_error_mean",
+]
+
+DEFAULT_SMOOTHED_SI_SHAPE_SUMMARY_COLUMNS = [
+    "pathogen",
+    "antibiotic",
+    "shape_start_year",
+    "shape_midpoint_year",
+    "curve_fit_end_year",
+    "shape_end_year",
+    "start_predicted_SI",
+    "midpoint_predicted_SI",
+    "end_predicted_SI",
+    "endpoint_balance_abs_diff",
+    "convex_u_score",
+    "concave_cap_score",
+    "si_quadratic_coef",
+    "si_quadratic_r2",
+    "si_change",
+    "si_loess_residual_variance_mean",
 ]
 
 
@@ -866,6 +900,221 @@ def save_interesting_si_plots(
     return saved_plots
 
 
+def _slugify_plot_name(value: object) -> str:
+    return (
+        str(value)
+        .strip()
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(" ", "_")
+        .replace(":", "_")
+    )
+
+
+def select_decreasing_smoothed_si_trends(
+    rank_df: pd.DataFrame,
+    *,
+    output_path: str | Path | None = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Return ranked pairs whose smoothed SI decreases from reference to future year."""
+    required_cols = {"status", "si_change"}
+    missing = required_cols - set(rank_df.columns)
+    if missing:
+        raise KeyError(f"rank_df is missing required columns: {sorted(missing)}")
+
+    out = (
+        rank_df.loc[
+            rank_df["status"].eq("ok")
+            & pd.to_numeric(rank_df["si_change"], errors="coerce").lt(0)
+        ]
+        .copy()
+        .sort_values("si_change", ascending=True)
+        .reset_index(drop=True)
+    )
+    if output_path:
+        atomic_write_parquet(out, output_path, index=False)
+        if verbose:
+            print(f"Saved decreasing smoothed SI table: {len(out):,} rows -> {output_path}")
+    return out
+
+
+def summarize_smoothed_si_shapes(
+    rank_df: pd.DataFrame,
+    si_df: pd.DataFrame,
+    *,
+    fit_start_year: int,
+    curve_fit_end_year: int,
+    num_future_years: int,
+    loess_frac: float = 0.6,
+    loess_degree: int = 1,
+    tail_damping_years: Any = None,
+) -> pd.DataFrame:
+    """Score smoothed SI curves for U-shaped and inverted-U shape."""
+    rows: list[dict[str, Any]] = []
+    curve_end_year = int(curve_fit_end_year) + int(num_future_years)
+    for row in rank_df.loc[rank_df["status"].eq("ok")].itertuples(index=False):
+        try:
+            result = fit_predict_yearly_si_loess(
+                si_df,
+                pathogen=row.pathogen,
+                antibiotic=row.antibiotic,
+                fit_start_year=fit_start_year,
+                fit_end_year=curve_fit_end_year,
+                num_additional_years=num_future_years,
+                loess_frac=loess_frac,
+                loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "pathogen": row.pathogen,
+                    "antibiotic": row.antibiotic,
+                    "shape_status": "failed",
+                    "shape_error": str(exc),
+                }
+            )
+            continue
+
+        pred_df = result["pred_df"].loc[
+            lambda df: df["year"].between(int(fit_start_year), curve_end_year)
+        ].copy()
+        if pred_df["year"].nunique() < 3:
+            continue
+
+        shape_start_year = int(pred_df["year"].min())
+        shape_end_year = int(pred_df["year"].max())
+        midpoint_year = int(round((shape_start_year + shape_end_year) / 2))
+        midpoint_idx = (pred_df["year"] - midpoint_year).abs().idxmin()
+
+        x = pred_df["year"].to_numpy(dtype=float) - float(midpoint_year)
+        y = pred_df["predicted_SI"].to_numpy(dtype=float)
+        quadratic_coef, linear_coef, intercept = np.polyfit(x, y, deg=2)
+        fitted_y = (quadratic_coef * x * x) + (linear_coef * x) + intercept
+        total_ss = float(np.square(y - y.mean()).sum())
+        residual_ss = float(np.square(y - fitted_y).sum())
+        quadratic_r2 = np.nan if total_ss <= 0 else 1.0 - (residual_ss / total_ss)
+
+        start_si = float(pred_df.loc[pred_df["year"].eq(shape_start_year), "predicted_SI"].iloc[0])
+        end_si = float(pred_df.loc[pred_df["year"].eq(shape_end_year), "predicted_SI"].iloc[0])
+        midpoint_si = float(pred_df.loc[midpoint_idx, "predicted_SI"])
+        endpoint_mean = float(np.mean([start_si, end_si]))
+        convex_u_score = endpoint_mean - midpoint_si
+        concave_cap_score = midpoint_si - endpoint_mean
+
+        rows.append(
+            {
+                "pathogen": row.pathogen,
+                "antibiotic": row.antibiotic,
+                "shape_start_year": shape_start_year,
+                "curve_fit_end_year": int(curve_fit_end_year),
+                "shape_end_year": shape_end_year,
+                "shape_midpoint_year": int(pred_df.loc[midpoint_idx, "year"]),
+                "start_predicted_SI": start_si,
+                "midpoint_predicted_SI": midpoint_si,
+                "end_predicted_SI": end_si,
+                "endpoint_balance_abs_diff": float(abs(end_si - start_si)),
+                "convex_u_score": convex_u_score,
+                "concave_cap_score": concave_cap_score,
+                "shape_strength": float(abs(endpoint_mean - midpoint_si)),
+                "si_quadratic_coef": float(quadratic_coef),
+                "si_quadratic_r2": quadratic_r2,
+                "current_predicted_SI": getattr(row, "current_predicted_SI", np.nan),
+                "future_predicted_SI": getattr(row, "future_predicted_SI", np.nan),
+                "si_change": getattr(row, "si_change", np.nan),
+                "si_loess_residual_variance_mean": getattr(row, "si_loess_residual_variance_mean", np.nan),
+                "shape_status": "ok",
+                "shape_error": None,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def select_smoothed_si_shape_cases(
+    shape_df: pd.DataFrame,
+    *,
+    top_n: int = 10,
+    convex_output_path: str | Path | None = None,
+    concave_output_path: str | Path | None = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return top U-shaped and inverted-U smoothed SI curves."""
+    ok_shape_df = shape_df.loc[shape_df["shape_status"].eq("ok")].copy()
+    convex_df = (
+        ok_shape_df.loc[pd.to_numeric(ok_shape_df["convex_u_score"], errors="coerce").gt(0)]
+        .sort_values(["convex_u_score", "si_quadratic_r2"], ascending=[False, False])
+        .head(int(top_n))
+        .reset_index(drop=True)
+    )
+    concave_df = (
+        ok_shape_df.loc[pd.to_numeric(ok_shape_df["concave_cap_score"], errors="coerce").gt(0)]
+        .sort_values(["concave_cap_score", "si_quadratic_r2"], ascending=[False, False])
+        .head(int(top_n))
+        .reset_index(drop=True)
+    )
+    if convex_output_path:
+        atomic_write_parquet(convex_df, convex_output_path, index=False)
+        if verbose:
+            print(f"Saved convex U-shaped smoothed SI table: {len(convex_df):,} rows -> {convex_output_path}")
+    if concave_output_path:
+        atomic_write_parquet(concave_df, concave_output_path, index=False)
+        if verbose:
+            print(f"Saved concave inverted-U smoothed SI table: {len(concave_df):,} rows -> {concave_output_path}")
+    return convex_df, concave_df
+
+
+def save_smoothed_si_screen_plots(
+    *,
+    screen_df: pd.DataFrame,
+    si_df: pd.DataFrame,
+    output_dir: str | Path,
+    fit_start_year: int,
+    curve_fit_end_year: int,
+    num_future_years: int,
+    pathogen_background_df: pd.DataFrame | None = None,
+    antibiotic_background_df: pd.DataFrame | None = None,
+    max_plots: int = 10,
+    loess_frac: float = 0.6,
+    loess_degree: int = 1,
+    tail_damping_years: Any = None,
+    fill_missing_amr_counts_with_zero: bool = True,
+    figure_format: str = "pdf",
+    display_plots: bool = False,
+    verbose: bool = True,
+) -> int:
+    """Save and optionally display SI plots for a shape-screen table."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figure_format = str(figure_format).strip().lstrip(".") or "pdf"
+    saved_plots = 0
+    for row in screen_df.head(max_plots).itertuples(index=False):
+        result = plot_yearly_si_pair(
+            si_df=si_df,
+            pathogen=row.pathogen,
+            antibiotic=row.antibiotic,
+            fit_start_year=fit_start_year,
+            fit_end_year=curve_fit_end_year,
+            num_additional_years=num_future_years,
+            loess_frac=loess_frac,
+            loess_degree=loess_degree,
+            tail_damping_years=tail_damping_years,
+            fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
+            pathogen_background_df=pathogen_background_df,
+            antibiotic_background_df=antibiotic_background_df,
+        )
+        plot_path = output_dir / f"{_slugify_plot_name(row.pathogen)}__{_slugify_plot_name(row.antibiotic)}.{figure_format}"
+        result["figure"].savefig(plot_path, bbox_inches="tight")
+        if display_plots:
+            _display_figure(result["figure"])
+        plt.close(result["figure"])
+        saved_plots += 1
+
+    if verbose:
+        print(f"Saved {saved_plots} smoothed SI screen plots to {output_dir}")
+    return saved_plots
+
+
 def select_existing_columns(df: pd.DataFrame, columns: Sequence[str], *, head: int | None = None) -> pd.DataFrame:
     """Return the requested columns that exist, optionally limited to the first rows."""
     out = df[[col for col in columns if col in df.columns]]
@@ -880,7 +1129,9 @@ __all__ = [
     "build_yearly_si_dataset",
     "DEFAULT_DRIVER_CATEGORY_COARSENING_PATH",
     "DEFAULT_DRIVER_SUMMARY_COLUMNS",
+    "DEFAULT_DECREASING_SI_SUMMARY_COLUMNS",
     "DEFAULT_INTERESTING_SUMMARY_COLUMNS",
+    "DEFAULT_SMOOTHED_SI_SHAPE_SUMMARY_COLUMNS",
     "filter_model_inputs_by_average_amr_publications",
     "load_yearly_si_inputs",
     "print_si_dataset_summary",
@@ -888,8 +1139,12 @@ __all__ = [
     "rank_future_high_interest_pairs",
     "save_category_driver_plots",
     "save_interesting_si_plots",
+    "save_smoothed_si_screen_plots",
+    "select_decreasing_smoothed_si_trends",
     "select_existing_columns",
+    "select_smoothed_si_shape_cases",
     "slugify_analysis_level",
+    "summarize_smoothed_si_shapes",
     "summarize_pair_publication_rates",
     "summarize_pathogen_coverage",
 ]
