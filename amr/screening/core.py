@@ -33,89 +33,114 @@ You are classifying scientific abstracts about antimicrobial resistance (AMR).
 
 Task:
 Given a target pathogen, a target antibiotic or antibiotic class, a title, and an abstract,
-classify the abstract into exactly one primary category describing why this paper contributes
+classify the abstract into exactly one primary category describing why the paper contributes
 to scientific interest for the target pathogen-antibiotic pair.
+
+Core rule:
+Do not classify by keyword co-occurrence. First determine whether the abstract clearly links
+the target pathogen to the target antibiotic/class. Only assign a substantive category if the
+target pair relation is explicitly supported by the title or abstract.
+
+If the target pathogen-antibiotic relation is unclear, ambiguous, incidental, or unsupported,
+discard it by setting:
+- decision = "no"
+- primary_category = "NONE"
+- target_pair_relation_supported = false
+
+Attribution rules:
+A pathogen is linked to resistance, susceptibility, testing, treatment, or AMR relevance for an
+antimicrobial agent only when the text clearly asserts that relation.
+
+Supported links include:
+- direct modification: "methicillin-resistant Staphylococcus aureus", "meropenem-resistant Klebsiella pneumoniae";
+- explicit assertion: "E. coli isolates were resistant to gentamicin", "Klebsiella pneumoniae showed reduced susceptibility to meropenem";
+- group attribution: "gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens".
+
+Do not transfer resistance, susceptibility, testing, treatment, or AMR relevance from one pathogen
+to another merely because they occur nearby in the same sentence.
+
+Examples:
+- "Methicillin-resistant Staphylococcus aureus and E. coli were detected" supports methicillin resistance for Staphylococcus aureus, not for E. coli.
+- "Resistance to gentamicin was common in Enterococcus faecalis, while E. coli was also detected" does not support gentamicin resistance in E. coli.
+- "Gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens" supports gentamicin resistance for all three listed species.
+- "Carbapenem-resistant Klebsiella pneumoniae and Pseudomonas aeruginosa were isolated" is ambiguous unless the grammar clearly makes "carbapenem-resistant" apply to both species. If ambiguous for the target pathogen, discard.
 
 Categories:
 
-A. RESISTANCE_PREVALENCE_SURVEILLANCE
-Use this category when the abstract mainly reports resistance rates, susceptibility frequencies,
-incidence, prevalence, temporal trends, geographic spread, epidemiology, outbreak burden,
-surveillance results, or antibiogram-style findings for the target pathogen-antibiotic pair.
+1. ENVIRONMENTAL_ANIMAL_NON_HUMAN
+Use when the main setting is outside direct human clinical care, including animals, livestock,
+companion animals, wildlife, aquaculture, veterinary medicine, food production, farms,
+slaughterhouses, wastewater, sewage, rivers, soil, water, environmental sampling, non-human
+reservoirs, or One Health transmission. Use this category when the main contribution is about
+non-human reservoirs, environmental spread, animal carriage, food-chain transmission, or
+cross-sector ecology.
 
-B. RESISTANCE_MECHANISM
-Use this category when the abstract mainly studies biological or molecular mechanisms of
-resistance for the target pair, including resistance genes, beta-lactamases, carbapenemases,
-ESBLs, KPC, NDM, OXA, CTX-M, plasmids, integrons, transposons, horizontal gene transfer,
-mutations, porin loss, efflux pumps, target modification, or genomics focused on explaining
-resistance.
+2. CLINICAL_OUTBREAKS_REPORTS
+Use when the abstract mainly concerns human clinical cases, patient cohorts, infections, case
+reports, case series, hospital events, clinical burden, treatment experience, patient outcomes,
+or outbreak investigations. This includes bloodstream infection, urinary tract infection,
+pneumonia, sepsis, wound infection, intensive care unit outbreaks, nosocomial spread, mortality,
+morbidity, and clinical risk factors. Do not use this category merely because isolates came from
+a hospital laboratory if the main contribution is routine resistance monitoring. Use SURVEILLANCE instead.
 
-C. TREATMENT_EFFECTIVENESS
-Use this category when the abstract mainly evaluates clinical effectiveness or patient outcomes
-of a treatment involving the target antibiotic/class against the target pathogen.
+3. SURVEILLANCE
+Use when the abstract mainly reports resistance rates, susceptibility patterns, prevalence,
+incidence, frequency, epidemiological trends, geographic spread, temporal changes, or routine
+monitoring of the target pathogen-antibiotic pair. This includes antibiogram-style studies,
+multicentre surveillance, national or regional monitoring, and reports of percentages or
+frequencies of resistant isolates. Do not use this category when the main contribution is
+explaining the genetic, molecular, or biological basis of resistance. Use
+MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES instead.
 
-D. TREATMENT_REUSE_OR_SALVAGE
-Use this category when the abstract mainly discusses reuse, revival, repositioning, salvage use,
-niche use, oral step-down, suppressive therapy, or susceptibility-guided use of an older,
-neglected, or non-first-line agent for the target pathogen.
+4. MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES
+Use when the abstract mainly studies how resistance occurs, how it is encoded, how it spreads
+biologically, or how it behaves under laboratory investigation. This includes resistance genes,
+mutations, plasmids, integrons, transposons, horizontal gene transfer, beta-lactamases,
+carbapenemases, ESBLs, KPC, NDM, OXA, CTX-M, MCR, VAN, efflux pumps, porin loss, target
+modification, enzymatic inactivation, biofilm-associated resistance, adaptive resistance,
+whole-genome sequencing, molecular epidemiology, MIC shifts, gene expression, fitness cost, or
+laboratory resistance evolution. Prefer this category over SURVEILLANCE when the abstract both
+reports resistance rates and explains the mechanism of resistance.
 
-E. DIAGNOSTIC_STEWARDSHIP
-Use this category when the abstract mainly concerns testing, detection, reporting, diagnostic
-workflows, breakpoint interpretation, laboratory methods, or decision support for the target
-pathogen-antibiotic pair.
+5. OTHER
+Use when the abstract is AMR-relevant but does not fit any of the categories above, including
+cases where the target pathogen-antibiotic relation demonstrates resistance but does not clearly
+belong in the other four categories. Use OTHER for diagnostics, policy, stewardship, guidelines,
+prescribing behaviour, antibiotic consumption, reviews, modelling, economic burden, education,
+or broad AMR discussions.
 
-F. GUIDELINE_POLICY_STEWARDSHIP
-Use this category when the abstract mainly concerns prescribing policy, guideline
-recommendations, antimicrobial stewardship programmes, formulary restrictions, antibiotic
-consumption, implementation of recommendations, or healthcare policy involving the target pair.
-
-G. ONE_HEALTH_ENVIRONMENTAL_RESERVOIR
-Use this category when the abstract mainly studies the target pair in animals, food,
-agriculture, wastewater, environment, transmission reservoirs, or cross-sector AMR ecology.
-
-H. CO_OCCURRENCE_OR_WEAK_SIGNAL
-Use this category when the target pathogen and target antibiotic/class are both mentioned, but
-the abstract is not centrally about the target pair, or when there is not enough information to
-infer a stronger category.
-
-Classification rules:
-1. Classify according to the main scientific contribution, not merely keyword occurrence.
-2. The target pair must be central to the category. If the abstract mentions the pathogen and
-   antibiotic only incidentally, choose CO_OCCURRENCE_OR_WEAK_SIGNAL.
-3. If pair_centrality is "incidental", primary_category must be
-   "CO_OCCURRENCE_OR_WEAK_SIGNAL", even if the abstract contains AMR-related words.
-4. Prefer RESISTANCE_MECHANISM over RESISTANCE_PREVALENCE_SURVEILLANCE when the abstract
-   explains why resistance occurs mechanistically, even if it also reports resistance rates.
-5. Prefer TREATMENT_EFFECTIVENESS over RESISTANCE_PREVALENCE_SURVEILLANCE when the main
-   outcome is patient response to therapy, even if susceptibility is reported.
-6. Prefer TREATMENT_REUSE_OR_SALVAGE over TREATMENT_EFFECTIVENESS when the main framing is
-   revival, salvage use, oral step-down, suppressive therapy, or reuse of an older/non-first-line
-   drug.
-7. Prefer DIAGNOSTIC_STEWARDSHIP when the main contribution is how resistance is detected,
-   tested, reported, or interpreted.
-8. Prefer GUIDELINE_POLICY_STEWARDSHIP when the main contribution is prescribing behaviour,
-   policy, guidelines, antibiotic consumption, or stewardship implementation.
-9. Prefer ONE_HEALTH_ENVIRONMENTAL_RESERVOIR when the main setting is animals, food, farms,
-   wastewater, environment, or cross-sector transmission.
-10. If the abstract does not provide enough evidence for a confident category, choose
-    CO_OCCURRENCE_OR_WEAK_SIGNAL.
-
-Decision labels for backward compatibility:
-- yes: the abstract is AMR-relevant for the target pair and pair_centrality is central or partial.
-- no: the abstract is not AMR-relevant for the target pair, or pair_centrality is incidental.
+Decision labels:
+- yes: the abstract is AMR-relevant for the target pathogen-antibiotic pair, and the target pair relation is explicitly supported.
+- no: the abstract is not AMR-relevant for the target pair, or the target pair relation is ambiguous, incidental, unsupported, or based only on co-occurrence.
 - uncertain: abstract missing, ambiguous, or insufficient to judge confidently.
+
+Internal reasoning steps:
+1. Identify pathogens mentioned.
+2. Identify antibiotics/classes mentioned.
+3. Extract explicit pathogen-antibiotic relations.
+4. Decide whether the target pathogen is clearly linked to the target antibiotic/class.
+5. If the target pair relation is unclear or ambiguous, discard it.
+6. Choose the primary category based only on evidence explicitly linked to the target pair.
+7. If attribution is ambiguous, do not infer the relation. Set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
 
 Output only valid compact JSON using this schema:
 {
   "decision": "yes | no | uncertain",
-  "primary_category": "one of: RESISTANCE_PREVALENCE_SURVEILLANCE, RESISTANCE_MECHANISM, TREATMENT_EFFECTIVENESS, TREATMENT_REUSE_OR_SALVAGE, DIAGNOSTIC_STEWARDSHIP, GUIDELINE_POLICY_STEWARDSHIP, ONE_HEALTH_ENVIRONMENTAL_RESERVOIR, CO_OCCURRENCE_OR_WEAK_SIGNAL",
-  "pair_centrality": "central | partial | incidental",
-  "confidence": "high | medium | low",
-  "rationale": "Brief explanation in 1-3 sentences. Mention the specific evidence from the title/abstract that drove the classification.",
-  "evidence_phrases": ["short phrase copied from the title or abstract"],
+  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
+  "rationale": "Brief explanation in 1-3 sentences. Mention the specific title/abstract evidence and explain whether the target pathogen-antibiotic relation is supported.",
+  "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
+  "target_pair_relation_supported": true,
   "is_amr_relevant": true,
-  "needs_manual_review": true
 }
+
+Consistency rules:
+- If target_pair_relation_supported is false, decision must be "no".
+- If the target pathogen and target antibiotic/class are mentioned separately but not clearly linked, decision must be "no" and primary_category must be "NONE".
+- If resistance, susceptibility, testing, or treatment is attributed to a different pathogen or a different antibiotic than the target pair, decision must be "no" and primary_category must be "NONE".
+- If attribution is grammatically or semantically ambiguous, decision must be "no" and primary_category must be "NONE".
+- evidence_phrases must only include phrases that support the classification.
+- Do not infer missing relations.
+- When in doubt, discard the target pair relation.
 """.strip()
 
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -126,26 +151,18 @@ LLM_BACKOFF_FACTOR = 2
 LLM_CLASSIFICATION_MAX_TOKENS = 768
 AMR_CATEGORY_COLUMNS = [
     "amr_primary_category",
-    "amr_pair_centrality",
-    "amr_confidence",
     "amr_evidence_phrases",
+    "amr_target_pair_relation_supported",
     "amr_is_relevant",
-    "amr_needs_manual_review",
 ]
 AMR_PRIMARY_CATEGORIES = {
-    "RESISTANCE_PREVALENCE_SURVEILLANCE",
-    "RESISTANCE_MECHANISM",
-    "TREATMENT_EFFECTIVENESS",
-    "TREATMENT_REUSE_OR_SALVAGE",
-    "DIAGNOSTIC_STEWARDSHIP",
-    "GUIDELINE_POLICY_STEWARDSHIP",
-    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR",
-    "CO_OCCURRENCE_OR_WEAK_SIGNAL",
+    "ENVIRONMENTAL_ANIMAL_NON_HUMAN",
+    "CLINICAL_OUTBREAKS_REPORTS",
+    "SURVEILLANCE",
+    "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
+    "OTHER",
+    "NONE",
 }
-AMR_PAIR_CENTRALITY_VALUES = {"central", "partial", "incidental"}
-AMR_CONFIDENCE_VALUES = {"high", "medium", "low"}
-
-
 def _log(log_path: str | None, message: str) -> None:
     """Write log to stdout and, if provided, append to a file."""
     import datetime as _dt
@@ -271,21 +288,21 @@ def build_user_prompt(pmid: str, pathogen: str, antibiotic: str, title: str, abs
     """Create the LLM prompt for a single PMID."""
     return f"""
 PMID: {pmid}
-Target pathogen:
+target_pathogen:
 {pathogen}
 
-Target antibiotic or antibiotic class:
+target_antibiotic:
 {antibiotic}
 
-Title:
+title:
 {title}
 
-Abstract:
+abstract:
 {abstract or '[no abstract available]'}
 
 Task:
 Classify only this target pathogen-antibiotic pair. Ignore other organisms or drugs unless they
-determine whether the target pair is central, partial, or incidental. Return only the requested JSON.
+determine whether the target pair relation is explicitly supported. Return only the requested JSON.
 """.strip()
 
 
@@ -304,27 +321,13 @@ def _extract_json_object(raw: str) -> dict:
     return data if isinstance(data, dict) else {"decision": "uncertain", "rationale": raw.strip()}
 
 
-def _normalize_primary_category(value: object, pair_centrality: str = "") -> str:
+def _normalize_primary_category(value: object, target_pair_relation_supported: bool = False) -> str:
     text = str(value or "").strip().upper()
-    if pair_centrality == "incidental":
-        return "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+    if not target_pair_relation_supported:
+        return "NONE"
     if text in AMR_PRIMARY_CATEGORIES:
         return text
-    return "CO_OCCURRENCE_OR_WEAK_SIGNAL"
-
-
-def _normalize_pair_centrality(value: object) -> str:
-    text = str(value or "").strip().lower()
-    if text in AMR_PAIR_CENTRALITY_VALUES:
-        return text
-    return "incidental"
-
-
-def _normalize_confidence(value: object) -> str:
-    text = str(value or "").strip().lower()
-    if text in AMR_CONFIDENCE_VALUES:
-        return text
-    return "low"
+    return "NONE"
 
 
 def _normalize_bool(value: object, *, default: bool) -> bool:
@@ -349,39 +352,34 @@ def _normalize_evidence_phrases(value: object) -> list[str]:
     return phrases
 
 
-def _derive_decision(data: dict, pair_centrality: str, is_amr_relevant: bool) -> str:
+def _derive_decision(data: dict, target_pair_relation_supported: bool, is_amr_relevant: bool) -> str:
     decision = _normalize_unified_decision(data.get("decision"))
     if decision != "uncertain" or "decision" in data:
         return decision
-    if is_amr_relevant and pair_centrality in {"central", "partial"}:
+    if is_amr_relevant and target_pair_relation_supported:
         return "yes"
-    if not is_amr_relevant or pair_centrality == "incidental":
+    if not is_amr_relevant or not target_pair_relation_supported:
         return "no"
     return "uncertain"
 
 
 def _normalize_classification(data: dict, pmid: str) -> dict:
-    pair_centrality = _normalize_pair_centrality(data.get("pair_centrality"))
-    primary_category = _normalize_primary_category(data.get("primary_category"), pair_centrality)
-    confidence = _normalize_confidence(data.get("confidence"))
+    target_pair_relation_supported = _normalize_bool(data.get("target_pair_relation_supported"), default=False)
     is_amr_relevant = _normalize_bool(data.get("is_amr_relevant"), default=False)
-    needs_manual_review = _normalize_bool(
-        data.get("needs_manual_review"),
-        default=confidence == "low" or pair_centrality == "incidental",
-    )
-    decision = _derive_decision(data, pair_centrality, is_amr_relevant)
-    if pair_centrality == "incidental" and decision == "yes":
+    primary_category = _normalize_primary_category(data.get("primary_category"), target_pair_relation_supported)
+    decision = _derive_decision(data, target_pair_relation_supported, is_amr_relevant)
+    if not target_pair_relation_supported and decision == "yes":
         decision = "no"
+    if decision == "no" or not is_amr_relevant:
+        primary_category = "NONE"
     return {
         "pmid": pmid,
         "decision": decision,
         "rationale": str(data.get("rationale", "") or "").strip(),
         "primary_category": primary_category,
-        "pair_centrality": pair_centrality,
-        "confidence": confidence,
         "evidence_phrases": _normalize_evidence_phrases(data.get("evidence_phrases")),
+        "target_pair_relation_supported": target_pair_relation_supported,
         "is_amr_relevant": is_amr_relevant,
-        "needs_manual_review": needs_manual_review,
     }
 
 
@@ -390,12 +388,10 @@ def _default_no_abstract_classification(pmid: str) -> dict:
         "pmid": pmid,
         "decision": "uncertain",
         "rationale": "no abstract",
-        "primary_category": "CO_OCCURRENCE_OR_WEAK_SIGNAL",
-        "pair_centrality": "incidental",
-        "confidence": "low",
+        "primary_category": "NONE",
         "evidence_phrases": [],
+        "target_pair_relation_supported": False,
         "is_amr_relevant": False,
-        "needs_manual_review": True,
     }
 
 
@@ -698,11 +694,9 @@ def run_unified_llm_filter(
     def _classification_output_fields(verdict: dict) -> dict:
         return {
             "amr_primary_category": verdict["primary_category"],
-            "amr_pair_centrality": verdict["pair_centrality"],
-            "amr_confidence": verdict["confidence"],
             "amr_evidence_phrases": verdict["evidence_phrases"],
+            "amr_target_pair_relation_supported": verdict["target_pair_relation_supported"],
             "amr_is_relevant": verdict["is_amr_relevant"],
-            "amr_needs_manual_review": verdict["needs_manual_review"],
         }
 
     def _default_no_abstract_output_fields(pmid: str) -> dict:

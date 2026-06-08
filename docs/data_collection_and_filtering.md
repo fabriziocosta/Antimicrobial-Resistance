@@ -221,16 +221,14 @@ The LLM returns JSON with:
 
 - `decision`: `yes`, `no`, or `uncertain`
 - `primary_category`: SI-driver category
-- `pair_centrality`: `central`, `partial`, or `incidental`
-- `confidence`: `high`, `medium`, or `low`
 - `rationale`
 - `evidence_phrases`
+- `target_pair_relation_supported`
 - `is_amr_relevant`
-- `needs_manual_review`
 
-The strict rule is enforced during parsing: incidental pair mentions are treated as `CO_OCCURRENCE_OR_WEAK_SIGNAL`.
+The strict rule is enforced during parsing: unsupported or ambiguous target-pair relations are treated as `NONE`.
 
-Rows without abstracts do not call the LLM. They receive deterministic weak-signal/manual-review defaults.
+Rows without abstracts do not call the LLM. They receive deterministic `uncertain` / `NONE` defaults.
 
 ### LLM Filtering Pseudocode
 

@@ -15,8 +15,7 @@ The required LLM category columns are:
 
 - `unified_decision`
 - `amr_primary_category`
-- `amr_pair_centrality`
-- `amr_needs_manual_review`
+- `amr_target_pair_relation_supported`
 
 The notebook defaults to:
 
@@ -33,11 +32,12 @@ The fine-grained LLM categories can also be read through a coarser split when th
 
 | Coarse concept | Fine categories |
 | --- | --- |
-| Resistance burden and biology | `RESISTANCE_PREVALENCE_SURVEILLANCE`, `RESISTANCE_MECHANISM` |
-| Clinical use and treatment | `TREATMENT_EFFECTIVENESS`, `TREATMENT_REUSE_OR_SALVAGE` |
-| Stewardship, diagnostics, and policy | `DIAGNOSTIC_STEWARDSHIP`, `GUIDELINE_POLICY_STEWARDSHIP` |
-| Reservoirs and transmission ecology | `ONE_HEALTH_ENVIRONMENTAL_RESERVOIR` |
-| Weak or missing evidence | `CO_OCCURRENCE_OR_WEAK_SIGNAL`, `MISSING_LLM_INFORMATION` |
+| Environmental animal non-human | `ENVIRONMENTAL_ANIMAL_NON_HUMAN` |
+| Clinical outbreaks and reports | `CLINICAL_OUTBREAKS_REPORTS` |
+| Surveillance | `SURVEILLANCE` |
+| Mechanisms genetics and lab studies | `MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES` |
+| Other | `OTHER` |
+| Unsupported or missing evidence | `NONE`, `MISSING_LLM_INFORMATION` |
 
 The reusable lookup for this split is saved in:
 
@@ -47,33 +47,23 @@ assets/amr_driver_category_coarsening.csv
 
 Notebook plotting can use either level through `DRIVER_CATEGORY_LEVEL = "original"` or `DRIVER_CATEGORY_LEVEL = "coarse"`. The `save_category_driver_plots` helper keeps `"original"` as the default API behavior, while the notebooks can opt into the coarser grouping by passing `driver_category_level="coarse"` and the lookup path.
 
-`Resistance burden and biology` captures papers where the pathogen-antibiotic pair is scientifically important because resistance is being measured, tracked, or mechanistically explained. This group combines descriptive epidemiology with molecular/genomic mechanism work, so a rise means attention is increasing around either the observed burden of resistance or the biological explanation for that resistance.
+The simplified categories are already close to the display-level grouping. The coarsening lookup mainly supplies stable ordering, colors, and the shared `Unsupported or missing evidence` bucket for `NONE` and `MISSING_LLM_INFORMATION`.
 
-`Clinical use and treatment` captures papers where the pair matters because the antibiotic is being evaluated or reconsidered as a therapy for the pathogen. It includes both conventional outcome/effectiveness studies and literature about revived, salvage, niche, or susceptibility-guided use, so a rise points to increasing clinical decision relevance rather than only resistance surveillance.
-
-`Stewardship, diagnostics, and policy` captures papers focused on how the pair is detected, reported, interpreted, prescribed, restricted, or governed. This group is useful when the scientific-interest signal is driven by operational changes in laboratories, clinical workflows, prescribing programs, guidelines, or policy rather than by new burden estimates or treatment outcomes.
-
-`Reservoirs and transmission ecology` captures papers where the pair is important in animals, food, farms, wastewater, environmental reservoirs, zoonotic routes, or broader One Health settings. A rise in this group suggests that attention is shifting toward ecological sources, transmission pathways, or cross-sector AMR monitoring.
-
-`Weak or missing evidence` captures cases where the pair-centered evidence is thin, incidental, ambiguous, or unavailable. `CO_OCCURRENCE_OR_WEAK_SIGNAL` means the abstract mentions the pathogen and antibiotic without a strong pair-centered AMR contribution, while `MISSING_LLM_INFORMATION` means category metadata is absent or came from an LLM failure. A high share of this group should be interpreted as an uncertainty flag rather than as a substantive biological or clinical driver.
+`Unsupported or missing evidence` captures cases where the pair-centered evidence is thin, incidental, ambiguous, or unavailable. `NONE` means the abstract mentions the pathogen and antibiotic without a strong pair-centered AMR contribution, while `MISSING_LLM_INFORMATION` means category metadata is absent or came from an LLM failure. A high share of this group should be interpreted as an uncertainty flag rather than as a substantive biological or clinical driver.
 
 For each reviewed abstract, the LLM assigns one primary category:
 
-- `RESISTANCE_PREVALENCE_SURVEILLANCE`: The abstract mainly reports how often resistance or reduced susceptibility is observed for the target pathogen-antibiotic pair. This includes resistance rates, susceptibility frequencies, incidence, prevalence, temporal trends, geographic spread, outbreak burden, surveillance studies, antibiograms, epidemiology, and routine monitoring outputs. A rise in this category means the pair is increasingly appearing in descriptive resistance-burden literature.
+- `SURVEILLANCE`: The abstract mainly reports how often resistance or reduced susceptibility is observed for the target pathogen-antibiotic pair. This includes resistance rates, susceptibility frequencies, incidence, prevalence, temporal trends, geographic spread, outbreak burden, surveillance studies, antibiograms, epidemiology, and routine monitoring outputs. A rise in this category means the pair is increasingly appearing in descriptive resistance-burden literature.
 
-- `RESISTANCE_MECHANISM`: The abstract mainly explains why or how resistance occurs biologically for the target pair. This includes resistance genes, beta-lactamases, carbapenemases, ESBLs, KPC, NDM, OXA, CTX-M, plasmids, integrons, transposons, horizontal gene transfer, mutations, porin loss, efflux pumps, target modification, and genomic analyses focused on resistance. This category takes priority over prevalence/surveillance when an abstract both reports rates and explains the mechanism.
+- `MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES`: The abstract mainly explains why or how resistance occurs biologically for the target pair. This includes resistance genes, beta-lactamases, carbapenemases, ESBLs, KPC, NDM, OXA, CTX-M, plasmids, integrons, transposons, horizontal gene transfer, mutations, porin loss, efflux pumps, target modification, and genomic analyses focused on resistance. This category takes priority over prevalence/surveillance when an abstract both reports rates and explains the mechanism.
 
-- `TREATMENT_EFFECTIVENESS`: The abstract mainly evaluates whether treatment involving the target antibiotic or antibiotic class works against the target pathogen in clinical or patient-outcome terms. This includes treatment success, failure, mortality, cure, relapse, comparative therapy, clinical outcomes, and effectiveness studies. This category takes priority over prevalence/surveillance when the main contribution is patient response to therapy, even if susceptibility data are also reported.
+- `CLINICAL_OUTBREAKS_REPORTS`: The abstract mainly concerns human clinical cases, patient cohorts, infections, case reports, case series, hospital events, clinical burden, treatment experience, patient outcomes, or outbreak investigations.
 
-- `TREATMENT_REUSE_OR_SALVAGE`: The abstract mainly frames the antibiotic as an older, neglected, non-first-line, revived, repurposed, niche, salvage, suppressive, oral step-down, or susceptibility-guided treatment option for the target pathogen. This is distinct from general treatment-effectiveness literature because the scientific interest comes from renewed or special-case use of an agent rather than routine therapy evaluation.
+- `ENVIRONMENTAL_ANIMAL_NON_HUMAN`: The abstract mainly concerns animals, livestock, companion animals, wildlife, aquaculture, veterinary medicine, food production, farms, slaughterhouses, wastewater, sewage, rivers, soil, water, environmental sampling, non-human reservoirs, or One Health transmission.
 
-- `DIAGNOSTIC_STEWARDSHIP`: The abstract mainly concerns how resistance for the target pair is detected, tested, reported, interpreted, or operationalized in the laboratory or clinical workflow. This includes susceptibility testing methods, molecular detection, diagnostic workflows, breakpoint interpretation, reporting systems, rapid diagnostics, laboratory methods, and decision support. It is used when the central contribution is measurement or interpretation rather than prevalence, mechanism, or treatment outcome.
+- `OTHER`: The abstract is AMR-relevant for the explicitly supported target pair but does not fit the other four substantive categories. This includes diagnostics, policy, stewardship, guidelines, prescribing behaviour, antibiotic consumption, reviews, modelling, economic burden, education, and broad AMR discussions.
 
-- `GUIDELINE_POLICY_STEWARDSHIP`: The abstract mainly concerns prescribing behavior, antimicrobial stewardship, guidelines, policy, formulary restrictions, antibiotic consumption, implementation of recommendations, healthcare policy, or institutional programs involving the target pathogen-antibiotic pair. It captures literature where the pair matters because it is part of a management, governance, or stewardship decision rather than a biological or clinical efficacy finding.
-
-- `ONE_HEALTH_ENVIRONMENTAL_RESERVOIR`: The abstract mainly studies the target pair outside a narrowly human-clinical setting or in cross-sector AMR ecology. This includes animals, farms, food, agriculture, wastewater, environmental reservoirs, transmission reservoirs, zoonotic or foodborne pathways, and One Health surveillance. It is used when the main contribution is reservoir, transmission, or ecological context.
-
-- `CO_OCCURRENCE_OR_WEAK_SIGNAL`: The abstract mentions both the target pathogen and the target antibiotic or class, but the target pair is not central, the evidence is too thin to assign a stronger category, or the relationship is incidental. It is also used when the abstract is ambiguous, lacks enough detail, or contains AMR-related keywords without a clear pair-centered contribution. A high share of this category means the SI signal may be driven partly by broad co-occurrence rather than strong pathogen-antibiotic AMR evidence.
+- `NONE`: The abstract mentions both the target pathogen and the target antibiotic or class, but the target pair is not central, the evidence is too thin to assign a stronger category, or the relationship is incidental. It is also used when the abstract is ambiguous, lacks enough detail, or contains AMR-related keywords without a clear pair-centered contribution. A high share of this category means the SI signal may be driven partly by broad co-occurrence rather than strong pathogen-antibiotic AMR evidence.
 
 - `MISSING_LLM_INFORMATION`: The category metadata needed for driver interpretation is missing or comes from a prior failed LLM call. Rows with blank `amr_primary_category` values, or rows whose `unified_rationale` starts with `LLM failure:`, are assigned to this category for plotting and summaries. In plots, if the observed SI input count for a pair-year is larger than the number of classified category rows, the unclassified remainder is also added to this category. It is shown in gray so missing classifier information is visually distinct from true weak co-occurrence evidence.
 
@@ -118,11 +108,10 @@ The summary includes:
 - `driver_dominant_category_count`: recent count for that category
 - `driver_fastest_growing_category`: category with the largest recent-minus-previous share increase
 - `driver_fastest_growing_category_change`: size of that category share increase, in fraction units
-- `driver_weak_signal_share`: recent share classified as `CO_OCCURRENCE_OR_WEAK_SIGNAL`
-- `driver_manual_review_share`: recent share marked for manual review
-- `driver_central_count`: recent count with pair centrality `central`
-- `driver_partial_count`: recent count with pair centrality `partial`
-- `driver_incidental_count`: recent count with pair centrality `incidental`
+- `driver_weak_signal_share`: recent share classified as `NONE`
+- `driver_target_pair_supported_share`: recent share with `amr_target_pair_relation_supported = true`
+- `driver_target_pair_supported_count`: recent count with explicit target-pair support
+- `driver_target_pair_unsupported_count`: recent count without explicit target-pair support
 
 The enriched table is saved to:
 
@@ -227,7 +216,7 @@ If one window has no retained rows, all category shares for that window are trea
 
 - `driver_fastest_growing_category_change`: the share-change value for `driver_fastest_growing_category`, in fraction units. For example, `0.25` means a 25 percentage-point increase. If neither window has category rows, this is `0.0`.
 
-- `driver_weak_signal_share`: recent-window share of retained rows whose normalized category is `CO_OCCURRENCE_OR_WEAK_SIGNAL`.
+- `driver_weak_signal_share`: recent-window share of retained rows whose normalized category is `NONE`.
 
 ```text
 driver_weak_signal_share = recent weak-signal row count / driver_recent_total
@@ -235,13 +224,11 @@ driver_weak_signal_share = recent weak-signal row count / driver_recent_total
 
 If `driver_recent_total` is `0`, this is `0.0`. Rows assigned to `MISSING_LLM_INFORMATION` are not counted as weak-signal rows.
 
-- `driver_manual_review_share`: recent-window mean of `amr_needs_manual_review` after coercing object/string values such as `true`, `1`, and `yes` to `True`; other string values are treated as `False`. If `driver_recent_total` is `0`, this is `0.0`.
+- `driver_target_pair_supported_share`: recent-window mean of `amr_target_pair_relation_supported` after coercing object/string values such as `true`, `1`, and `yes` to `True`; other string values are treated as `False`. If `driver_recent_total` is `0`, this is `0.0`.
 
-- `driver_central_count`: number of recent-window rows whose stripped, lowercased `amr_pair_centrality` is `central`.
+- `driver_target_pair_supported_count`: number of recent-window rows where the target pathogen-antibiotic relation is explicitly supported.
 
-- `driver_partial_count`: number of recent-window rows whose stripped, lowercased `amr_pair_centrality` is `partial`.
-
-- `driver_incidental_count`: number of recent-window rows whose stripped, lowercased `amr_pair_centrality` is `incidental`.
+- `driver_target_pair_unsupported_count`: number of recent-window rows where the target pathogen-antibiotic relation is not explicitly supported.
 
 ## Interpretation
 
@@ -249,12 +236,11 @@ The SI forecast ranks pairs based on observed screened AMR counts and background
 
 Examples:
 
-- A rising pair dominated by `RESISTANCE_MECHANISM` suggests increasing molecular or genomic explanation of resistance.
-- A rising pair dominated by `RESISTANCE_PREVALENCE_SURVEILLANCE` suggests increasing reporting of resistance rates, prevalence, outbreaks, or epidemiology.
-- A rising pair dominated by `TREATMENT_EFFECTIVENESS` suggests clinical outcome or therapy-evaluation literature.
-- A high `CO_OCCURRENCE_OR_WEAK_SIGNAL` share suggests the SI signal may be partly driven by broad co-occurrence rather than pair-centered AMR evidence.
-- A high `driver_manual_review_share` flags pairs where the explanation should be checked before drawing strong conclusions.
-- High `driver_central_count` relative to `driver_incidental_count` makes the driver explanation more trustworthy.
+- A rising pair dominated by `MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES` suggests increasing molecular or genomic explanation of resistance.
+- A rising pair dominated by `SURVEILLANCE` suggests increasing reporting of resistance rates, prevalence, outbreaks, or epidemiology.
+- A rising pair dominated by `CLINICAL_OUTBREAKS_REPORTS` suggests clinical cases, outcomes, burden, or outbreak literature.
+- A high `NONE` share suggests the SI signal may be partly driven by broad co-occurrence rather than pair-centered AMR evidence.
+- A high `driver_target_pair_supported_share` makes the driver explanation more trustworthy.
 
 The category analysis is therefore best used as an audit and explanation layer for SI drivers, not as a replacement for the SI score.
 

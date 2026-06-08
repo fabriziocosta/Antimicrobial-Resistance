@@ -471,21 +471,21 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "antibiotic": "a1",
                     "year": 2022,
                     "unified_decision": "YES",
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
                     "unified_decision": "uncertain",
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
                     "unified_decision": "no",
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
                 },
                 {
                     "pathogen": "p1",
@@ -499,7 +499,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "antibiotic": "a1",
                     "year": 2024,
                     "unified_decision": "uncertain",
-                    "amr_primary_category": "CO_OCCURRENCE_OR_WEAK_SIGNAL",
+                    "amr_primary_category": "NONE",
                     "unified_rationale": "LLM failure: OpenAI completion failed: Error code: 429",
                 },
             ]
@@ -507,12 +507,12 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         out = build_yearly_category_counts(unified_df, include_decisions=("yes", "uncertain"))
 
-        mechanism = out.loc[out["amr_primary_category"] == "RESISTANCE_MECHANISM"]
+        mechanism = out.loc[out["amr_primary_category"] == "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES"]
         missing = out.loc[out["amr_primary_category"] == MISSING_LLM_INFORMATION_CATEGORY]
         self.assertEqual(int(mechanism.iloc[0]["count"]), 2)
         self.assertEqual(int(missing["count"].sum()), 2)
-        self.assertNotIn("CO_OCCURRENCE_OR_WEAK_SIGNAL", set(out["amr_primary_category"]))
-        self.assertNotIn("TREATMENT_EFFECTIVENESS", set(out["amr_primary_category"]))
+        self.assertNotIn("NONE", set(out["amr_primary_category"]))
+        self.assertNotIn("CLINICAL_OUTBREAKS_REPORTS", set(out["amr_primary_category"]))
 
     def test_summarize_si_change_drivers_reports_mix_and_growth(self) -> None:
         interesting_df = pd.DataFrame(
@@ -531,45 +531,40 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "antibiotic": "a1",
                     "year": 2020,
                     "unified_decision": "yes",
-                    "amr_primary_category": "RESISTANCE_PREVALENCE_SURVEILLANCE",
-                    "amr_pair_centrality": "central",
-                    "amr_needs_manual_review": False,
+                    "amr_primary_category": "SURVEILLANCE",
+                    "amr_target_pair_relation_supported": True,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2023,
                     "unified_decision": "yes",
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
-                    "amr_pair_centrality": "central",
-                    "amr_needs_manual_review": False,
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
+                    "amr_target_pair_relation_supported": True,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2023,
                     "unified_decision": "uncertain",
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
-                    "amr_pair_centrality": "partial",
-                    "amr_needs_manual_review": True,
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
+                    "amr_target_pair_relation_supported": True,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2024,
                     "unified_decision": "yes",
-                    "amr_primary_category": "CO_OCCURRENCE_OR_WEAK_SIGNAL",
-                    "amr_pair_centrality": "incidental",
-                    "amr_needs_manual_review": True,
+                    "amr_primary_category": "NONE",
+                    "amr_target_pair_relation_supported": False,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2024,
                     "unified_decision": "no",
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
-                    "amr_pair_centrality": "central",
-                    "amr_needs_manual_review": False,
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
+                    "amr_target_pair_relation_supported": True,
                 },
             ]
         )
@@ -585,14 +580,13 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         row = out.iloc[0]
         self.assertEqual(row["driver_recent_total"], 3)
         self.assertEqual(row["driver_previous_total"], 1)
-        self.assertEqual(row["driver_dominant_category"], "RESISTANCE_MECHANISM")
-        self.assertEqual(row["driver_fastest_growing_category"], "RESISTANCE_MECHANISM")
+        self.assertEqual(row["driver_dominant_category"], "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES")
+        self.assertEqual(row["driver_fastest_growing_category"], "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES")
         self.assertAlmostEqual(row["driver_fastest_growing_category_change"], 2 / 3)
         self.assertAlmostEqual(row["driver_weak_signal_share"], 1 / 3)
-        self.assertAlmostEqual(row["driver_manual_review_share"], 2 / 3)
-        self.assertEqual(row["driver_central_count"], 1)
-        self.assertEqual(row["driver_partial_count"], 1)
-        self.assertEqual(row["driver_incidental_count"], 1)
+        self.assertAlmostEqual(row["driver_target_pair_supported_share"], 2 / 3)
+        self.assertEqual(row["driver_target_pair_supported_count"], 2)
+        self.assertEqual(row["driver_target_pair_unsupported_count"], 1)
 
     def test_driver_helpers_return_empty_for_missing_category_data(self) -> None:
         interesting_df = pd.DataFrame([{"pathogen": "p1", "antibiotic": "a1"}])
@@ -620,7 +614,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 2,
                 },
                 {
@@ -634,7 +628,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p2",
                     "antibiotic": "a2",
                     "year": 2022,
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
                     "count": 1,
                 },
             ]
@@ -644,12 +638,12 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         result_without_mechanism = plot_yearly_category_driver_counts(category_counts_df, "p2", "a2")
 
         try:
-            treatment_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS["TREATMENT_EFFECTIVENESS"])
+            treatment_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS["CLINICAL_OUTBREAKS_REPORTS"])
             missing_rgba = to_rgba(AMR_DRIVER_CATEGORY_COLORS[MISSING_LLM_INFORMATION_CATEGORY])
             missing_index_with_mechanism = list(result_with_mechanism["pivot"].columns).index(
                 MISSING_LLM_INFORMATION_CATEGORY
             )
-            treatment_index_without_mechanism = list(result_without_mechanism["pivot"].columns).index("TREATMENT_EFFECTIVENESS")
+            treatment_index_without_mechanism = list(result_without_mechanism["pivot"].columns).index("CLINICAL_OUTBREAKS_REPORTS")
             self.assertEqual(
                 result_with_mechanism["ax"].containers[missing_index_with_mechanism].patches[0].get_facecolor(),
                 missing_rgba,
@@ -695,14 +689,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2021,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 2,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 3,
                 },
             ]
@@ -745,14 +739,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2002,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 2,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2004,
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
                     "count": 1,
                 },
             ]
@@ -786,14 +780,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2002,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 2,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2004,
-                    "amr_primary_category": "TREATMENT_EFFECTIVENESS",
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
                     "count": 1,
                 },
             ]
@@ -832,14 +826,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_PREVALENCE_SURVEILLANCE",
+                    "amr_primary_category": "SURVEILLANCE",
                     "count": 2,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 3,
                 },
                 {
@@ -854,17 +848,22 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         coarse_df, category_order, category_colors = coarsen_category_counts(category_counts_df)
 
-        self.assertIn("Resistance burden and biology", category_order)
-        self.assertIn("Weak or missing evidence", category_colors)
-        burden_count = coarse_df.loc[
-            coarse_df["amr_primary_category"].eq("Resistance burden and biology"),
+        self.assertIn("Surveillance", category_order)
+        self.assertIn("Unsupported or missing evidence", category_colors)
+        surveillance_count = coarse_df.loc[
+            coarse_df["amr_primary_category"].eq("Surveillance"),
+            "count",
+        ].item()
+        mechanism_count = coarse_df.loc[
+            coarse_df["amr_primary_category"].eq("Mechanisms genetics and lab studies"),
             "count",
         ].item()
         weak_count = coarse_df.loc[
-            coarse_df["amr_primary_category"].eq("Weak or missing evidence"),
+            coarse_df["amr_primary_category"].eq("Unsupported or missing evidence"),
             "count",
         ].item()
-        self.assertEqual(int(burden_count), 5)
+        self.assertEqual(int(surveillance_count), 2)
+        self.assertEqual(int(mechanism_count), 3)
         self.assertEqual(int(weak_count), 1)
 
     def test_category_driver_plot_can_fill_missing_counts_into_coarse_group(self) -> None:
@@ -874,7 +873,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 2,
                 }
             ]
@@ -891,11 +890,11 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             si_df=si_df,
             category_order=category_order,
             category_colors=category_colors,
-            missing_information_category="Weak or missing evidence",
+            missing_information_category="Unsupported or missing evidence",
         )
         try:
-            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Resistance burden and biology"]), 2 / 5)
-            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Weak or missing evidence"]), 3 / 5)
+            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Mechanisms genetics and lab studies"]), 2 / 5)
+            self.assertAlmostEqual(float(result["pivot"].loc[2022, "Unsupported or missing evidence"]), 3 / 5)
             self.assertNotIn(MISSING_LLM_INFORMATION_CATEGORY, result["pivot"].columns)
         finally:
             plt.close(result["figure"])
@@ -907,14 +906,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_PREVALENCE_SURVEILLANCE",
+                    "amr_primary_category": "SURVEILLANCE",
                     "count": 2,
                 },
                 {
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "year": 2022,
-                    "amr_primary_category": "RESISTANCE_MECHANISM",
+                    "amr_primary_category": "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
                     "count": 3,
                 },
             ]

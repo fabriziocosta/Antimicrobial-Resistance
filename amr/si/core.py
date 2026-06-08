@@ -20,43 +20,41 @@ except ImportError:  # pragma: no cover - environment-dependent fallback
     loess = None
 
 _AUTO_TAIL_DAMPING = object()
-WEAK_SIGNAL_CATEGORY = "CO_OCCURRENCE_OR_WEAK_SIGNAL"
+WEAK_SIGNAL_CATEGORY = "NONE"
 MISSING_LLM_INFORMATION_CATEGORY = "MISSING_LLM_INFORMATION"
 AMR_DRIVER_CATEGORY_ORDER = [
-    "RESISTANCE_PREVALENCE_SURVEILLANCE",
-    "RESISTANCE_MECHANISM",
-    "TREATMENT_EFFECTIVENESS",
-    "TREATMENT_REUSE_OR_SALVAGE",
-    "DIAGNOSTIC_STEWARDSHIP",
-    "GUIDELINE_POLICY_STEWARDSHIP",
-    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR",
-    WEAK_SIGNAL_CATEGORY,
+    "ENVIRONMENTAL_ANIMAL_NON_HUMAN",
+    "CLINICAL_OUTBREAKS_REPORTS",
+    "SURVEILLANCE",
+    "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES",
+    "OTHER",
+    "NONE",
     MISSING_LLM_INFORMATION_CATEGORY,
 ]
 AMR_DRIVER_CATEGORY_COLORS = {
-    "RESISTANCE_PREVALENCE_SURVEILLANCE": "#4e79a7",
-    "RESISTANCE_MECHANISM": "#f28e2b",
-    "TREATMENT_EFFECTIVENESS": "#59a14f",
-    "TREATMENT_REUSE_OR_SALVAGE": "#e15759",
-    "DIAGNOSTIC_STEWARDSHIP": "#76b7b2",
-    "GUIDELINE_POLICY_STEWARDSHIP": "#edc948",
-    "ONE_HEALTH_ENVIRONMENTAL_RESERVOIR": "#b07aa1",
-    WEAK_SIGNAL_CATEGORY: "#9c755f",
+    "ENVIRONMENTAL_ANIMAL_NON_HUMAN": "#4e79a7",
+    "CLINICAL_OUTBREAKS_REPORTS": "#f28e2b",
+    "SURVEILLANCE": "#59a14f",
+    "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES": "#e15759",
+    "OTHER": "#76b7b2",
+    "NONE": "#9c755f",
     MISSING_LLM_INFORMATION_CATEGORY: "#bab0ac",
 }
 AMR_DRIVER_COARSE_CATEGORY_ORDER = [
-    "Resistance burden and biology",
-    "Clinical use and treatment",
-    "Stewardship, diagnostics, and policy",
-    "Reservoirs and transmission ecology",
-    "Weak or missing evidence",
+    "Environmental animal non-human",
+    "Clinical outbreaks and reports",
+    "Surveillance",
+    "Mechanisms genetics and lab studies",
+    "Other",
+    "Unsupported or missing evidence",
 ]
 AMR_DRIVER_COARSE_CATEGORY_COLORS = {
-    "Resistance burden and biology": "#4e79a7",
-    "Clinical use and treatment": "#59a14f",
-    "Stewardship, diagnostics, and policy": "#edc948",
-    "Reservoirs and transmission ecology": "#b07aa1",
-    "Weak or missing evidence": "#bab0ac",
+    "Environmental animal non-human": "#4e79a7",
+    "Clinical outbreaks and reports": "#f28e2b",
+    "Surveillance": "#59a14f",
+    "Mechanisms genetics and lab studies": "#e15759",
+    "Other": "#76b7b2",
+    "Unsupported or missing evidence": "#bab0ac",
 }
 AMR_DRIVER_CATEGORY_COLUMNS = [
     "pathogen",
@@ -76,10 +74,9 @@ AMR_DRIVER_SUMMARY_COLUMNS = [
     "driver_fastest_growing_category",
     "driver_fastest_growing_category_change",
     "driver_weak_signal_share",
-    "driver_manual_review_share",
-    "driver_central_count",
-    "driver_partial_count",
-    "driver_incidental_count",
+    "driver_target_pair_supported_share",
+    "driver_target_pair_supported_count",
+    "driver_target_pair_unsupported_count",
 ]
 
 
@@ -242,8 +239,7 @@ def summarize_si_change_drivers(
         "year",
         "unified_decision",
         category_col,
-        "amr_pair_centrality",
-        "amr_needs_manual_review",
+        "amr_target_pair_relation_supported",
     }
     if interesting_df.empty or unified_df.empty or not required.issubset(unified_df.columns):
         return pd.DataFrame(columns=AMR_DRIVER_SUMMARY_COLUMNS)
@@ -267,12 +263,13 @@ def summarize_si_change_drivers(
 
     work["year"] = work["year"].astype(int)
     work["amr_primary_category"] = _normalise_driver_category_series(work, category_col)
-    work["amr_pair_centrality"] = work["amr_pair_centrality"].astype(str).str.strip().str.lower()
-    manual = work["amr_needs_manual_review"]
-    if manual.dtype == object:
-        work["manual_review_bool"] = manual.astype(str).str.strip().str.lower().isin({"true", "1", "yes"})
+    target_supported = work["amr_target_pair_relation_supported"]
+    if target_supported.dtype == object:
+        work["target_pair_relation_supported_bool"] = (
+            target_supported.astype(str).str.strip().str.lower().isin({"true", "1", "yes"})
+        )
     else:
-        work["manual_review_bool"] = manual.fillna(False).astype(bool)
+        work["target_pair_relation_supported_bool"] = target_supported.fillna(False).astype(bool)
 
     pairs = interesting_df[["pathogen", "antibiotic"]].drop_duplicates()
     work = work.merge(pairs, on=["pathogen", "antibiotic"], how="inner")
@@ -312,8 +309,8 @@ def summarize_si_change_drivers(
         else:
             fastest_category, fastest_change = None, 0
 
-        weak_count = int((recent["amr_primary_category"] == WEAK_SIGNAL_CATEGORY).sum()) if recent_total else 0
-        centrality_counts = recent["amr_pair_centrality"].value_counts()
+        weak_count = int((recent["amr_primary_category"] == "NONE").sum()) if recent_total else 0
+        supported_count = int(recent["target_pair_relation_supported_bool"].sum()) if recent_total else 0
         rows.append(
             {
                 "pathogen": pair.pathogen,
@@ -326,10 +323,9 @@ def summarize_si_change_drivers(
                 "driver_fastest_growing_category": fastest_category,
                 "driver_fastest_growing_category_change": float(fastest_change),
                 "driver_weak_signal_share": weak_count / recent_total if recent_total else 0.0,
-                "driver_manual_review_share": float(recent["manual_review_bool"].mean()) if recent_total else 0.0,
-                "driver_central_count": int(centrality_counts.get("central", 0)),
-                "driver_partial_count": int(centrality_counts.get("partial", 0)),
-                "driver_incidental_count": int(centrality_counts.get("incidental", 0)),
+                "driver_target_pair_supported_share": supported_count / recent_total if recent_total else 0.0,
+                "driver_target_pair_supported_count": supported_count,
+                "driver_target_pair_unsupported_count": recent_total - supported_count,
             }
         )
 

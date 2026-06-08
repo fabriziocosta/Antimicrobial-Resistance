@@ -21,18 +21,16 @@ class _FakeLLM:
         self.prompts.append(prompt)
         if "PMID: 111" in prompt:
             return (
-                '{"decision":"YES","primary_category":"RESISTANCE_PREVALENCE_SURVEILLANCE",'
-                '"pair_centrality":"central","confidence":"high",'
+                '{"decision":"YES","primary_category":"SURVEILLANCE",'
                 '"rationale":"clear resistance in clinical isolates",'
                 '"evidence_phrases":["clinical resistant isolates"],'
-                '"is_amr_relevant":true,"needs_manual_review":false}'
+                '"target_pair_relation_supported":true,"is_amr_relevant":true}'
             )
         if "PMID: 222" in prompt:
             return (
-                '{"decision":"No","primary_category":"CO_OCCURRENCE_OR_WEAK_SIGNAL",'
-                '"pair_centrality":"incidental","confidence":"medium",'
+                '{"decision":"No","primary_category":"NONE",'
                 '"rationale":"lab model only","evidence_phrases":["lab model assay"],'
-                '"is_amr_relevant":false,"needs_manual_review":true}'
+                '"target_pair_relation_supported":false,"is_amr_relevant":false}'
             )
         if "PMID: 444" in prompt:
             return "not json"
@@ -42,12 +40,10 @@ class _FakeLLM:
 class UnifiedFilteringTests(unittest.TestCase):
     def _complete_amr_fields(self) -> dict:
         return {
-            "amr_primary_category": ["RESISTANCE_PREVALENCE_SURVEILLANCE"],
-            "amr_pair_centrality": ["central"],
-            "amr_confidence": ["high"],
+            "amr_primary_category": ["SURVEILLANCE"],
             "amr_evidence_phrases": [["clinical resistant isolates"]],
+            "amr_target_pair_relation_supported": [True],
             "amr_is_relevant": [True],
-            "amr_needs_manual_review": [False],
         }
 
     def test_prepare_yearly_candidate_pmids(self) -> None:
@@ -109,18 +105,14 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(out.loc[0, "unified_decision"], "yes")
         self.assertEqual(out.loc[1, "unified_decision"], "no")
         self.assertEqual(out.loc[2, "unified_decision"], "uncertain")
-        self.assertEqual(out.loc[0, "amr_primary_category"], "RESISTANCE_PREVALENCE_SURVEILLANCE")
-        self.assertEqual(out.loc[0, "amr_pair_centrality"], "central")
-        self.assertEqual(out.loc[0, "amr_confidence"], "high")
+        self.assertEqual(out.loc[0, "amr_primary_category"], "SURVEILLANCE")
         self.assertEqual(out.loc[0, "amr_evidence_phrases"], ["clinical resistant isolates"])
+        self.assertTrue(out.loc[0, "amr_target_pair_relation_supported"])
         self.assertTrue(out.loc[0, "amr_is_relevant"])
-        self.assertFalse(out.loc[0, "amr_needs_manual_review"])
-        self.assertEqual(out.loc[2, "amr_primary_category"], "CO_OCCURRENCE_OR_WEAK_SIGNAL")
-        self.assertEqual(out.loc[2, "amr_pair_centrality"], "incidental")
-        self.assertEqual(out.loc[2, "amr_confidence"], "low")
+        self.assertEqual(out.loc[2, "amr_primary_category"], "NONE")
         self.assertEqual(out.loc[2, "amr_evidence_phrases"], [])
+        self.assertFalse(out.loc[2, "amr_target_pair_relation_supported"])
         self.assertFalse(out.loc[2, "amr_is_relevant"])
-        self.assertTrue(out.loc[2, "amr_needs_manual_review"])
         self.assertEqual(mock_fetch_batch.call_count, 1)
         self.assertEqual(mock_fetch_single.call_count, 0)
 
@@ -253,12 +245,10 @@ class UnifiedFilteringTests(unittest.TestCase):
                 "unified_rationale": ["LLM failure: OpenAI completion failed: Error code: 429"],
                 "title": ["old title"],
                 "abstract": ["old abstract"],
-                "amr_primary_category": ["CO_OCCURRENCE_OR_WEAK_SIGNAL"],
-                "amr_pair_centrality": ["incidental"],
-                "amr_confidence": ["low"],
+                "amr_primary_category": ["NONE"],
                 "amr_evidence_phrases": [[]],
+                "amr_target_pair_relation_supported": [False],
                 "amr_is_relevant": [False],
-                "amr_needs_manual_review": [True],
             }
         )
         with NamedTemporaryFile(suffix=".parquet") as tmp:
@@ -277,7 +267,7 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out.loc[0, "unified_decision"], "yes")
         self.assertEqual(out.loc[0, "unified_rationale"], "clear resistance in clinical isolates")
-        self.assertEqual(out.loc[0, "amr_primary_category"], "RESISTANCE_PREVALENCE_SURVEILLANCE")
+        self.assertEqual(out.loc[0, "amr_primary_category"], "SURVEILLANCE")
         self.assertEqual(mock_fetch_batch.call_args.args[0], ["111"])
         self.assertEqual(mock_fetch_single.call_count, 0)
 
@@ -372,7 +362,7 @@ class UnifiedFilteringTests(unittest.TestCase):
             self.assertEqual(out.loc[0, "unified_rationale"], "clear resistance in clinical isolates")
             for col in AMR_CATEGORY_COLUMNS:
                 self.assertIn(col, out.columns)
-            self.assertEqual(out.loc[0, "amr_primary_category"], "RESISTANCE_PREVALENCE_SURVEILLANCE")
+            self.assertEqual(out.loc[0, "amr_primary_category"], "SURVEILLANCE")
             self.assertEqual(mock_fetch_batch.call_args.args[0], ["111"])
             self.assertEqual(mock_fetch_single.call_count, 0)
 
@@ -444,12 +434,10 @@ class UnifiedFilteringTests(unittest.TestCase):
             progress_every=0,
         )
         self.assertEqual(out.loc[0, "unified_decision"], "uncertain")
-        self.assertEqual(out.loc[0, "amr_primary_category"], "CO_OCCURRENCE_OR_WEAK_SIGNAL")
-        self.assertEqual(out.loc[0, "amr_pair_centrality"], "incidental")
-        self.assertEqual(out.loc[0, "amr_confidence"], "low")
+        self.assertEqual(out.loc[0, "amr_primary_category"], "NONE")
         self.assertEqual(out.loc[0, "amr_evidence_phrases"], [])
+        self.assertFalse(out.loc[0, "amr_target_pair_relation_supported"])
         self.assertFalse(out.loc[0, "amr_is_relevant"])
-        self.assertTrue(out.loc[0, "amr_needs_manual_review"])
         self.assertEqual(mock_fetch_single.call_count, 0)
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
@@ -477,12 +465,10 @@ class UnifiedFilteringTests(unittest.TestCase):
         )
         self.assertEqual(llm.prompts, [])
         self.assertEqual(out.loc[0, "unified_decision"], "uncertain")
-        self.assertEqual(out.loc[0, "amr_primary_category"], "CO_OCCURRENCE_OR_WEAK_SIGNAL")
-        self.assertEqual(out.loc[0, "amr_pair_centrality"], "incidental")
-        self.assertEqual(out.loc[0, "amr_confidence"], "low")
+        self.assertEqual(out.loc[0, "amr_primary_category"], "NONE")
         self.assertEqual(out.loc[0, "amr_evidence_phrases"], [])
+        self.assertFalse(out.loc[0, "amr_target_pair_relation_supported"])
         self.assertFalse(out.loc[0, "amr_is_relevant"])
-        self.assertTrue(out.loc[0, "amr_needs_manual_review"])
         self.assertEqual(mock_fetch_single.call_count, 0)
 
 

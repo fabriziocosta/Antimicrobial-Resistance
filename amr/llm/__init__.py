@@ -65,7 +65,7 @@ class LanguageModel(Protocol):
 class OpenAIConfig:
     """Configuration for :class:`OpenAILanguageModel`."""
 
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-5-nano"
     embedding_model: str = "text-embedding-3-small"
     temperature: float = 0.0
     max_tokens: int = 512
@@ -402,4 +402,3 @@ def create_llm_client(provider: ProviderLiteral = "openai", **config_overrides: 
         raise ValueError(f"Unknown provider '{provider}'.")
 
     return create_language_model(provider, config=config)
-

@@ -30,8 +30,7 @@ DEFAULT_DRIVER_REQUIRED_COLUMNS = {
     "year",
     "unified_decision",
     "amr_primary_category",
-    "amr_pair_centrality",
-    "amr_needs_manual_review",
+    "amr_target_pair_relation_supported",
 }
 DEFAULT_DRIVER_CATEGORY_COARSENING_PATH = Path(__file__).resolve().parents[2] / "assets" / "amr_driver_category_coarsening.csv"
 
@@ -58,7 +57,7 @@ DEFAULT_DRIVER_SUMMARY_COLUMNS = [
     "driver_dominant_category",
     "driver_fastest_growing_category",
     "driver_weak_signal_share",
-    "driver_manual_review_share",
+    "driver_target_pair_supported_share",
 ]
 
 DEFAULT_DECREASING_SI_SUMMARY_COLUMNS = [
@@ -801,7 +800,7 @@ def save_category_driver_plots(
             category_coarsening_df=category_coarsening_df,
         )
         category_label = "Coarse AMR category drivers"
-        missing_information_category = "Weak or missing evidence"
+        missing_information_category = "Unsupported or missing evidence"
         filename_suffix = "coarse_drivers"
     else:
         raise ValueError("driver_category_level must be one of: 'original', 'fine', 'primary', 'coarse', 'coarsened'.")
