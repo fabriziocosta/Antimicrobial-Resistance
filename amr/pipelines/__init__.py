@@ -9,6 +9,7 @@ __all__ = [
     "fetch_pmids_intervals",
     "build_and_print_collection_preflight",
     "build_collection_preflight_summary",
+    "build_pair_pmid_title_table",
     "collect_yearly_amr_dataset",
     "collect_yearly_background_counts",
     "coarsen_category_counts",
@@ -29,6 +30,7 @@ __all__ = [
     "load_yearly_si_inputs",
     "plot_future_si_vs_si_shift",
     "plot_latest_si_vs_future_si",
+    "pair_pmid_table_html",
     "print_collection_preflight",
     "print_si_dataset_summary",
     "print_pubmed_query_examples",
@@ -37,11 +39,13 @@ __all__ = [
     "prepare_antibiotic_analysis_level",
     "save_category_driver_plots",
     "save_interesting_si_plots",
+    "save_pair_pmid_excel",
     "save_smoothed_si_screen_plots",
     "select_decreasing_smoothed_si_trends",
     "select_existing_columns",
     "select_smoothed_si_shape_cases",
     "slugify_analysis_level",
+    "slugify_output_name",
     "summarize_smoothed_si_shapes",
     "summarize_pair_publication_rates",
     "summarize_pathogen_coverage",
@@ -59,6 +63,12 @@ _COLLECTION_EXPORTS = {
     "build_collection_preflight_summary",
     "collect_yearly_amr_dataset",
     "collect_yearly_background_counts",
+}
+_PAIR_PMID_EXPORTS = {
+    "build_pair_pmid_title_table",
+    "pair_pmid_table_html",
+    "save_pair_pmid_excel",
+    "slugify_output_name",
 }
 _COLLECTION_PREVIEW_EXPORTS = {
     "build_and_print_collection_preflight",
@@ -112,6 +122,9 @@ def __getattr__(name: str):
     if name in _COLLECTION_EXPORTS:
         collection = import_module(".collection", __name__)
         return getattr(collection, name)
+    if name in _PAIR_PMID_EXPORTS:
+        pair_pmids = import_module(".pair_pmids", __name__)
+        return getattr(pair_pmids, name)
     if name in _COLLECTION_PREVIEW_EXPORTS:
         collection_preview = import_module(".collection_preview", __name__)
         return getattr(collection_preview, name)
