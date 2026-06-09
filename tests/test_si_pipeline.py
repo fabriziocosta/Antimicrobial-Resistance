@@ -578,14 +578,14 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(out), 1)
         row = out.iloc[0]
-        self.assertEqual(row["driver_recent_total"], 3)
+        self.assertEqual(row["driver_recent_total"], 2)
         self.assertEqual(row["driver_previous_total"], 1)
         self.assertEqual(row["driver_dominant_category"], "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES")
         self.assertEqual(row["driver_fastest_growing_category"], "MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES")
-        self.assertAlmostEqual(row["driver_fastest_growing_category_change"], 2 / 3)
-        self.assertAlmostEqual(row["driver_weak_signal_share"], 1 / 3)
-        self.assertAlmostEqual(row["driver_target_pair_supported_share"], 2 / 3)
-        self.assertEqual(row["driver_target_pair_supported_count"], 2)
+        self.assertAlmostEqual(row["driver_fastest_growing_category_change"], 0.5)
+        self.assertAlmostEqual(row["driver_weak_signal_share"], 0.5)
+        self.assertAlmostEqual(row["driver_target_pair_supported_share"], 0.5)
+        self.assertEqual(row["driver_target_pair_supported_count"], 1)
         self.assertEqual(row["driver_target_pair_unsupported_count"], 1)
 
     def test_driver_helpers_return_empty_for_missing_category_data(self) -> None:

@@ -20,11 +20,11 @@ The required LLM category columns are:
 The notebook defaults to:
 
 ```python
-CATEGORY_INCLUDE_DECISIONS = ("yes", "uncertain")
+CATEGORY_INCLUDE_DECISIONS = ("strict", "yes")
 DRIVER_LOOKBACK_YEARS = 5
 ```
 
-This means the driver analysis follows the same inclusion logic as the screened SI dataset: LLM `yes` and `uncertain` rows are counted, while `no` rows are excluded.
+This means the driver analysis follows the same inclusion logic as the screened SI dataset: LLM `strict` and `yes` rows are counted, while `no` and `uncertain` rows are excluded.
 
 ## Category Share Curves
 
@@ -128,7 +128,7 @@ This section defines how each reported value in the category-share plots and dri
 Both the yearly category share curves and the driver summary start from `yearly_amr_unified_decisions.parquet`.
 
 1. Normalize `unified_decision` by stripping whitespace and lowercasing.
-2. Keep rows where `unified_decision` is in `CATEGORY_INCLUDE_DECISIONS`; by default this keeps `yes` and `uncertain` and excludes `no`.
+2. Keep rows where `unified_decision` is in `CATEGORY_INCLUDE_DECISIONS`; by default this keeps `strict` and `yes` and excludes `no` and `uncertain`.
 3. Convert `year` to an integer and drop rows with missing `pathogen`, `antibiotic`, or `year`.
 4. Normalize `amr_primary_category`:
    - if `amr_primary_category` is missing or blank, set it to `MISSING_LLM_INFORMATION`;

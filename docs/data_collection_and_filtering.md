@@ -219,14 +219,14 @@ For each candidate row, the pipeline fetches or reuses cached PubMed title/abstr
 
 The LLM returns JSON with:
 
-- `decision`: `yes`, `no`, or `uncertain`
+- `decision`: `strict`, `yes`, `no`, or `uncertain`
 - `primary_category`: SI-driver category
 - `rationale`
 - `evidence_phrases`
 - `target_pair_relation_supported`
 - `is_amr_relevant`
 
-The strict rule is enforced during parsing: unsupported or ambiguous target-pair relations are treated as `NONE`.
+`strict` means the abstract explicitly links the target pathogen to the target antibiotic/class. `yes` means the pair is supported more broadly by an AMR-relevant panel, class, or shared study context. Unsupported target-pair relations are treated as `NONE`.
 
 Rows without abstracts do not call the LLM. They receive deterministic `uncertain` / `NONE` defaults.
 
@@ -270,20 +270,21 @@ The final screened yearly dataset is rebuilt from LLM-reviewed candidate rows.
 
 By default, `build_yearly_screened_pairs(...)` includes:
 
+- `strict`
 - `yes`
-- `uncertain`
 
 and excludes:
 
 - `no`
+- `uncertain`
 
-The default keeps uncertain papers for downstream SI modeling so potentially relevant but ambiguous evidence is not prematurely discarded.
+The default keeps accepted AMR evidence while leaving missing-abstract or technical-failure `uncertain` rows out of downstream SI modeling.
 
 ### Screened Dataset Pseudocode
 
 ```text
 yearly_candidates = explode candidate_amr_pair_year_counts.pmids
-reviewed_keep_keys = unified decisions where decision in {"yes", "uncertain"}
+reviewed_keep_keys = unified decisions where decision in {"strict", "yes"}
 
 filtered = yearly_candidates inner join reviewed_keep_keys
 deduplicate by PMID, pathogen, antibiotic, year
@@ -316,7 +317,7 @@ NUM_PATHOGENS = 5
 NUM_ANTIBIOTICS = 5
 BACKGROUND_SCOPE = "observed_entities"
 PAIR_FULL_FETCH_THRESHOLD = 9500
-LLM_CATEGORY_BACKFILL_DECISIONS = ("yes", "uncertain")
+LLM_CATEGORY_BACKFILL_DECISIONS = ("strict", "yes", "uncertain")
 ```
 
 For a fuller canonical refresh:

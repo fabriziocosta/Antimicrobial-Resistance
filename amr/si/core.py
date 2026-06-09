@@ -191,7 +191,7 @@ def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: 
 def build_yearly_category_counts(
     unified_df: pd.DataFrame,
     *,
-    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("strict", "yes"),
     category_col: str = "amr_primary_category",
 ) -> pd.DataFrame:
     """Aggregate unified LLM decisions to yearly AMR category counts."""
@@ -228,7 +228,7 @@ def summarize_si_change_drivers(
     unified_df: pd.DataFrame,
     *,
     fit_end_year: int,
-    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("strict", "yes"),
     lookback_years: int = 5,
     category_col: str = "amr_primary_category",
 ) -> pd.DataFrame:

@@ -13,6 +13,7 @@ dependencies = [
     "numpy",
     "pandas",
     "pyarrow",
+    "pyyaml",
     "requests",
     "scikit-learn",
     "seaborn",

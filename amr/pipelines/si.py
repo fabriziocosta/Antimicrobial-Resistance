@@ -643,7 +643,7 @@ def build_si_driver_analysis(
     interesting_df: pd.DataFrame,
     unified_decisions_df: pd.DataFrame,
     fit_end_year: int,
-    include_decisions: tuple[str, ...] | list[str] | set[str] = ("yes", "uncertain"),
+    include_decisions: tuple[str, ...] | list[str] | set[str] = ("strict", "yes"),
     lookback_years: int = 5,
     output_path: str | Path | None = None,
     verbose: bool = True,

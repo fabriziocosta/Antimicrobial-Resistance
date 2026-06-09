@@ -37,33 +37,45 @@ classify the abstract into exactly one primary category describing why the paper
 to scientific interest for the target pathogen-antibiotic pair.
 
 Core rule:
-Do not classify by keyword co-occurrence. First determine whether the abstract clearly links
-the target pathogen to the target antibiotic/class. Only assign a substantive category if the
-target pair relation is explicitly supported by the title or abstract.
+Do not classify by keyword co-occurrence alone. First determine whether the abstract gives a
+reasonable AMR, susceptibility, treatment, testing, mechanism, surveillance, or policy context
+for considering the target pathogen-antibiotic/class pair. Assign a substantive category when
+the title or abstract supports considering that pair for AMR analysis.
 
-If the target pathogen-antibiotic relation is unclear, ambiguous, incidental, or unsupported,
-discard it by setting:
+If the target pathogen-antibiotic relation is only a stray co-mention, clearly belongs to a
+different organism or drug, or is unsupported by any AMR context, discard it by setting:
 - decision = "no"
 - primary_category = "NONE"
 - target_pair_relation_supported = false
 
 Attribution rules:
 A pathogen is linked to resistance, susceptibility, testing, treatment, or AMR relevance for an
-antimicrobial agent only when the text clearly asserts that relation.
+antimicrobial agent when the text clearly supports considering that relation.
 
 Supported links include:
 - direct modification: "methicillin-resistant Staphylococcus aureus", "meropenem-resistant Klebsiella pneumoniae";
 - explicit assertion: "E. coli isolates were resistant to gentamicin", "Klebsiella pneumoniae showed reduced susceptibility to meropenem";
 - group attribution: "gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens".
+- study-panel attribution: the target pathogen is among organisms studied for antimicrobial
+  resistance/susceptibility and the target antibiotic/class is among agents tested, reported,
+  monitored, or discussed, even when the abstract does not spell out every pathogen-drug result.
+- class attribution: the target antibiotic belongs to a class explicitly tested or discussed for
+  the target pathogen, such as third-generation cephalosporins supporting ceftazidime or
+  ceftriaxone, beta-lactams supporting ampicillin or cephalosporins, or carbapenems supporting
+  imipenem or meropenem.
 
 Do not transfer resistance, susceptibility, testing, treatment, or AMR relevance from one pathogen
-to another merely because they occur nearby in the same sentence.
+to another merely because they occur nearby in the same sentence. However, if the abstract frames
+the pathogens and agents as a shared susceptibility/resistance panel, that is enough support for
+considering each target pair in the panel.
 
 Examples:
 - "Methicillin-resistant Staphylococcus aureus and E. coli were detected" supports methicillin resistance for Staphylococcus aureus, not for E. coli.
 - "Resistance to gentamicin was common in Enterococcus faecalis, while E. coli was also detected" does not support gentamicin resistance in E. coli.
 - "Gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens" supports gentamicin resistance for all three listed species.
-- "Carbapenem-resistant Klebsiella pneumoniae and Pseudomonas aeruginosa were isolated" is ambiguous unless the grammar clearly makes "carbapenem-resistant" apply to both species. If ambiguous for the target pathogen, discard.
+- "Susceptibility of Acinetobacter baumannii isolates to commonly used antimicrobial agents was tested" supports target antibiotics that are named elsewhere in the abstract or query context as part of the tested panel.
+- "Resistance to third-generation cephalosporins among Acinetobacter baumannii isolates" supports ceftazidime and ceftriaxone for Acinetobacter baumannii.
+- "Carbapenem-resistant Klebsiella pneumoniae and Pseudomonas aeruginosa were isolated" supports carbapenem-class pairs for both species unless the grammar clearly limits resistance to one species.
 
 Categories:
 
@@ -110,22 +122,36 @@ prescribing behaviour, antibiotic consumption, reviews, modelling, economic burd
 or broad AMR discussions.
 
 Decision labels:
-- yes: the abstract is AMR-relevant for the target pathogen-antibiotic pair, and the target pair relation is explicitly supported.
-- no: the abstract is not AMR-relevant for the target pair, or the target pair relation is ambiguous, incidental, unsupported, or based only on co-occurrence.
-- uncertain: abstract missing, ambiguous, or insufficient to judge confidently.
+- strict: the abstract explicitly links the target pathogen to the target antibiotic/class with a
+  direct resistance, susceptibility, testing, treatment, or mechanism statement. Use strict for
+  direct modification, explicit assertion, group attribution, or an explicit class relation for
+  the target pathogen.
+- yes: the abstract is AMR-relevant and supports considering the target pathogen-antibiotic/class
+  pair for AMR analysis through broader study-panel attribution, class-level context, or another
+  shared AMR-relevant context, but does not explicitly state the target pathogen-antibiotic
+  relation strongly enough for strict.
+- no: the abstract is not AMR-relevant for the target pair, or the target pair relation is incidental, clearly contradicted, unsupported, or based only on co-occurrence outside an AMR/testing/treatment context.
+- uncertain: use only for technical failures or missing abstracts. Do not return uncertain for an
+  abstract that is present; if evidence is ambiguous or insufficient, return no.
 
 Internal reasoning steps:
 1. Identify pathogens mentioned.
 2. Identify antibiotics/classes mentioned.
-3. Extract explicit pathogen-antibiotic relations.
-4. Decide whether the target pathogen is clearly linked to the target antibiotic/class.
-5. If the target pair relation is unclear or ambiguous, discard it.
-6. Choose the primary category based only on evidence explicitly linked to the target pair.
-7. If attribution is ambiguous, do not infer the relation. Set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
+3. Identify whether the abstract describes AMR, susceptibility, treatment, testing, surveillance,
+   mechanisms, stewardship, or another AMR-relevant context.
+4. Decide whether the target pathogen and antibiotic/class are part of the same AMR-relevant
+   study, panel, class, result, or discussion.
+5. If the pair is supported by a direct statement, class statement, or study-panel attribution,
+   set target_pair_relation_supported = true.
+6. Use decision = "strict" when the pair relation is explicit, and decision = "yes" when the pair
+   is supported more broadly by a shared AMR-relevant panel, class, or context.
+7. Choose the primary category based on the main contribution for the supported target pair.
+8. If the pathogen and antibiotic are merely unrelated co-mentions outside an AMR-relevant shared
+   context, set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
 
 Output only valid compact JSON using this schema:
 {
-  "decision": "yes | no | uncertain",
+  "decision": "strict | yes | no | uncertain",
   "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
   "rationale": "Brief explanation in 1-3 sentences. Mention the specific title/abstract evidence and explain whether the target pathogen-antibiotic relation is supported.",
   "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
@@ -135,12 +161,20 @@ Output only valid compact JSON using this schema:
 
 Consistency rules:
 - If target_pair_relation_supported is false, decision must be "no".
-- If the target pathogen and target antibiotic/class are mentioned separately but not clearly linked, decision must be "no" and primary_category must be "NONE".
+- If is_amr_relevant is false, decision must be "no".
+- If decision is "strict", target_pair_relation_supported and is_amr_relevant must both be true.
+- If the target pathogen and target antibiotic/class are mentioned separately but are part of the
+  same AMR/susceptibility/treatment/testing/stewardship context, target_pair_relation_supported
+  should be true.
+- If the target pathogen and target antibiotic/class are mentioned separately only as unrelated
+  co-occurrences, decision must be "no" and primary_category must be "NONE".
 - If resistance, susceptibility, testing, or treatment is attributed to a different pathogen or a different antibiotic than the target pair, decision must be "no" and primary_category must be "NONE".
-- If attribution is grammatically or semantically ambiguous, decision must be "no" and primary_category must be "NONE".
+- If the abstract is present and the target pair has an AMR-relevant shared study context, prefer
+  "yes" over "no" even if the abstract does not provide a pair-specific percentage or MIC value.
+- If the abstract is present but the target pair has no AMR-relevant shared context, decision must
+  be "no" and primary_category must be "NONE".
 - evidence_phrases must only include phrases that support the classification.
-- Do not infer missing relations.
-- When in doubt, discard the target pair relation.
+- Do not infer relations from unrelated co-mentions.
 """.strip()
 
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -148,7 +182,8 @@ RETRIES = 3
 BACKOFF_FACTOR = 2
 LLM_RETRIES = 3
 LLM_BACKOFF_FACTOR = 2
-LLM_CLASSIFICATION_MAX_TOKENS = 768
+LLM_CLASSIFICATION_MAX_TOKENS = 2048
+LLM_CLASSIFICATION_RETRY_MAX_TOKENS = 4096
 AMR_CATEGORY_COLUMNS = [
     "amr_primary_category",
     "amr_evidence_phrases",
@@ -354,6 +389,9 @@ def _normalize_evidence_phrases(value: object) -> list[str]:
 
 def _derive_decision(data: dict, target_pair_relation_supported: bool, is_amr_relevant: bool) -> str:
     decision = _normalize_unified_decision(data.get("decision"))
+    has_schema_flags = "target_pair_relation_supported" in data or "is_amr_relevant" in data
+    if decision == "uncertain" and has_schema_flags and (not target_pair_relation_supported or not is_amr_relevant):
+        return "no"
     if decision != "uncertain" or "decision" in data:
         return decision
     if is_amr_relevant and target_pair_relation_supported:
@@ -368,7 +406,7 @@ def _normalize_classification(data: dict, pmid: str) -> dict:
     is_amr_relevant = _normalize_bool(data.get("is_amr_relevant"), default=False)
     primary_category = _normalize_primary_category(data.get("primary_category"), target_pair_relation_supported)
     decision = _derive_decision(data, target_pair_relation_supported, is_amr_relevant)
-    if not target_pair_relation_supported and decision == "yes":
+    if (not target_pair_relation_supported or not is_amr_relevant) and decision in {"strict", "yes"}:
         decision = "no"
     if decision == "no" or not is_amr_relevant:
         primary_category = "NONE"
@@ -395,6 +433,14 @@ def _default_no_abstract_classification(pmid: str) -> dict:
     }
 
 
+def _is_output_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "max_tokens" in message
+        and ("output limit" in message or "model output limit" in message)
+    )
+
+
 def classify_abstract(
     llm,
     pmid: str,
@@ -412,15 +458,25 @@ def classify_abstract(
     """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
     last_error: Exception | None = None
+    current_max_tokens = max_tokens
+    retry_max_tokens = max(max_tokens, LLM_CLASSIFICATION_RETRY_MAX_TOKENS)
     for attempt in range(retries):
         try:
-            raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=max_tokens, temperature=0)
+            raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=current_max_tokens, temperature=0)
             return _normalize_classification(_extract_json_object(raw), pmid)
         except Exception as exc:  # pragma: no cover - network/API handling
             last_error = exc
             if attempt == retries - 1:
                 _log(log_path, f"LLM failed for PMID {pmid}: {exc}")
                 break
+            if _is_output_limit_error(exc) and current_max_tokens < retry_max_tokens:
+                current_max_tokens = min(current_max_tokens * 2, retry_max_tokens)
+                _log(
+                    log_path,
+                    f"LLM output limit for PMID {pmid}: {exc}. "
+                    f"Retrying with max_tokens={current_max_tokens}...",
+                )
+                continue
             delay = backoff**attempt
             _log(log_path, f"LLM error for PMID {pmid}: {exc}. Retrying in {delay}s...")
             time.sleep(delay)
@@ -475,6 +531,8 @@ def prepare_yearly_candidate_pmids(
 
 def _normalize_unified_decision(value: object) -> str:
     text = str(value or "").strip().lower()
+    if text.startswith("strict"):
+        return "strict"
     if text.startswith("yes"):
         return "yes"
     if text.startswith("no"):
@@ -716,6 +774,7 @@ def run_unified_llm_filter(
             _checkpoint_failures()
         if verbose >= 1 and progress_every and len(results) % progress_every == 0:
             batch_df = pd.DataFrame(results)
+            strict_n = int((batch_df["unified_decision"] == "strict").sum())
             yes_n = int((batch_df["unified_decision"] == "yes").sum())
             no_n = int((batch_df["unified_decision"] == "no").sum())
             unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
@@ -731,7 +790,8 @@ def run_unified_llm_filter(
                 eta_text = "estimating"
                 est_finish = "--:--:--"
             _progress(
-                f"Processed {completed:>6}/{total:<6} yes:{yes_n:>6} no:{no_n:>6} uncertain:{unc_n:>6} "
+                f"Processed {completed:>6}/{total:<6} strict:{strict_n:>6} yes:{yes_n:>6} "
+                f"no:{no_n:>6} uncertain:{unc_n:>6} "
                 f"| ETA {eta_text} | est finish {est_finish}"
             )
 
@@ -1200,7 +1260,7 @@ def build_yearly_screened_pairs(
     yearly_df: pd.DataFrame,
     unified_df: pd.DataFrame,
     *,
-    include_decisions: Iterable[str] = ("yes", "uncertain"),
+    include_decisions: Iterable[str] = ("strict", "yes"),
     output_path: str | None = None,
     merge_with_existing_output: bool = True,
 ) -> pd.DataFrame:

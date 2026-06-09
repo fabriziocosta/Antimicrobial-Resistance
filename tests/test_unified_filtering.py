@@ -8,6 +8,7 @@ from amr.pubmed.yearly import explode_positive_pair_pmids
 from amr.screening import (
     AMR_CATEGORY_COLUMNS,
     build_yearly_screened_pairs,
+    classify_abstract,
     prepare_yearly_candidate_pmids,
     run_unified_llm_filter,
 )
@@ -35,6 +36,26 @@ class _FakeLLM:
         if "PMID: 444" in prompt:
             return "not json"
         return '{"decision":"uncertain","rationale":"ambiguous"}'
+
+
+class _OutputLimitThenSuccessLLM:
+    def __init__(self) -> None:
+        self.max_tokens_seen: list[object] = []
+
+    def complete(self, prompt: str, **kwargs: object) -> str:
+        self.max_tokens_seen.append(kwargs.get("max_tokens"))
+        if len(self.max_tokens_seen) == 1:
+            raise RuntimeError(
+                "OpenAI completion failed: Error code: 400 - "
+                "{'error': {'message': 'Could not finish the message because "
+                "max_tokens or model output limit was reached. Please try again with higher max_tokens.'}}"
+            )
+        return (
+            '{"decision":"yes","primary_category":"SURVEILLANCE",'
+            '"rationale":"explicit resistance relation",'
+            '"evidence_phrases":["resistant isolates"],'
+            '"target_pair_relation_supported":true,"is_amr_relevant":true}'
+        )
 
 
 class UnifiedFilteringTests(unittest.TestCase):
@@ -74,6 +95,70 @@ class UnifiedFilteringTests(unittest.TestCase):
         out = explode_positive_pair_pmids(source)
 
         self.assertEqual(out["pmid"].tolist(), ["111", "222"])
+
+    def test_classify_abstract_increases_token_budget_after_output_limit(self) -> None:
+        llm = _OutputLimitThenSuccessLLM()
+
+        out = classify_abstract(
+            llm,
+            "111",
+            "p1",
+            "a1",
+            "title",
+            "abstract",
+            max_tokens=768,
+            retries=2,
+        )
+
+        self.assertEqual(out["decision"], "yes")
+        self.assertEqual(llm.max_tokens_seen, [768, 1536])
+
+    def test_classify_abstract_converts_unsupported_uncertain_to_no(self) -> None:
+        class UnsupportedUncertainLLM:
+            def complete(self, prompt: str, **kwargs: object) -> str:
+                return (
+                    '{"decision":"uncertain","primary_category":"NONE",'
+                    '"rationale":"","evidence_phrases":[],'
+                    '"target_pair_relation_supported":false,"is_amr_relevant":false}'
+                )
+
+        out = classify_abstract(
+            UnsupportedUncertainLLM(),
+            "111",
+            "p1",
+            "a1",
+            "title",
+            "abstract",
+        )
+
+        self.assertEqual(out["decision"], "no")
+        self.assertEqual(out["primary_category"], "NONE")
+        self.assertFalse(out["target_pair_relation_supported"])
+        self.assertFalse(out["is_amr_relevant"])
+
+    def test_classify_abstract_preserves_strict_decision(self) -> None:
+        class StrictLLM:
+            def complete(self, prompt: str, **kwargs: object) -> str:
+                return (
+                    '{"decision":"strict","primary_category":"SURVEILLANCE",'
+                    '"rationale":"explicit pathogen-antibiotic relation",'
+                    '"evidence_phrases":["E. coli isolates were resistant to gentamicin"],'
+                    '"target_pair_relation_supported":true,"is_amr_relevant":true}'
+                )
+
+        out = classify_abstract(
+            StrictLLM(),
+            "111",
+            "E. coli",
+            "Gentamicin",
+            "title",
+            "abstract",
+        )
+
+        self.assertEqual(out["decision"], "strict")
+        self.assertEqual(out["primary_category"], "SURVEILLANCE")
+        self.assertTrue(out["target_pair_relation_supported"])
+        self.assertTrue(out["is_amr_relevant"])
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")
@@ -131,7 +216,7 @@ class UnifiedFilteringTests(unittest.TestCase):
                 "pathogen": ["p1", "p1", "p1"],
                 "antibiotic": ["a1", "a1", "a1"],
                 "year": [2020, 2020, 2020],
-                "unified_decision": ["yes", "uncertain", "no"],
+                "unified_decision": ["strict", "yes", "uncertain"],
             }
         )
         out = build_yearly_screened_pairs(yearly_df, unified_df)
@@ -403,7 +488,7 @@ class UnifiedFilteringTests(unittest.TestCase):
                 abstract_cache_path=None,
                 failed_retry_path=None,
                 progress_every=0,
-                category_backfill_decisions=("yes", "uncertain"),
+                category_backfill_decisions=("strict", "yes", "uncertain"),
             )
             self.assertEqual(len(out), 1)
             self.assertEqual(out.loc[0, "unified_decision"], "no")
