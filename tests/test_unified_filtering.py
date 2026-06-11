@@ -7,19 +7,24 @@ import pandas as pd
 from amr.pubmed.yearly import explode_positive_pair_pmids
 from amr.screening import (
     AMR_CATEGORY_COLUMNS,
+    UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT,
+    UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
     build_yearly_screened_pairs,
     classify_abstract,
     prepare_yearly_candidate_pmids,
     run_unified_llm_filter,
 )
+from amr.screening.core import _format_hms
 
 
 class _FakeLLM:
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self.system_prompts: list[object] = []
 
     def complete(self, prompt: str, **kwargs: object) -> str:
         self.prompts.append(prompt)
+        self.system_prompts.append(kwargs.get("system_prompt"))
         if "PMID: 111" in prompt:
             return (
                 '{"decision":"YES","primary_category":"SURVEILLANCE",'
@@ -96,6 +101,10 @@ class UnifiedFilteringTests(unittest.TestCase):
 
         self.assertEqual(out["pmid"].tolist(), ["111", "222"])
 
+    def test_format_hms_uses_days_for_long_durations(self) -> None:
+        self.assertEqual(_format_hms(185 * 3600 + 54 * 60 + 57), "7d 17h 54m 57s")
+        self.assertEqual(_format_hms(2 * 3600 + 3 * 60 + 4), "2h 3m 4s")
+
     def test_classify_abstract_increases_token_budget_after_output_limit(self) -> None:
         llm = _OutputLimitThenSuccessLLM()
 
@@ -159,6 +168,26 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(out["primary_category"], "SURVEILLANCE")
         self.assertTrue(out["target_pair_relation_supported"])
         self.assertTrue(out["is_amr_relevant"])
+
+    def test_unified_filter_uses_compact_prompt_by_default(self) -> None:
+        llm = _FakeLLM()
+
+        out = classify_abstract(
+            llm,
+            "111",
+            "p1",
+            "a1",
+            "title",
+            "abstract",
+            system_prompt=UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+        )
+
+        self.assertEqual(out["decision"], "yes")
+        self.assertEqual(llm.system_prompts, [UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT])
+        prompt = str(llm.system_prompts[0])
+        self.assertIn("Do not include rationale", prompt)
+        self.assertNotIn('"rationale"', prompt)
+        self.assertNotIn('"evidence_phrases"', prompt)
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")
@@ -402,6 +431,10 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertIn("[unified_filter] starting run for 1 pending candidate rows", printed)
         self.assertIn("2 input rows; skipped 1 already complete", printed)
         self.assertIn("Processed      1/1", printed)
+        self.assertIn("[strict:", printed)
+        self.assertIn("[yes:", printed)
+        self.assertIn("[no:", printed)
+        self.assertIn("[uncertain:", printed)
         self.assertEqual(mock_fetch_single.call_count, 0)
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")

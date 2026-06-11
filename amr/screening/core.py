@@ -177,6 +177,56 @@ Consistency rules:
 - Do not infer relations from unrelated co-mentions.
 """.strip()
 
+UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT = (
+    UNIFIED_AMR_INTEREST_SYSTEM_PROMPT.replace(
+        """Internal reasoning steps:
+1. Identify pathogens mentioned.
+2. Identify antibiotics/classes mentioned.
+3. Identify whether the abstract describes AMR, susceptibility, treatment, testing, surveillance,
+   mechanisms, stewardship, or another AMR-relevant context.
+4. Decide whether the target pathogen and antibiotic/class are part of the same AMR-relevant
+   study, panel, class, result, or discussion.
+5. If the pair is supported by a direct statement, class statement, or study-panel attribution,
+   set target_pair_relation_supported = true.
+6. Use decision = "strict" when the pair relation is explicit, and decision = "yes" when the pair
+   is supported more broadly by a shared AMR-relevant panel, class, or context.
+7. Choose the primary category based on the main contribution for the supported target pair.
+8. If the pathogen and antibiotic are merely unrelated co-mentions outside an AMR-relevant shared
+   context, set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
+""",
+        """Classification checklist, for internal use only. Do not output reasoning:
+1. Identify mentioned pathogens and antibiotics/classes.
+2. Check whether the text has an AMR, susceptibility, treatment, testing, surveillance, mechanism, stewardship, or policy context.
+3. Decide whether the target pathogen and antibiotic/class belong to the same supported AMR-relevant relation.
+4. Choose the decision and primary category.
+""",
+    )
+    .replace(
+        """Output only valid compact JSON using this schema:
+{
+  "decision": "strict | yes | no | uncertain",
+  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
+  "rationale": "Brief explanation in 1-3 sentences. Mention the specific title/abstract evidence and explain whether the target pathogen-antibiotic relation is supported.",
+  "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
+  "target_pair_relation_supported": true,
+  "is_amr_relevant": true,
+}
+""",
+        """Output only valid compact JSON using this schema. Do not include rationale, explanation, reasoning, evidence text, or copied phrases:
+{
+  "decision": "strict | yes | no | uncertain",
+  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
+  "target_pair_relation_supported": true,
+  "is_amr_relevant": true
+}
+""",
+    )
+    .replace(
+        "- evidence_phrases must only include phrases that support the classification.\n",
+        "- Do not output rationale, explanation, reasoning, evidence text, or copied phrases.\n",
+    )
+)
+
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETRIES = 3
 BACKOFF_FACTOR = 2
@@ -210,8 +260,11 @@ def _log(log_path: str | None, message: str) -> None:
 
 def _format_hms(seconds: float | int) -> str:
     total_seconds = max(0, int(round(float(seconds))))
-    hours, remainder = divmod(total_seconds, 3600)
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
     minutes, secs = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m {secs}s"
     return f"{hours}h {minutes}m {secs}s"
 
 
@@ -454,9 +507,12 @@ def classify_abstract(
     log_path: str | None = None,
     retries: int = LLM_RETRIES,
     backoff: int = LLM_BACKOFF_FACTOR,
+    include_explanatory_text: bool = False,
 ) -> dict:
     """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
+    if not include_explanatory_text and system_prompt == UNIFIED_AMR_INTEREST_SYSTEM_PROMPT:
+        system_prompt = UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT
     last_error: Exception | None = None
     current_max_tokens = max_tokens
     retry_max_tokens = max(max_tokens, LLM_CLASSIFICATION_RETRY_MAX_TOKENS)
@@ -549,6 +605,7 @@ def run_unified_llm_filter(
     email: str | None = None,
     rate_limit: float = 0.35,
     system_prompt: str = UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+    include_explanatory_text: bool = False,
     output_path: str | None = None,
     resume_from: pd.DataFrame | None = None,
     save_every: int = 50,
@@ -573,6 +630,8 @@ def run_unified_llm_filter(
     missing = required_cols - set(candidate_df.columns)
     if missing:
         raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
+    if not include_explanatory_text and system_prompt == UNIFIED_AMR_INTEREST_SYSTEM_PROMPT:
+        system_prompt = UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT
     category_cols = AMR_CATEGORY_COLUMNS
 
     def _append_log(message: str) -> None:
@@ -790,8 +849,8 @@ def run_unified_llm_filter(
                 eta_text = "estimating"
                 est_finish = "--:--:--"
             _progress(
-                f"Processed {completed:>6}/{total:<6} strict:{strict_n:>6} yes:{yes_n:>6} "
-                f"no:{no_n:>6} uncertain:{unc_n:>6} "
+                f"Processed {completed:>6}/{total:<6} [strict:{strict_n:>6}] [yes:{yes_n:>6}] "
+                f"[no:{no_n:>6}] [uncertain:{unc_n:>6}] "
                 f"| ETA {eta_text} | est finish {est_finish}"
             )
 
@@ -826,6 +885,7 @@ def run_unified_llm_filter(
                 system_prompt=system_prompt,
                 max_tokens=LLM_CLASSIFICATION_MAX_TOKENS,
                 log_path=log_path,
+                include_explanatory_text=include_explanatory_text,
             )
             raw_decision = str(verdict.get("decision", "uncertain"))
             return {
@@ -1404,6 +1464,7 @@ def build_positive_dataset(
 __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "UNIFIED_AMR_INTEREST_SYSTEM_PROMPT",
+    "UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT",
     "LLM_CLASSIFICATION_MAX_TOKENS",
     "AMR_CATEGORY_COLUMNS",
     "PUBMED_EFETCH",
