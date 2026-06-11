@@ -21,10 +21,12 @@ class _FakeLLM:
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.system_prompts: list[object] = []
+        self.kwargs_seen: list[dict[str, object]] = []
 
     def complete(self, prompt: str, **kwargs: object) -> str:
         self.prompts.append(prompt)
         self.system_prompts.append(kwargs.get("system_prompt"))
+        self.kwargs_seen.append(dict(kwargs))
         if "PMID: 111" in prompt:
             return (
                 '{"decision":"YES","primary_category":"SURVEILLANCE",'
@@ -228,6 +230,36 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertFalse(out.loc[2, "amr_target_pair_relation_supported"])
         self.assertFalse(out.loc[2, "amr_is_relevant"])
         self.assertEqual(mock_fetch_batch.call_count, 1)
+        self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_passes_reasoning_effort(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {"111": ("t1", "clinical resistant isolates", "ok")}
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+            }
+        )
+        llm = _FakeLLM()
+
+        run_unified_llm_filter(
+            candidates,
+            llm,
+            reasoning_effort="minimal",
+            dry_run=False,
+            verbose=0,
+            abstract_cache_path=None,
+            failed_retry_path=None,
+            progress_every=0,
+        )
+
+        self.assertEqual(llm.kwargs_seen[0]["reasoning_effort"], "minimal")
         self.assertEqual(mock_fetch_single.call_count, 0)
 
     def test_build_yearly_screened_pairs_unique_and_counted(self) -> None:
@@ -435,6 +467,7 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertIn("[yes:", printed)
         self.assertIn("[no:", printed)
         self.assertIn("[uncertain:", printed)
+        self.assertIn("| batch ", printed)
         self.assertEqual(mock_fetch_single.call_count, 0)
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")

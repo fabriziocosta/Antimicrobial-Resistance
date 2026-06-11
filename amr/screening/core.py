@@ -508,6 +508,7 @@ def classify_abstract(
     retries: int = LLM_RETRIES,
     backoff: int = LLM_BACKOFF_FACTOR,
     include_explanatory_text: bool = False,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
@@ -518,7 +519,16 @@ def classify_abstract(
     retry_max_tokens = max(max_tokens, LLM_CLASSIFICATION_RETRY_MAX_TOKENS)
     for attempt in range(retries):
         try:
-            raw = llm.complete(prompt, system_prompt=system_prompt, max_tokens=current_max_tokens, temperature=0)
+            llm_kwargs = {}
+            if reasoning_effort:
+                llm_kwargs["reasoning_effort"] = reasoning_effort
+            raw = llm.complete(
+                prompt,
+                system_prompt=system_prompt,
+                max_tokens=current_max_tokens,
+                temperature=0,
+                **llm_kwargs,
+            )
             return _normalize_classification(_extract_json_object(raw), pmid)
         except Exception as exc:  # pragma: no cover - network/API handling
             last_error = exc
@@ -606,6 +616,7 @@ def run_unified_llm_filter(
     rate_limit: float = 0.35,
     system_prompt: str = UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
     include_explanatory_text: bool = False,
+    reasoning_effort: str | None = None,
     output_path: str | None = None,
     resume_from: pd.DataFrame | None = None,
     save_every: int = 50,
@@ -820,6 +831,7 @@ def run_unified_llm_filter(
         return _classification_output_fields(_default_no_abstract_classification(pmid))
 
     def _record_result(item: dict) -> None:
+        nonlocal last_progress_at
         results.append(item)
         seen_keys.add((str(item["pmid"]), str(item["pathogen"]), str(item["antibiotic"]), int(item["year"])))
         # clear retry state once row is successfully decided/stored
@@ -838,8 +850,11 @@ def run_unified_llm_filter(
             no_n = int((batch_df["unified_decision"] == "no").sum())
             unc_n = int((batch_df["unified_decision"] == "uncertain").sum())
             completed = len(results)
+            now = time.time()
+            batch_elapsed_s = now - last_progress_at
+            last_progress_at = now
             if completed > 0 and total > 0:
-                elapsed_s = time.time() - run_started_at
+                elapsed_s = now - run_started_at
                 avg_s_per_item = elapsed_s / completed
                 remaining_items = max(0, total - completed)
                 eta_s = avg_s_per_item * remaining_items
@@ -851,7 +866,7 @@ def run_unified_llm_filter(
             _progress(
                 f"Processed {completed:>6}/{total:<6} [strict:{strict_n:>6}] [yes:{yes_n:>6}] "
                 f"[no:{no_n:>6}] [uncertain:{unc_n:>6}] "
-                f"| ETA {eta_text} | est finish {est_finish}"
+                f"| batch {_format_hms(batch_elapsed_s)} | ETA {eta_text} | est finish {est_finish}"
             )
 
     def _run_llm_batch(batch: list[dict]) -> list[dict]:
@@ -886,6 +901,7 @@ def run_unified_llm_filter(
                 max_tokens=LLM_CLASSIFICATION_MAX_TOKENS,
                 log_path=log_path,
                 include_explanatory_text=include_explanatory_text,
+                reasoning_effort=reasoning_effort,
             )
             raw_decision = str(verdict.get("decision", "uncertain"))
             return {
@@ -916,6 +932,7 @@ def run_unified_llm_filter(
     llm_calls_used = 0
     pending_batch: list[dict] = []
     run_started_at = time.time()
+    last_progress_at = run_started_at
     if verbose >= 1:
         _progress(
             f"[unified_filter] starting run for {total} pending candidate rows "
