@@ -65,6 +65,22 @@ class _OutputLimitThenSuccessLLM:
         )
 
 
+class _TerminalErrorAfterFirstLLM:
+    def complete(self, prompt: str, **kwargs: object) -> str:
+        if "PMID: 999" in prompt:
+            raise RuntimeError(
+                "OpenAI completion failed: Error code: 431 - "
+                "{'error': {'message': 'Request headers are too large.', "
+                "'type': 'invalid_request_error', 'code': 'request_headers_too_large'}}"
+            )
+        return (
+            '{"decision":"yes","primary_category":"SURVEILLANCE",'
+            '"rationale":"explicit resistance relation",'
+            '"evidence_phrases":["resistant isolates"],'
+            '"target_pair_relation_supported":true,"is_amr_relevant":true}'
+        )
+
+
 class UnifiedFilteringTests(unittest.TestCase):
     def _complete_amr_fields(self) -> dict:
         return {
@@ -260,6 +276,42 @@ class UnifiedFilteringTests(unittest.TestCase):
         )
 
         self.assertEqual(llm.kwargs_seen[0]["reasoning_effort"], "minimal")
+        self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_stops_gracefully_on_terminal_llm_error(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {
+            "111": ("t1", "clinical resistant isolates", "ok"),
+            "999": ("t2", "clinical resistant isolates", "ok"),
+        }
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111", "999"],
+                "pathogen": ["p1", "p1"],
+                "antibiotic": ["a1", "a1"],
+                "year": [2020, 2020],
+            }
+        )
+
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            out = run_unified_llm_filter(
+                candidates,
+                _TerminalErrorAfterFirstLLM(),
+                output_path=tmp.name,
+                llm_batch_size=1,
+                llm_max_workers=1,
+                verbose=0,
+                abstract_cache_path=None,
+                failed_retry_path=None,
+                progress_every=0,
+            )
+            saved = pd.read_parquet(tmp.name)
+
+        self.assertEqual(out["pmid"].tolist(), ["111"])
+        self.assertEqual(saved["pmid"].tolist(), ["111"])
         self.assertEqual(mock_fetch_single.call_count, 0)
 
     def test_build_yearly_screened_pairs_unique_and_counted(self) -> None:

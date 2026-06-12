@@ -494,6 +494,24 @@ def _is_output_limit_error(exc: Exception) -> bool:
     )
 
 
+class TerminalLLMError(RuntimeError):
+    """Raised when the LLM backend reports a run-level terminal condition."""
+
+    def __init__(self, message: str, *, partial_results: list[dict] | None = None) -> None:
+        super().__init__(message)
+        self.partial_results = partial_results or []
+
+
+def _is_terminal_llm_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "request_headers_too_large" in message
+        or "request headers are too large" in message
+        or "insufficient_quota" in message
+        or "exceeded your current quota" in message
+    )
+
+
 def classify_abstract(
     llm,
     pmid: str,
@@ -509,6 +527,7 @@ def classify_abstract(
     backoff: int = LLM_BACKOFF_FACTOR,
     include_explanatory_text: bool = False,
     reasoning_effort: str | None = None,
+    stop_on_terminal_error: bool = False,
 ) -> dict:
     """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
@@ -532,6 +551,9 @@ def classify_abstract(
             return _normalize_classification(_extract_json_object(raw), pmid)
         except Exception as exc:  # pragma: no cover - network/API handling
             last_error = exc
+            if stop_on_terminal_error and _is_terminal_llm_error(exc):
+                _log(log_path, f"Terminal LLM error for PMID {pmid}: {exc}. Stopping run gracefully.")
+                raise TerminalLLMError(str(exc)) from exc
             if attempt == retries - 1:
                 _log(log_path, f"LLM failed for PMID {pmid}: {exc}")
                 break
@@ -902,6 +924,7 @@ def run_unified_llm_filter(
                 log_path=log_path,
                 include_explanatory_text=include_explanatory_text,
                 reasoning_effort=reasoning_effort,
+                stop_on_terminal_error=True,
             )
             raw_decision = str(verdict.get("decision", "uncertain"))
             return {
@@ -924,7 +947,13 @@ def run_unified_llm_filter(
         with ThreadPoolExecutor(max_workers=int(max(1, llm_max_workers))) as pool:
             futures = [pool.submit(_classify, item) for item in batch]
             for fut in as_completed(futures):
-                out.append(fut.result())
+                try:
+                    out.append(fut.result())
+                except TerminalLLMError as exc:
+                    for pending in futures:
+                        pending.cancel()
+                    exc.partial_results = out + exc.partial_results
+                    raise
         return out
 
     results: list[dict] = []
@@ -933,6 +962,7 @@ def run_unified_llm_filter(
     pending_batch: list[dict] = []
     run_started_at = time.time()
     last_progress_at = run_started_at
+    stop_requested = False
     if verbose >= 1:
         _progress(
             f"[unified_filter] starting run for {total} pending candidate rows "
@@ -1038,18 +1068,38 @@ def run_unified_llm_filter(
         else:
             should_flush = len(pending_batch) >= int(max(1, llm_batch_size))
         if should_flush:
-            for item in _run_llm_batch(pending_batch):
+            try:
+                batch_results = _run_llm_batch(pending_batch)
+            except TerminalLLMError as exc:
+                batch_results = exc.partial_results
+                stop_requested = True
+                _append_log(
+                    "Stopping unified LLM filter after terminal LLM error; "
+                    f"checkpointing {len(results) + len(batch_results)} newly processed rows from this run."
+                )
+            for item in batch_results:
                 _record_result(item)
                 llm_calls_used += 1
             pending_batch = []
             time.sleep(rate_limit)
+            if stop_requested:
+                break
 
     # Flush remaining LLM items
-    if pending_batch and (max_llm_calls is None or llm_calls_used < max_llm_calls):
+    if pending_batch and not stop_requested and (max_llm_calls is None or llm_calls_used < max_llm_calls):
         if max_llm_calls is not None:
             remaining = int(max_llm_calls - llm_calls_used)
             pending_batch = pending_batch[: max(0, remaining)]
-        for item in _run_llm_batch(pending_batch):
+        try:
+            batch_results = _run_llm_batch(pending_batch)
+        except TerminalLLMError as exc:
+            batch_results = exc.partial_results
+            stop_requested = True
+            _append_log(
+                "Stopping unified LLM filter after terminal LLM error; "
+                f"checkpointing {len(results) + len(batch_results)} newly processed rows from this run."
+            )
+        for item in batch_results:
             _record_result(item)
             llm_calls_used += 1
 
