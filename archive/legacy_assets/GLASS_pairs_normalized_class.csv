@@ -1,0 +1,129 @@
+pathogen,antibiotic,glass_species,glass_antibiotic,glass_antibiotic_name,glass_antibiotic_group,matched_on
+Acinetobacter baumannii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter bereziniae,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter calcoaceticus,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter haemolyticus,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter johnsonii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter junii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter lwoffii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter nosocomialis,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter pittii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter radioresistens,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter schindleri,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter seifertii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter ursingii,Glycylcyclines,Acinetobacter spp.,Tigecycline,Tigecycline,Glycylcyclines,Antibiotic
+Acinetobacter baumannii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter bereziniae,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter calcoaceticus,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter haemolyticus,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter johnsonii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter junii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter lwoffii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter nosocomialis,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter pittii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter radioresistens,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter schindleri,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter seifertii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter ursingii,Aminoglycosides,Acinetobacter spp.,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Acinetobacter baumannii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter bereziniae,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter calcoaceticus,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter haemolyticus,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter johnsonii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter junii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter lwoffii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter nosocomialis,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter pittii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter radioresistens,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter schindleri,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter seifertii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter ursingii,Carbapenems,Acinetobacter spp.,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Acinetobacter baumannii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter bereziniae,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter calcoaceticus,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter haemolyticus,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter johnsonii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter junii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter lwoffii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter nosocomialis,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter pittii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter radioresistens,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter schindleri,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter seifertii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter ursingii,Polymyxins,Acinetobacter spp.,Colistin,Colistin,Polymyxins,Antibiotic
+Acinetobacter baumannii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter bereziniae,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter calcoaceticus,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter haemolyticus,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter johnsonii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter junii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter lwoffii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter nosocomialis,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter pittii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter radioresistens,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter schindleri,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter seifertii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Acinetobacter ursingii,Tetracyclines,Acinetobacter spp.,minocycline,Minocycline,Tetracyclines,Antibiotic
+Escherichia coli,Sulfonamide-trimethoprim-combinations,E. coli,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Escherichia coli,Fluoroquinolones,E. coli,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Escherichia coli,Third-generation-cephalosporins,E. coli,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Escherichia coli,Fourth-generation-cephalosporins,E. coli,Cefepime,Cefepime,Fourth-generation-cephalosporins,Antibiotic
+Escherichia coli,Carbapenems,E. coli,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Escherichia coli,Polymyxins,E. coli,Colistin,Colistin,Polymyxins,Antibiotic
+Klebsiella pneumoniae,Sulfonamide-trimethoprim-combinations,Klebsiella pneumoniae,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Klebsiella pneumoniae,Fluoroquinolones,Klebsiella pneumoniae,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Klebsiella pneumoniae,Third-generation-cephalosporins,Klebsiella pneumoniae,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Klebsiella pneumoniae,Fourth-generation-cephalosporins,Klebsiella pneumoniae,Cefepime,Cefepime,Fourth-generation-cephalosporins,Antibiotic
+Klebsiella pneumoniae,Carbapenems,Klebsiella pneumoniae,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Klebsiella pneumoniae,Polymyxins,Klebsiella pneumoniae,Colistin,Colistin,Polymyxins,Antibiotic
+Pseudomonas aeruginosa,Third-generation-cephalosporins,Pseudomonas aeruginosa,Ceftazidime,Ceftazidime,Third-generation-cephalosporins,Antibiotic
+Pseudomonas aeruginosa,Beta-lactam/beta-lactamase-inhibitor_anti-pseudomonal,Pseudomonas aeruginosa,Piperacillin/tazobactam,Piperacillin/tazobactam,Beta-lactam/beta-lactamase-inhibitor_anti-pseudomonal,Antibiotic
+Pseudomonas aeruginosa,Aminoglycosides,Pseudomonas aeruginosa,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
+Pseudomonas aeruginosa,Carbapenems,Pseudomonas aeruginosa,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Pseudomonas aeruginosa,Polymyxins,Pseudomonas aeruginosa,Colistin,Colistin,Polymyxins,Antibiotic
+Staphylococcus aureus,Penicillins,Staphylococcus aureus,Oxacillin,Oxacillin,Penicillins,Antibiotic
+Staphylococcus aureus,Second-generation-cephalosporins,Staphylococcus aureus,Cefoxitin,Cefoxitin,Second-generation-cephalosporins,Antibiotic
+Streptococcus pneumoniae,Penicillins,Streptococcus pneumoniae,Penicillin G,Benzylpenicillin,Penicillins,Antibiotic alias
+Streptococcus pneumoniae,Third-generation-cephalosporins,Streptococcus pneumoniae,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Streptococcus pneumoniae,Sulfonamide-trimethoprim-combinations,Streptococcus pneumoniae,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Streptococcus pneumoniae,Macrolides,Streptococcus pneumoniae,Erythromycin,Erythromycin,Macrolides,Antibiotic
+Salmonella enterica,Fluoroquinolones,Salmonella spp,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Salmonella enterica,Third-generation-cephalosporins,Salmonella spp,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Salmonella enterica,Carbapenems,Salmonella spp,Imipenem,Imipenem/cilastatin,Carbapenems,Antibiotic alias
+Salmonella enterica,Amphenicols,Salmonella enterica,Chloramphenicol,Chloramphenicol,Amphenicols,Antibiotic
+Salmonella enterica,Penicillins,Salmonella enterica,Ampicillin,Ampicillin,Penicillins,Antibiotic
+Salmonella enterica,Sulfonamide-trimethoprim-combinations,Salmonella enterica,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Salmonella enterica,Macrolides,Salmonella enterica,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Neisseria meningitidis,Penicillins,Neisseria meningitidis,Penicillin G,Benzylpenicillin,Penicillins,Antibiotic alias
+Neisseria meningitidis,Rifamycins,Neisseria meningitidis,Rifampicin,Rifampicin,Rifamycins,Antibiotic
+Neisseria meningitidis,Fluoroquinolones,Neisseria meningitidis,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Neisseria meningitidis,Third-generation-cephalosporins,Neisseria meningitidis,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Haemophilus influenzae,Penicillins,Haemophilus influenzae,Ampicillin,Ampicillin,Penicillins,Antibiotic
+Haemophilus influenzae,Beta-lactam/beta-lactamase-inhibitor,Haemophilus influenzae,Amoxicillin-clavulanic acid,Amoxicillin/clavulanic-acid,Beta-lactam/beta-lactamase-inhibitor,Antibiotic
+Haemophilus influenzae,Third-generation-cephalosporins,Haemophilus influenzae,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Haemophilus influenzae,Sulfonamide-trimethoprim-combinations,Haemophilus influenzae,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Escherichia coli,Nitrofuran-derivatives,E. coli,Nitrofurantoin,Nitrofurantoin,Nitrofuran-derivatives,Antibiotic
+Escherichia coli,Penicillins,E. coli,Mecillinam,Mecillinam,Penicillins,Antibiotic
+Klebsiella pneumoniae,Penicillins,Klebsiella pneumoniae,Mecillinam,Mecillinam,Penicillins,Antibiotic
+Shigella boydii,Sulfonamide-trimethoprim-combinations,Shigella spp.,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Shigella dysenteriae,Sulfonamide-trimethoprim-combinations,Shigella spp.,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Shigella flexneri,Sulfonamide-trimethoprim-combinations,Shigella spp.,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Shigella sonnei,Sulfonamide-trimethoprim-combinations,Shigella spp.,Co-trimoxazole,Sulfamethoxazole/trimethoprim,Sulfonamide-trimethoprim-combinations,Antibiotic alias
+Shigella boydii,Fluoroquinolones,Shigella spp.,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Shigella dysenteriae,Fluoroquinolones,Shigella spp.,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Shigella flexneri,Fluoroquinolones,Shigella spp.,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Shigella sonnei,Fluoroquinolones,Shigella spp.,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Shigella boydii,Third-generation-cephalosporins,Shigella spp.,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Shigella dysenteriae,Third-generation-cephalosporins,Shigella spp.,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Shigella flexneri,Third-generation-cephalosporins,Shigella spp.,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Shigella sonnei,Third-generation-cephalosporins,Shigella spp.,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Shigella boydii,Macrolides,Shigella spp.,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Shigella dysenteriae,Macrolides,Shigella spp.,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Shigella flexneri,Macrolides,Shigella spp.,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Shigella sonnei,Macrolides,Shigella spp.,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Haemophilus influenzae,Fluoroquinolones,Haemophilus influenzae,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Neisseria gonorrhoeae,Third-generation-cephalosporins,Neisseria gonorrhoeae,Ceftriaxone,Ceftriaxone,Third-generation-cephalosporins,Antibiotic
+Neisseria gonorrhoeae,Macrolides,Neisseria gonorrhoeae,Azithromycin,Azithromycin,Macrolides,Antibiotic
+Neisseria gonorrhoeae,Aminocyclitols,Neisseria gonorrhoeae,spectinomycin,Spectinomycin,Aminocyclitols,Antibiotic
+Neisseria gonorrhoeae,Fluoroquinolones,Neisseria gonorrhoeae,Ciprofloxacin,Ciprofloxacin,Fluoroquinolones,Antibiotic
+Neisseria gonorrhoeae,Aminoglycosides,Neisseria gonorrhoeae,Gentamicin,Gentamicin,Aminoglycosides,Antibiotic
