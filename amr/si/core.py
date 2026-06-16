@@ -1330,7 +1330,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     html_path: str | None = None,
     pdf_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Plot latest observed AMR count against future-minus-latest smoothed SI shift."""
+    """Plot latest observed or predicted AMR count against the future SI shift."""
     required_cols = {
         "pathogen",
         "antibiotic",
@@ -1355,18 +1355,32 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
         raise ImportError("plotly is required for interactive SI plots.") from exc
 
     plot_df = rank_df.loc[rank_df["status"].eq("ok")].copy()
+    observed_count = pd.to_numeric(plot_df["latest_available_count"], errors="coerce")
+    if "latest_available_predicted_count" in plot_df.columns:
+        predicted_count = pd.to_numeric(plot_df["latest_available_predicted_count"], errors="coerce")
+    else:
+        predicted_count = pd.Series(np.nan, index=plot_df.index, dtype=float)
+    plot_df["latest_count_source"] = np.where(
+        observed_count.notna(),
+        "observed",
+        np.where(predicted_count.notna(), "predicted", "unavailable"),
+    )
+    plot_df["latest_available_count"] = observed_count.fillna(predicted_count)
     plot_df = plot_df.dropna(
         subset=[
             "latest_available_count",
             "latest_available_predicted_SI",
             "future_predicted_SI",
-            "post_fit_count_abs_pct_error_mean",
         ]
+    )
+    count_error = pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce")
+    count_error_in_range = count_error.isna() | (
+        (count_error >= float(min_count_abs_pct_error_mean))
+        & (count_error <= float(max_count_abs_pct_error_mean))
     )
     plot_df = plot_df.loc[
         (pd.to_numeric(plot_df["latest_available_count"], errors="coerce") >= float(min_last_available_count))
-        & (pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce") >= float(min_count_abs_pct_error_mean))
-        & (pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce") <= float(max_count_abs_pct_error_mean))
+        & count_error_in_range
     ].reset_index(drop=True)
     if min_si_delta is not None and not plot_df.empty:
         future_delta = (
@@ -1384,6 +1398,12 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     plot_df["future_minus_latest_smoothed_SI"] = (
         pd.to_numeric(plot_df["future_predicted_SI"], errors="coerce") - plot_df["latest_smoothed_SI"]
     )
+    plot_df["count_error_display"] = pd.to_numeric(
+        plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"
+    ).map(lambda value: "n/a" if pd.isna(value) else f"{value:.2f}%")
+    plot_df["marker_count_error"] = pd.to_numeric(
+        plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"
+    ).fillna(float(max_count_abs_pct_error_mean))
 
     glass_df = glass_pairs_df if glass_pairs_df is not None else GLASS_pairs_df
     plot_df["is_glass_pair"] = False
@@ -1456,9 +1476,15 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     show_text = display_name and plot_df["display_label"].astype(str).str.len().gt(0).any()
 
     if title is None:
+        unavailable_error_note = (
+            "; unavailable validation errors included"
+            if plot_df["post_fit_count_abs_pct_error_mean"].isna().any()
+            else ""
+        )
         title = (
-            "Latest observed AMR count vs predicted future SI shift "
-            f"(mean abs count error {min_count_abs_pct_error_mean:g}% to {max_count_abs_pct_error_mean:g}%)"
+            "AMR count at latest reference year vs predicted future SI shift "
+            f"(mean abs count error {min_count_abs_pct_error_mean:g}% to "
+            f"{max_count_abs_pct_error_mean:g}%{unavailable_error_note})"
         )
 
     fig = go.Figure(
@@ -1471,7 +1497,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                 textposition="middle right",
                 textfont=dict(size=9),
                 marker=dict(
-                    color=pd.to_numeric(plot_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
+                    color=plot_df["marker_count_error"],
                     colorscale=[[0.0, "#2166ac"], [1.0, "#ffffff"]],
                     cmin=float(min_count_abs_pct_error_mean),
                     cmax=float(max_count_abs_pct_error_mean),
@@ -1498,16 +1524,18 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                         "n_count_error_years",
                         "appears_in_GLASS",
                         "glass_group_column",
+                        "latest_count_source",
+                        "count_error_display",
                     ]
                 ].to_numpy(),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "<b>%{customdata[1]}</b><br>"
                     "Years: %{customdata[2]} -> %{customdata[3]}<br>"
-                    "Counts: %{customdata[4]:.0f} -> %{customdata[7]:.0f}<br>"
+                    "Counts: %{customdata[4]:.0f} (%{customdata[13]}) -> %{customdata[7]:.0f}<br>"
                     "Smoothed SI: %{customdata[5]:.3f} -> %{customdata[6]:.3f}<br>"
                     "Delta SI: %{customdata[8]:.3f}<br>"
-                    "Error (pc): %{customdata[9]:.2f}<br>"
+                    "Mean abs count error: %{customdata[14]}<br>"
                     "Count-error years: %{customdata[10]:.0f}<br>"
                     "GLASS: %{customdata[11]}<extra></extra>"
                 ),
@@ -1529,7 +1557,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     fig.update_layout(
         title=title,
         dragmode="pan",
-        xaxis_title="AMR publications in latest available year",
+        xaxis_title="AMR publications at latest reference year (observed or predicted)",
         yaxis_title="Predicted future SI - smoothed SI at latest available year",
         template="plotly_white",
         width=int(width),
@@ -1577,7 +1605,14 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": plot_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error}
+    return {
+        "figure": fig,
+        "plot_df": plot_df,
+        "pdf_path": saved_pdf_path,
+        "pdf_error": pdf_error,
+        "predicted_count_fallback_rows": int(plot_df["latest_count_source"].eq("predicted").sum()),
+        "missing_count_error_rows": int(plot_df["post_fit_count_abs_pct_error_mean"].isna().sum()),
+    }
 
 
 def plot_yearly_category_driver_counts(

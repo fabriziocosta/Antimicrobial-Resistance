@@ -6,15 +6,54 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
 
+import fcntl
 import pandas as pd
 import requests
 
 from amr.config import EUTILS_API_KEY
 from amr.io import atomic_write_parquet
+
+
+@contextmanager
+def _output_checkpoint_lock(path: str | Path):
+    """Serialize read-merge-write checkpoints targeting the same output file."""
+    lock_path = Path(f"{path}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _merge_checkpoint_rows(
+    path: str | Path,
+    updates: pd.DataFrame,
+    *,
+    key_cols: list[str],
+    fallback: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Merge updates into the latest on-disk checkpoint without losing other writers."""
+    path = Path(path)
+    with _output_checkpoint_lock(path):
+        if path.exists() and path.stat().st_size > 0:
+            current = pd.read_parquet(path)
+        elif fallback is not None:
+            current = fallback.copy()
+        else:
+            current = pd.DataFrame()
+        merged = pd.concat([current, updates], ignore_index=True)
+        if not merged.empty:
+            merged = merged.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
+        atomic_write_parquet(merged, path, index=False)
+    return merged
 
 DEFAULT_SYSTEM_PROMPT = """
 You are a careful biomedical evidence reviewer. Given a title and abstract, decide whether the authors explicitly state or conclude that the specified pathogen is showing clinically meaningful resistance to the specified antibiotic.
@@ -494,6 +533,11 @@ def _is_output_limit_error(exc: Exception) -> bool:
     )
 
 
+def _is_invalid_prompt_error(value: object) -> bool:
+    message = str(value).lower()
+    return "invalid_prompt" in message or "invalid prompt" in message
+
+
 class TerminalLLMError(RuntimeError):
     """Raised when the LLM backend reports a run-level terminal condition."""
 
@@ -554,6 +598,19 @@ def classify_abstract(
             if stop_on_terminal_error and _is_terminal_llm_error(exc):
                 _log(log_path, f"Terminal LLM error for PMID {pmid}: {exc}. Stopping run gracefully.")
                 raise TerminalLLMError(str(exc)) from exc
+            if _is_invalid_prompt_error(exc):
+                _log(
+                    log_path,
+                    f"LLM policy rejection for PMID {pmid}: {exc}. "
+                    "Recording uncertain without retry.",
+                )
+                return _normalize_classification(
+                    {
+                        "decision": "uncertain",
+                        "rationale": "LLM policy rejection: invalid_prompt",
+                    },
+                    pmid,
+                )
             if attempt == retries - 1:
                 _log(log_path, f"LLM failed for PMID {pmid}: {exc}")
                 break
@@ -677,6 +734,7 @@ def run_unified_llm_filter(
         _append_log(message)
 
     existing = pd.DataFrame()
+    resume_checkpoint_fallback = pd.DataFrame()
     key_cols = ["pmid", "pathogen", "antibiotic", "year"]
     seen_keys: set[tuple[str, str, str, int]] = set()
     category_backfill_set = (
@@ -691,6 +749,7 @@ def run_unified_llm_filter(
             _append_log(f"Failed loading existing unified output from {output_path}: {exc}")
     if resume_from is not None and not resume_from.empty:
         existing = resume_from.copy()
+        resume_checkpoint_fallback = existing.copy()
         if set(key_cols).issubset(existing.columns):
             for col in category_cols:
                 if col not in existing.columns:
@@ -701,7 +760,10 @@ def run_unified_llm_filter(
                     lambda v: isinstance(v, (list, tuple)) or hasattr(v, "tolist")
                 )
             if "unified_rationale" in existing.columns:
-                llm_failure_mask = existing["unified_rationale"].astype(str).str.startswith("LLM failure:")
+                rationale = existing["unified_rationale"].astype(str)
+                llm_failure_mask = rationale.str.startswith("LLM failure:") & ~rationale.map(
+                    _is_invalid_prompt_error
+                )
                 complete_mask &= ~llm_failure_mask
             complete_existing = existing.loc[complete_mask].copy()
             incomplete_existing = existing.loc[~complete_mask].copy()
@@ -810,10 +872,12 @@ def run_unified_llm_filter(
     def _checkpoint_results() -> None:
         if not output_path:
             return
-        tmp_df = pd.concat([existing, pd.DataFrame(results)], ignore_index=True)
-        if not tmp_df.empty:
-            tmp_df = tmp_df.drop_duplicates(subset=key_cols, keep="last")
-        atomic_write_parquet(tmp_df, output_path, index=False)
+        _merge_checkpoint_rows(
+            output_path,
+            pd.DataFrame(results),
+            key_cols=key_cols,
+            fallback=resume_checkpoint_fallback,
+        )
 
     def _checkpoint_cache() -> None:
         nonlocal cache_dirty
@@ -1107,7 +1171,12 @@ def run_unified_llm_filter(
     if not out_df.empty:
         out_df = out_df.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
     if output_path:
-        atomic_write_parquet(out_df, output_path, index=False)
+        _merge_checkpoint_rows(
+            output_path,
+            pd.DataFrame(results),
+            key_cols=key_cols,
+            fallback=resume_checkpoint_fallback,
+        )
     if abstract_cache_path and abstract_cache:
         _checkpoint_cache()
     if failed_retry_path:

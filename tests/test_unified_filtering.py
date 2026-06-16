@@ -65,6 +65,20 @@ class _OutputLimitThenSuccessLLM:
         )
 
 
+class _InvalidPromptLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, prompt: str, **kwargs: object) -> str:
+        self.calls += 1
+        raise RuntimeError(
+            "OpenAI completion failed: Error code: 400 - "
+            "{'error': {'message': 'Invalid prompt: your prompt was flagged as potentially "
+            "violating our usage policy.', 'type': 'invalid_request_error', "
+            "'param': None, 'code': 'invalid_prompt'}}"
+        )
+
+
 class _TerminalErrorAfterFirstLLM:
     def complete(self, prompt: str, **kwargs: object) -> str:
         if "PMID: 999" in prompt:
@@ -139,6 +153,24 @@ class UnifiedFilteringTests(unittest.TestCase):
 
         self.assertEqual(out["decision"], "yes")
         self.assertEqual(llm.max_tokens_seen, [768, 1536])
+
+    def test_classify_abstract_does_not_retry_invalid_prompt(self) -> None:
+        llm = _InvalidPromptLLM()
+
+        out = classify_abstract(
+            llm,
+            "27744296",
+            "Escherichia coli",
+            "Doxycycline",
+            "title",
+            "abstract",
+            retries=3,
+        )
+
+        self.assertEqual(llm.calls, 1)
+        self.assertEqual(out["decision"], "uncertain")
+        self.assertEqual(out["rationale"], "LLM policy rejection: invalid_prompt")
+        self.assertEqual(out["primary_category"], "NONE")
 
     def test_classify_abstract_converts_unsupported_uncertain_to_no(self) -> None:
         class UnsupportedUncertainLLM:
@@ -417,6 +449,111 @@ class UnifiedFilteringTests(unittest.TestCase):
             self.assertEqual(mock_fetch_batch.call_count, 1)
             self.assertEqual(mock_fetch_batch.call_args.args[0], ["222"])
             self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_checkpoint_merges_newer_disk_rows(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {"222": ("t", "clinical resistant isolates", "ok")}
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111", "222"],
+                "pathogen": ["p1", "p1"],
+                "antibiotic": ["a1", "a1"],
+                "year": [2020, 2020],
+            }
+        )
+        existing = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "unified_decision": ["yes"],
+                "unified_raw_decision": ["yes"],
+                "unified_rationale": ["cached"],
+                "title": [""],
+                "abstract": [""],
+                **self._complete_amr_fields(),
+            }
+        )
+
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            existing.to_parquet(tmp.name, index=False)
+
+            class _ConcurrentWriterLLM(_FakeLLM):
+                def complete(inner_self, prompt: str, **kwargs: object) -> str:
+                    current = pd.read_parquet(tmp.name)
+                    concurrent = existing.copy()
+                    concurrent["pmid"] = "333"
+                    pd.concat([current, concurrent], ignore_index=True).to_parquet(tmp.name, index=False)
+                    return super().complete(prompt, **kwargs)
+
+            run_unified_llm_filter(
+                candidates,
+                _ConcurrentWriterLLM(),
+                output_path=tmp.name,
+                auto_resume_from_output=True,
+                save_every=1,
+                verbose=0,
+                abstract_cache_path=None,
+                failed_retry_path=None,
+                progress_every=0,
+            )
+            saved = pd.read_parquet(tmp.name)
+
+        self.assertEqual(set(saved["pmid"]), {"111", "222", "333"})
+        self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_preserves_unfinished_backfill_rows(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {"111": ("t", "clinical resistant isolates", "ok")}
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+            }
+        )
+        incomplete = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "unified_decision": ["yes"],
+                "unified_raw_decision": ["yes"],
+                "unified_rationale": ["legacy row"],
+                "title": [""],
+                "abstract": [""],
+            }
+        )
+
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            incomplete.to_parquet(tmp.name, index=False)
+            run_unified_llm_filter(
+                candidates,
+                _FakeLLM(),
+                output_path=tmp.name,
+                auto_resume_from_output=True,
+                max_llm_calls=0,
+                category_backfill_decisions=("yes",),
+                verbose=0,
+                abstract_cache_path=None,
+                failed_retry_path=None,
+                progress_every=0,
+            )
+            saved = pd.read_parquet(tmp.name)
+
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved.loc[0, "pmid"], "111")
+        self.assertNotIn("amr_primary_category", saved.columns)
+        self.assertEqual(mock_fetch_single.call_count, 0)
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")

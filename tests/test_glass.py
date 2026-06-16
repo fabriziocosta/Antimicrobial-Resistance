@@ -241,6 +241,40 @@ class GlassCleaningTests(unittest.TestCase):
         mock_write_image.assert_called_once_with(str(pdf_path), format="pdf", width=1400, height=900)
         self.assertEqual(result["pdf_path"], str(pdf_path))
 
+    def test_latest_count_shift_plot_uses_predictions_when_observed_metrics_are_unavailable(self) -> None:
+        rank_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "Escherichia coli",
+                    "antibiotic": "Cefotaxime",
+                    "latest_available_year": 2025,
+                    "future_year": 2028,
+                    "latest_available_count": float("nan"),
+                    "latest_available_predicted_count": 30,
+                    "latest_available_predicted_SI": 0.1,
+                    "future_predicted_SI": 0.22,
+                    "future_predicted_count": 42,
+                    "post_fit_count_abs_pct_error_mean": float("nan"),
+                    "n_count_error_years": 0,
+                    "status": "ok",
+                }
+            ]
+        )
+
+        result = plot_interactive_latest_observed_count_vs_future_si_shift(
+            rank_df,
+            min_last_available_count=10,
+            min_count_abs_pct_error_mean=0,
+            max_count_abs_pct_error_mean=10,
+            show=False,
+        )
+
+        self.assertEqual(len(result["plot_df"]), 1)
+        self.assertEqual(result["plot_df"].iloc[0]["latest_available_count"], 30)
+        self.assertEqual(result["plot_df"].iloc[0]["latest_count_source"], "predicted")
+        self.assertEqual(result["predicted_count_fallback_rows"], 1)
+        self.assertEqual(result["missing_count_error_rows"], 1)
+
     def test_latest_count_shift_plot_pdf_export_failure_is_nonfatal(self) -> None:
         rank_df = pd.DataFrame(
             [
