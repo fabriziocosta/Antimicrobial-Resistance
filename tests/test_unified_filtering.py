@@ -557,7 +557,7 @@ class UnifiedFilteringTests(unittest.TestCase):
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")
-    def test_run_unified_llm_filter_reruns_cached_llm_failures(
+    def test_run_unified_llm_filter_preserves_cached_llm_failures_by_default(
         self, mock_fetch_single: patch, mock_fetch_batch: patch
     ) -> None:
         mock_fetch_batch.return_value = {"111": ("t", "clinical resistant isolates", "ok")}
@@ -593,6 +593,58 @@ class UnifiedFilteringTests(unittest.TestCase):
                 _FakeLLM(),
                 output_path=tmp.name,
                 auto_resume_from_output=True,
+                verbose=0,
+                abstract_cache_path=None,
+                failed_retry_path=None,
+                progress_every=0,
+            )
+
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.loc[0, "unified_decision"], "uncertain")
+        self.assertEqual(out.loc[0, "unified_rationale"], "LLM failure: OpenAI completion failed: Error code: 429")
+        self.assertEqual(out.loc[0, "amr_primary_category"], "NONE")
+        self.assertEqual(mock_fetch_batch.call_count, 0)
+        self.assertEqual(mock_fetch_single.call_count, 0)
+
+    @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
+    @patch("amr.screening.core.fetch_pubmed_abstract")
+    def test_run_unified_llm_filter_can_retry_cached_llm_failures(
+        self, mock_fetch_single: patch, mock_fetch_batch: patch
+    ) -> None:
+        mock_fetch_batch.return_value = {"111": ("t", "clinical resistant isolates", "ok")}
+        candidates = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+            }
+        )
+        existing = pd.DataFrame(
+            {
+                "pmid": ["111"],
+                "pathogen": ["p1"],
+                "antibiotic": ["a1"],
+                "year": [2020],
+                "unified_decision": ["uncertain"],
+                "unified_raw_decision": ["uncertain"],
+                "unified_rationale": ["LLM failure: OpenAI completion failed: Error code: 429"],
+                "title": ["old title"],
+                "abstract": ["old abstract"],
+                "amr_primary_category": ["NONE"],
+                "amr_evidence_phrases": [[]],
+                "amr_target_pair_relation_supported": [False],
+                "amr_is_relevant": [False],
+            }
+        )
+        with NamedTemporaryFile(suffix=".parquet") as tmp:
+            existing.to_parquet(tmp.name, index=False)
+            out = run_unified_llm_filter(
+                candidates,
+                _FakeLLM(),
+                output_path=tmp.name,
+                auto_resume_from_output=True,
+                retry_cached_llm_failures=True,
                 verbose=0,
                 abstract_cache_path=None,
                 failed_retry_path=None,

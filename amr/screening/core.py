@@ -49,6 +49,8 @@ def _merge_checkpoint_rows(
             current = fallback.copy()
         else:
             current = pd.DataFrame()
+        if updates.empty:
+            return current
         merged = pd.concat([current, updates], ignore_index=True)
         if not merged.empty:
             merged = merged.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
@@ -698,7 +700,7 @@ def run_unified_llm_filter(
     reasoning_effort: str | None = None,
     output_path: str | None = None,
     resume_from: pd.DataFrame | None = None,
-    save_every: int = 50,
+    save_every: int = 500,
     progress_every: int = 25,
     max_llm_calls: int | None = None,
     dry_run: bool = False,
@@ -711,6 +713,7 @@ def run_unified_llm_filter(
     llm_batch_size: int = 8,
     failed_retry_path: str | None = "yearly_amr_unified_failures.parquet",
     max_failure_retries: int | None = 5,
+    retry_cached_llm_failures: bool = False,
     abstract_fetch_batch_size: int = 200,
     prefetch_abstracts: bool = True,
     category_backfill_decisions: Iterable[str] | None = None,
@@ -764,7 +767,8 @@ def run_unified_llm_filter(
                 llm_failure_mask = rationale.str.startswith("LLM failure:") & ~rationale.map(
                     _is_invalid_prompt_error
                 )
-                complete_mask &= ~llm_failure_mask
+                if retry_cached_llm_failures:
+                    complete_mask &= ~llm_failure_mask
             complete_existing = existing.loc[complete_mask].copy()
             incomplete_existing = existing.loc[~complete_mask].copy()
             if category_backfill_set is not None and not incomplete_existing.empty:
@@ -1173,7 +1177,7 @@ def run_unified_llm_filter(
     if output_path:
         _merge_checkpoint_rows(
             output_path,
-            pd.DataFrame(results),
+            out_df,
             key_cols=key_cols,
             fallback=resume_checkpoint_fallback,
         )
