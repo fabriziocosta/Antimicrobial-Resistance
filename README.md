@@ -30,6 +30,8 @@ Detailed project documents live in `docs/`:
 - `notebooks/`: active notebook workflow entrypoints.
 - `outputs/parquets/`: generated parquet tables and caches, versioned with Git LFS
   because they are expensive to rebuild.
+- `outputs/pipeline_config.yaml`: versioned configuration snapshot used to reproduce
+  the current notebook outputs.
 - `outputs/figures/`: generated plots, kept local and excluded from Git because they
   can be reconstructed from the versioned parquet outputs.
 - `amr/pubmed/`: PubMed query construction, Entrez retrieval, metadata, and yearly PMID transforms.
@@ -147,6 +149,24 @@ install Git LFS and retrieve the cached datasets:
 git lfs install
 git lfs pull
 ```
+
+### Re-running notebooks 05–08 from a clone
+
+After installing the project and running `git lfs pull`, notebooks 05–08 can use the
+versioned configuration, static assets, and parquet caches directly:
+
+```bash
+pip install -e ".[dev,notebooks,loess]"
+git lfs pull
+```
+
+Run notebooks 05, 06, 07, and 08 in order. Notebook 05 rebuilds the SI and ranking
+parquets from the screened AMR, background-count, and unified-decision caches.
+Notebooks 06 and 07 rebuild the GLASS comparisons and figures; notebook 08 rebuilds
+the selected pair-PMID Excel export. Generated figures and exports remain local.
+
+Run notebook 00 first only when intentionally changing the tracked configuration
+snapshot.
 
 ## Runtime Requirements
 

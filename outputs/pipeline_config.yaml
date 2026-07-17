@@ -1,0 +1,124 @@
+paths:
+  assets_dir: assets
+  output_dir: outputs
+  parquet_dir: outputs/parquets
+  figure_dir: outputs/figures
+  pathogens: assets/bacteria_synonym_lookup.csv
+  pathogen_priority: assets/counts_extended2.csv
+  antibiotic_coarsening: assets/antibiotic_coarsening_lookup.csv
+  antibiotic_synonyms: assets/antibiotic_synonym_lookup.csv
+  driver_category_coarsening: assets/amr_driver_category_coarsening.csv
+  glass_xlsx: assets/GLASS list.xlsx
+  glass_cleaned: assets/glass_amr_cleaned.csv
+  yearly_candidates: outputs/parquets/candidate_amr_pair_year_counts.parquet
+  yearly_pair_pmids: outputs/parquets/candidate_amr_pair_pmid_links.parquet
+  yearly_screened: outputs/parquets/yearly_amr_screened_pairs.parquet
+  unified_decisions: outputs/parquets/yearly_amr_unified_decisions.parquet
+  unified_failures: outputs/parquets/yearly_amr_unified_failures.parquet
+  pathogen_background: outputs/parquets/pathogen_tiab_counts.parquet
+  antibiotic_background: outputs/parquets/antibiotic_tiab_counts.parquet
+  interval_pmids: outputs/parquets/pmids_results.parquet
+  pubmed_metadata_cache: outputs/parquets/pubmed_pmid_metadata.parquet
+  abstract_cache: outputs/parquets/pmid_abstracts.parquet
+collection:
+  pubmed_email: xfcosta@gmail.com
+  total_start_year: 1970
+  total_end_year: 2026
+  slice_start_year: 2000
+  slice_end_year: 2026
+  interval_year_gap: 5
+  num_pathogens: 50
+  num_antibiotics: null
+  min_pathogenic_index: 0.0
+  extra_amr_keywords:
+  - '"antimicrobial resistance"[Title/Abstract] OR "antibiotic resistance"[Title/Abstract]'
+  collection_verbose: 1
+  collection_progress_every: 300
+  pair_full_fetch_threshold: 9500
+  background_scope: observed_entities
+  background_fetch_threshold: 9500
+  background_metadata_batch_size: 200
+llm:
+  model: gpt-5-nano
+  run_filter: true
+  rerun_unified_decisions: false
+  reasoning_effort: minimal
+  max_calls: null
+  max_workers: 2
+  batch_size: 8
+  max_failure_retries: 5
+  retry_cached_failures: true
+  abstract_fetch_batch_size: 200
+  prefetch_abstracts: true
+  category_backfill_decisions:
+  - strict
+  - 'yes'
+  - uncertain
+  include_explanatory_text: false
+  progress_every: 200
+  screened_include_decisions: &id001
+  - strict
+cost_estimation:
+  input_usd_per_1m_tokens: 0.05
+  output_usd_per_1m_tokens: 0.4
+  cached_input_usd_per_1m_tokens: 0.005
+  batch_api_multiplier: 1.0
+  sample_size: 1000
+  random_seed: 42
+  assumed_output_tokens_per_call: 140
+  use_cached_input_price: false
+si:
+  antibiotic_analysis_level: antibiotic
+  fit_start_year: 2000
+  fit_end_year: 2023
+  curve_fit_end_year: 2025
+  num_future_years: 5
+  min_avg_amr_publications_per_year: 1.0
+  min_current_predicted_count: 10
+  min_future_predicted_count: 10
+  min_si_change: 0.01
+  min_post_fit_observed_years: 1
+  max_post_fit_si_abs_pct_error_mean: 100.0
+  max_si_loess_residual_variance_mean: null
+  fallback_top_n: 10
+  category_include_decisions: *id001
+  driver_category_level: coarse
+  driver_lookback_years: 5
+  max_driver_plots: 25
+  max_interesting_plots: 25
+  figure_format: pdf
+  display_plots: true
+  max_display_plots: 10
+  fill_missing_amr_counts_with_zero: true
+  loess_frac: 0.6
+  loess_degree: 1
+  tail_damping_years: null
+  shape_screen_plot_count: 10
+glass_interactive:
+  antibiotic_analysis_level: antibiotic
+  num_future_years: 3
+  min_last_available_count: 5
+  min_count_abs_pct_error_mean: 0
+  max_count_abs_pct_error_mean: 75
+  min_counts_background: 10
+  min_abs_delta_si: 0.005
+  min_si_delta: null
+  display_name: true
+  max_text_labels: 300
+  width: 1400
+  height: 900
+glass_plots:
+  antibiotic_analysis_level: antibiotic
+  num_future_years: 5
+  min_avg_amr_publications_per_year: 5.0
+  category_include_decisions: *id001
+  driver_category_level: coarse
+  driver_lookback_years: 5
+  figure_format: pdf
+  display_plots: true
+  max_display_plots: 10
+  max_glass_plots: null
+pair_pmids:
+  pathogen: Escherichia coli
+  antibiotic: Vancomycin
+  max_pmids_per_year: 10
