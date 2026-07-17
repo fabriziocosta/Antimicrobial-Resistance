@@ -9,6 +9,8 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from amr.plot_labels import format_pathogen_antibiotic_label
+
 from amr.glass import load_and_clean_glass_list
 from amr.si import rank_yearly_pairs_by_future_si_shift
 
@@ -189,7 +191,7 @@ def _add_plot_labels(
     plot_df = plot_df.copy()
     plot_df["appears_in_GLASS"] = np.where(plot_df["is_glass_pair"], "yes", "no")
     plot_df["label"] = plot_df.apply(
-        lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
+        lambda row: format_pathogen_antibiotic_label(row["pathogen"], row["antibiotic"]),
         axis=1,
     )
     plot_df["display_label"] = ""
