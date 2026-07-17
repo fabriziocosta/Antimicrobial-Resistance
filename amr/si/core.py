@@ -13,6 +13,7 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 
 from amr.io import atomic_write_parquet
+from amr.plot_labels import format_pathogen_antibiotic_label
 
 try:  # pragma: no cover - exercised only when optional dependency is installed
     from skmisc.loess import loess
@@ -1475,7 +1476,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     plot_df["appears_in_GLASS"] = np.where(plot_df["is_glass_pair"], "yes", "no")
 
     plot_df["label"] = plot_df.apply(
-        lambda row: f"{str(row['pathogen']).strip()[:3]}<br>{str(row['antibiotic']).strip()[:3]}",
+        lambda row: format_pathogen_antibiotic_label(row["pathogen"], row["antibiotic"]),
         axis=1,
     )
     plot_df["display_label"] = ""

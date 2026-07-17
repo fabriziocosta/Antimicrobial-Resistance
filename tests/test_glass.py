@@ -172,6 +172,10 @@ class GlassCleaningTests(unittest.TestCase):
         self.assertEqual(list(marker.line.color), ["#000000", "#4b5563"])
         self.assertEqual(list(marker.line.width), [3.2, 1.0])
         self.assertEqual(list(marker.size), [13, 10])
+        self.assertEqual(
+            list(fig.data[0].text),
+            ["E. coli<br>Cefotaxime", "K. pneumoniae<br>Colistin"],
+        )
         self.assertEqual(len(fig.layout.shapes), 2)
         self.assertTrue(all(shape.type == "line" for shape in fig.layout.shapes))
         self.assertTrue(any(shape.y0 == 0 and shape.y1 == 0 for shape in fig.layout.shapes))
