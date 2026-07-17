@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - environment-dependent fallback
     loess = None
 
 _AUTO_TAIL_DAMPING = object()
+DEFAULT_PARQUET_OUTPUT_DIR = Path("outputs/parquets")
 WEAK_SIGNAL_CATEGORY = "NONE"
 MISSING_LLM_INFORMATION_CATEGORY = "MISSING_LLM_INFORMATION"
 AMR_DRIVER_CATEGORY_ORDER = [
@@ -40,6 +41,23 @@ AMR_DRIVER_CATEGORY_COLORS = {
     "NONE": "#9c755f",
     MISSING_LLM_INFORMATION_CATEGORY: "#bab0ac",
 }
+
+
+def _default_yearly_rank_output_path(
+    *,
+    fit_start_year: int,
+    fit_end_year: int,
+    reference_year: int,
+    target_year: int,
+) -> Path:
+    """Return the canonical fallback path for yearly SI rank outputs."""
+    filename = (
+        f"si_yearly_rank_shift_fit_{fit_start_year}_{fit_end_year}"
+        f"_ref_{reference_year}_future_{target_year}.parquet"
+    )
+    return DEFAULT_PARQUET_OUTPUT_DIR / filename
+
+
 AMR_DRIVER_COARSE_CATEGORY_ORDER = [
     "Environmental animal non-human",
     "Clinical outbreaks and reports",
@@ -997,7 +1015,12 @@ def rank_yearly_pairs_by_future_si_shift(
     ).reset_index(drop=True)
 
     if save_path is None:
-        save_path = f"si_yearly_rank_shift_fit_{fit_start_year}_{fit_end_year}_ref_{reference_year}_future_{target_year}.parquet"
+        save_path = _default_yearly_rank_output_path(
+            fit_start_year=fit_start_year,
+            fit_end_year=fit_end_year,
+            reference_year=reference_year,
+            target_year=target_year,
+        )
     if save_path:
         atomic_write_parquet(ranking_df, save_path, index=False)
     return ranking_df

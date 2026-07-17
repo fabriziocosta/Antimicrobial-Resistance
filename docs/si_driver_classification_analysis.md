@@ -1,6 +1,6 @@
 # SI Driver Classification Analysis
 
-This document describes the analysis added to `notebooks/02_model_scientific_interest.ipynb` to explain predicted scientific-interest changes using LLM abstract-classification metadata.
+This document describes the analysis added to `notebooks/05_model_scientific_interest.ipynb` to explain predicted scientific-interest changes using LLM abstract-classification metadata.
 
 The analysis is descriptive. It does not change the SI model, the forecast, or the ranking thresholds. It helps interpret why a pathogen-antibiotic pair is rising by showing which types of AMR papers make up the observed count curve behind the SI forecast.
 
@@ -292,6 +292,6 @@ for each top interesting pair:
 
 ## Failure Behavior
 
-If the unified decision table is missing or does not yet contain the required `amr_*` category columns, notebook 02 prints a warning and continues with the standard SI modeling workflow.
+If the unified decision table is missing or does not yet contain the required `amr_*` category columns, notebook 05 prints a warning and continues with the standard SI modeling workflow.
 
 This keeps old SI runs reproducible while allowing richer explanations once the category-enriched LLM screen has been run.

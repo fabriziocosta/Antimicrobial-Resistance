@@ -16,7 +16,11 @@ from amr.si import (
     select_interesting_yearly_rank_cases,
     summarize_si_change_drivers,
 )
-from amr.si.core import AMR_DRIVER_CATEGORY_COLORS, MISSING_LLM_INFORMATION_CATEGORY
+from amr.si.core import (
+    AMR_DRIVER_CATEGORY_COLORS,
+    MISSING_LLM_INFORMATION_CATEGORY,
+    _default_yearly_rank_output_path,
+)
 from amr.pipelines.si import (
     build_si_analysis_paths,
     build_yearly_si_dataset,
@@ -28,6 +32,19 @@ from amr.pipelines.si import (
 
 
 class ScientificInterestPipelineTests(unittest.TestCase):
+    def test_default_yearly_rank_output_path_uses_parquet_output_directory(self) -> None:
+        path = _default_yearly_rank_output_path(
+            fit_start_year=2000,
+            fit_end_year=2023,
+            reference_year=2025,
+            target_year=2027,
+        )
+
+        self.assertEqual(
+            path,
+            Path("outputs/parquets/si_yearly_rank_shift_fit_2000_2023_ref_2025_future_2027.parquet"),
+        )
+
     def test_analysis_paths_use_format_neutral_plot_directories(self) -> None:
         paths = build_si_analysis_paths("/tmp/amr", "antibiotic")
         self.assertEqual(paths["output_dir"].as_posix(), "/tmp/amr/outputs")
@@ -180,16 +197,17 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             ]
         )
 
-        rank_df = rank_yearly_pairs_by_future_si_shift(
-            si_df,
-            fit_start_year=2000,
-            fit_end_year=2023,
-            curve_fit_end_year=2025,
-            post_fit_validation_end_year=2025,
-            num_future_years=2,
-            save_path=None,
-            verbose=False,
-        )
+        with TemporaryDirectory() as tmp_dir:
+            rank_df = rank_yearly_pairs_by_future_si_shift(
+                si_df,
+                fit_start_year=2000,
+                fit_end_year=2023,
+                curve_fit_end_year=2025,
+                post_fit_validation_end_year=2025,
+                num_future_years=2,
+                save_path=Path(tmp_dir) / "rank.parquet",
+                verbose=False,
+            )
         row = rank_df.loc[rank_df["status"] == "ok"].iloc[0]
         curve_result = fit_predict_yearly_si_loess(
             si_df,

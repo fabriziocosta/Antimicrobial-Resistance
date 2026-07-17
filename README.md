@@ -1,11 +1,17 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project now uses a module-first workflow with three active notebooks:
+This project uses a module-first workflow with nine sequentially numbered active
+notebooks:
 
-1. `notebooks/00_prepare_inputs.ipynb`
-2. `notebooks/01_query_examples.ipynb`
-3. `notebooks/01_collect_yearly_data.ipynb`
-4. `notebooks/02_model_scientific_interest.ipynb`
+1. `notebooks/00_configure_pipeline.ipynb`
+2. `notebooks/01_prepare_inputs.ipynb`
+3. `notebooks/02_query_examples.ipynb`
+4. `notebooks/03_collect_yearly_data.ipynb`
+5. `notebooks/04_estimate_llm_screening_cost.ipynb`
+6. `notebooks/05_model_scientific_interest.ipynb`
+7. `notebooks/06_glass_interactive_si_shift.ipynb`
+8. `notebooks/07_glass_dedicated_pair_plots.ipynb`
+9. `notebooks/08_inspect_pair_pmids.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -16,6 +22,7 @@ Detailed project documents live in `docs/`:
 - [Data collection and filtering process](docs/data_collection_and_filtering.md)
 - [Scientific interest modeling notes](docs/scientific_interest.md)
 - [SI driver classification analysis](docs/si_driver_classification_analysis.md)
+- [Collaborator communications log](collaborator_communications/communications.md)
 
 ## Repository Layout
 
@@ -32,18 +39,22 @@ Detailed project documents live in `docs/`:
 
 Static lookup inputs live in `assets/`; generated parquet outputs are written under `outputs/parquets/`.
 
-### Notebook 0: `notebooks/00_prepare_inputs.ipynb`
+### Notebook 00: `notebooks/00_configure_pipeline.ipynb`
+
+Writes the shared YAML configuration used by the remaining notebooks.
+
+### Notebook 01: `notebooks/01_prepare_inputs.ipynb`
 
 Prepares static input assets. It downloads/validates the pathogen priority list and builds antibiotic lookup CSVs from `assets/antibiotic_list3.xlsx`:
 
 - `assets/antibiotic_synonym_lookup.csv`
 - `assets/antibiotic_coarsening_lookup.csv`
 
-### Notebook 1 Preview: `notebooks/01_query_examples.ipynb`
+### Notebook 02: `notebooks/02_query_examples.ipynb`
 
 Prints example PubMed queries, cache preflight summaries, and prompt templates before collection.
 
-### Notebook 1: `notebooks/01_collect_yearly_data.ipynb`
+### Notebook 03: `notebooks/03_collect_yearly_data.ipynb`
 
 Builds the yearly AMR dataset end-to-end:
 
@@ -62,7 +73,12 @@ Primary APIs:
 - `amr.screening.run_unified_llm_filter(...)`
 - `amr.screening.build_yearly_screened_pairs(...)`
 
-### Notebook 2: `notebooks/02_model_scientific_interest.ipynb`
+### Notebook 04: `notebooks/04_estimate_llm_screening_cost.ipynb`
+
+Estimates LLM screening costs from the candidate rows and cached abstracts produced
+by notebook 03. It does not call the LLM.
+
+### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
 Performs SI modeling and forecasting:
 
@@ -76,13 +92,27 @@ Primary APIs:
 - `amr.pipelines.si.build_yearly_si_dataset(...)`
 - `amr.pipelines.si.rank_future_high_interest_pairs(...)`
 
+### Notebook 06: `notebooks/06_glass_interactive_si_shift.ipynb`
+
+Builds interactive GLASS comparisons, future-SI shift plots, and their raw plotted
+tables from the screened and modeled outputs.
+
+### Notebook 07: `notebooks/07_glass_dedicated_pair_plots.ipynb`
+
+Produces dedicated longitudinal plots for selected GLASS pathogen–antibiotic pairs.
+
+### Notebook 08: `notebooks/08_inspect_pair_pmids.ipynb`
+
+Exports and inspects the PMIDs, titles, abstracts, and screening decisions for a
+configured pathogen–antibiotic pair.
+
 ## Canonical Data Contracts
 
 - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
 - `outputs/parquets/yearly_amr_screened_pairs.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
-  - Built from unified decisions, default include set: `yes` + `uncertain`
+  - Built from unified decisions using the configured accepted decision set
 - `outputs/parquets/yearly_si.parquet`
   - Includes `bg_pathogen_n`, `bg_antibiotic_n`, `expected_log_count_global`, `SI`
 - `outputs/parquets/yearly_si_ranked_future.parquet`
@@ -124,10 +154,13 @@ pip install -e ".[loess]"
 
 The refactored pipeline is designed for yearly (or multi-year slice) updates:
 
-1. Run notebook 1 on a slice (for example `2027-2027` or `2025-2027`).
-2. Outputs merge into canonical stores:
+1. Update shared settings in notebook 00 if required.
+2. Run notebook 03 on a slice (for example `2027-2027` or `2025-2027`).
+3. Outputs merge into canonical stores:
    - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
    - `outputs/parquets/candidate_amr_pair_pmid_links.parquet`
    - `outputs/parquets/yearly_amr_unified_decisions.parquet`
    - `outputs/parquets/yearly_amr_screened_pairs.parquet`
-3. Re-run notebook 2 with your chosen modeling window (for example `FIT_START_YEAR=1970`, `FIT_END_YEAR=2024`).
+4. Re-run notebook 05 with the chosen modeling window.
+5. Re-run notebooks 06–08 as needed to refresh comparisons, figures, and PMID
+   inspection exports.
