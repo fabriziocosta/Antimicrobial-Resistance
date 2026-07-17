@@ -28,8 +28,10 @@ Detailed project documents live in `docs/`:
 
 - `assets/`: static lookup inputs used by the notebooks and PubMed query builders.
 - `notebooks/`: active notebook workflow entrypoints.
-- `outputs/parquets/`: generated parquet tables and caches.
-- `outputs/figures/`: generated plots.
+- `outputs/parquets/`: generated parquet tables and caches, versioned with Git LFS
+  because they are expensive to rebuild.
+- `outputs/figures/`: generated plots, kept local and excluded from Git because they
+  can be reconstructed from the versioned parquet outputs.
 - `amr/pubmed/`: PubMed query construction, Entrez retrieval, metadata, and yearly PMID transforms.
 - `amr/screening/`: LLM-assisted abstract screening and screened-pair dataset builders.
 - `amr/si/`: scientific-interest modeling, forecasting, ranking, driver summaries, and plots.
@@ -136,6 +138,14 @@ Optional SI smoothing backend:
 
 ```bash
 pip install -e ".[loess]"
+```
+
+The computed parquet cache uses [Git LFS](https://git-lfs.com/). After cloning,
+install Git LFS and retrieve the cached datasets:
+
+```bash
+git lfs install
+git lfs pull
 ```
 
 ## Runtime Requirements

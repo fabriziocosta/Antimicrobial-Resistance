@@ -11,4 +11,10 @@
 __pycache__/
 *.png
 figures/**/*.pdf
-outputs/
+# Keep generated figures and transient outputs local, but version the expensive
+# parquet caches needed to reconstruct analyses and figures.
+outputs/*
+!outputs/parquets/
+outputs/parquets/*
+!outputs/parquets/*.parquet
+!outputs/parquets/**/*.parquet
