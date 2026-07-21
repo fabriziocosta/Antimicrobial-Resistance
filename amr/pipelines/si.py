@@ -4,16 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Sequence
+from math import ceil
 import warnings
 
+from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 from amr.io import atomic_write_parquet
+from amr.plot_labels import format_pathogen_antibiotic_label
 from amr.si.core import (
     AMR_DRIVER_COARSE_CATEGORY_COLORS,
     AMR_DRIVER_COARSE_CATEGORY_ORDER,
+    AMR_DRIVER_CATEGORY_COLORS,
     build_yearly_category_counts,
     fit_predict_yearly_si_loess,
     fit_global_pooled_si_model,
@@ -839,6 +843,148 @@ def save_category_driver_plots(
     return saved_plots
 
 
+def save_category_driver_pie_grid(
+    *,
+    category_counts_df: pd.DataFrame,
+    si_df: pd.DataFrame | None = None,
+    interesting_df: pd.DataFrame,
+    output_path: str | Path,
+    num_columns: int = 5,
+    driver_category_level: str = "original",
+    category_coarsening_path: str | Path | None = None,
+    category_coarsening_df: pd.DataFrame | None = None,
+    verbose: bool = True,
+) -> int:
+    """Save one-page pie-chart grid of all-year driver fractions for each pair."""
+    if int(num_columns) < 1:
+        raise ValueError("num_columns must be >= 1.")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if category_counts_df.empty or interesting_df.empty:
+        if verbose:
+            print("No category driver pairs available for the pie-chart grid.")
+        return 0
+
+    driver_category_level = str(driver_category_level).strip().lower()
+    if driver_category_level in {"original", "fine", "primary"}:
+        plot_category_counts_df = category_counts_df
+        category_order = None
+        category_colors = AMR_DRIVER_CATEGORY_COLORS
+        missing_information_category = None
+    elif driver_category_level in {"coarse", "coarsened"}:
+        plot_category_counts_df, category_order, category_colors = coarsen_category_counts(
+            category_counts_df,
+            category_coarsening_path=category_coarsening_path,
+            category_coarsening_df=category_coarsening_df,
+        )
+        missing_information_category = "Unsupported or missing evidence"
+    else:
+        raise ValueError("driver_category_level must be one of: 'original', 'fine', 'primary', 'coarse', 'coarsened'.")
+
+    pair_totals: list[tuple[str, pd.Series]] = []
+    for row in interesting_df.itertuples(index=False):
+        try:
+            result = plot_yearly_category_driver_counts(
+                category_counts_df=plot_category_counts_df,
+                pathogen=row.pathogen,
+                antibiotic=row.antibiotic,
+                si_df=si_df,
+                category_order=category_order,
+                category_colors=category_colors,
+                **(
+                    {}
+                    if missing_information_category is None
+                    else {"missing_information_category": missing_information_category}
+                ),
+            )
+        except ValueError:
+            continue
+
+        totals = pd.to_numeric(result["count_pivot"].sum(axis=0), errors="coerce").fillna(0.0)
+        totals = totals.loc[totals.gt(0)]
+        plt.close(result["figure"])
+        if totals.empty:
+            continue
+        label = format_pathogen_antibiotic_label(row.pathogen, row.antibiotic).replace("<br>", "\n")
+        pair_totals.append((label, totals))
+
+    if not pair_totals:
+        if verbose:
+            print("No non-zero category driver totals available for the pie-chart grid.")
+        return 0
+
+    num_columns = int(num_columns)
+    num_rows = int(ceil(len(pair_totals) / num_columns))
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(3.2 * num_columns, 3.0 * num_rows),
+        squeeze=False,
+    )
+    present_categories = []
+    for _, totals in pair_totals:
+        for category in totals.index:
+            if category not in present_categories:
+                present_categories.append(category)
+    if category_order is not None:
+        ordered_categories = [category for category in category_order if category in present_categories]
+        ordered_categories.extend(category for category in present_categories if category not in ordered_categories)
+    else:
+        ordered_categories = present_categories
+
+    fallback_colors = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    category_color_values = {
+        category: category_colors.get(
+            category,
+            fallback_colors[idx % len(fallback_colors)] if fallback_colors else "#999999",
+        )
+        for idx, category in enumerate(ordered_categories)
+    }
+    for index, (label, totals) in enumerate(pair_totals):
+        ax = axes.flat[index]
+        values = totals.reindex(ordered_categories, fill_value=0.0)
+        values = values.loc[values.gt(0)]
+        ax.pie(
+            values.to_numpy(dtype=float),
+            colors=[category_color_values[category] for category in values.index],
+            startangle=90,
+            counterclock=False,
+            autopct=lambda pct: f"{pct:.0f}%" if pct >= 4 else "",
+            textprops={"fontsize": 7},
+            wedgeprops={"linewidth": 0.5, "edgecolor": "white"},
+        )
+        ax.set_title(f"{label}\n(n={int(values.sum()):,})", fontsize=9)
+
+    for ax in axes.flat[len(pair_totals) :]:
+        ax.axis("off")
+
+    legend_handles = [
+        Patch(facecolor=category_color_values[category], edgecolor="none", label=category)
+        for category in ordered_categories
+    ]
+    fig.suptitle(
+        f"All-year AMR driver composition by pair ({len(pair_totals):,} pairs)",
+        fontsize=14,
+        y=0.995,
+    )
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.0),
+        ncol=min(num_columns, max(len(legend_handles), 1)),
+        frameon=False,
+        fontsize=8,
+    )
+    fig.tight_layout(rect=(0, 0.08, 1, 0.97))
+    fig.savefig(output_path, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+    if verbose:
+        print(f"Saved all-year category driver pie grid for {len(pair_totals):,} pairs to {output_path}")
+    return len(pair_totals)
+
+
 def save_interesting_si_plots(
     *,
     si_df: pd.DataFrame,
@@ -1137,6 +1283,7 @@ __all__ = [
     "prepare_antibiotic_analysis_level",
     "rank_future_high_interest_pairs",
     "save_category_driver_plots",
+    "save_category_driver_pie_grid",
     "save_interesting_si_plots",
     "save_smoothed_si_screen_plots",
     "select_decreasing_smoothed_si_trends",

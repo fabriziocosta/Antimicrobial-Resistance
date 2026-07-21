@@ -120,7 +120,7 @@ configured pathogen–antibiotic pair.
 - `outputs/parquets/yearly_si.parquet`
   - Includes `bg_pathogen_n`, `bg_antibiotic_n`, `expected_log_count_global`, `SI`
 - `outputs/parquets/yearly_si_ranked_future.parquet`
-  - Per-pair forecast and rank-shift outputs for future SI
+  - Per-pair forecast and rank-shift outputs for future SI, including `total_publications`
 
 ## Installation
 

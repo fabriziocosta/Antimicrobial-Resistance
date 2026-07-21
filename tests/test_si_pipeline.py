@@ -170,6 +170,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         for col in [
             "latest_available_count",
+            "total_publications",
             "latest_available_predicted_SI",
             "n_count_error_years",
             "post_fit_count_abs_pct_error_mean",
@@ -178,6 +179,15 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         ]:
             self.assertIn(col, rank_df.columns)
             self.assertIn(col, saved_rank_df.columns)
+
+        p1_total = rank_df.loc[
+            (rank_df["pathogen"] == "p1") & (rank_df["antibiotic"] == "a1"),
+            "total_publications",
+        ].iloc[0]
+        self.assertEqual(
+            float(p1_total),
+            sum(10 + (year - 2000) * 2 for year in range(2000, 2011)),
+        )
 
     def test_rank_uses_separate_validation_and_curve_fit_windows(self) -> None:
         si_df = pd.DataFrame(

@@ -1,0 +1,3 @@
+- run for all bacteria
+- use total num publication as filter
+- report pie chart for drivers for total fraction not per year 

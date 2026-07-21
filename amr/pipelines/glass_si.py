@@ -16,6 +16,7 @@ from amr.si import rank_yearly_pairs_by_future_si_shift
 
 REQUIRED_INTERACTIVE_RANK_COLUMNS = {
     "latest_available_count",
+    "total_publications",
     "latest_available_predicted_SI",
     "post_fit_count_abs_pct_error_mean",
     "n_count_error_years",
@@ -30,6 +31,7 @@ GLASS_MATCH_COLUMNS = [
     "latest_available_year",
     "future_year",
     "latest_available_count",
+    "total_publications",
     "future_predicted_count",
     "latest_smoothed_SI",
     "future_predicted_SI",
@@ -44,6 +46,7 @@ NOVEL_PREDICTION_COLUMNS = [
     "latest_available_year",
     "future_year",
     "latest_available_count",
+    "total_publications",
     "future_predicted_count",
     "latest_smoothed_SI",
     "future_predicted_SI",

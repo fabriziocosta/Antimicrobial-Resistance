@@ -123,6 +123,7 @@ class GlassCleaningTests(unittest.TestCase):
                     "latest_available_year": 2023,
                     "future_year": 2025,
                     "latest_available_count": 30,
+                    "total_publications": 45,
                     "future_predicted_count": 42,
                     "latest_smoothed_SI": 0.1,
                     "future_predicted_SI": 0.22,
@@ -138,6 +139,7 @@ class GlassCleaningTests(unittest.TestCase):
                     "latest_available_year": 2023,
                     "future_year": 2025,
                     "latest_available_count": 12,
+                    "total_publications": 25,
                     "future_predicted_count": 15,
                     "latest_smoothed_SI": -0.05,
                     "future_predicted_SI": 0.08,
@@ -221,6 +223,7 @@ class GlassCleaningTests(unittest.TestCase):
                     "latest_available_year": 2023,
                     "future_year": 2025,
                     "latest_available_count": 30,
+                    "total_publications": 45,
                     "latest_available_predicted_SI": 0.1,
                     "future_predicted_SI": 0.22,
                     "future_predicted_count": 42,
@@ -254,6 +257,7 @@ class GlassCleaningTests(unittest.TestCase):
                     "latest_available_year": 2025,
                     "future_year": 2028,
                     "latest_available_count": float("nan"),
+                    "total_publications": 45,
                     "latest_available_predicted_count": 30,
                     "latest_available_predicted_SI": 0.1,
                     "future_predicted_SI": 0.22,
@@ -288,6 +292,7 @@ class GlassCleaningTests(unittest.TestCase):
                     "latest_available_year": 2023,
                     "future_year": 2025,
                     "latest_available_count": 30,
+                    "total_publications": 45,
                     "latest_available_predicted_SI": 0.1,
                     "future_predicted_SI": 0.22,
                     "future_predicted_count": 42,
@@ -314,6 +319,41 @@ class GlassCleaningTests(unittest.TestCase):
 
         self.assertIsNone(result["pdf_path"])
         self.assertIn("browser failed", result["pdf_error"])
+
+    def test_latest_count_shift_plot_requires_both_latest_and_total_publication_thresholds(self) -> None:
+        rows = []
+        for name, latest_count, total_publications in [
+            ("below-total", 10, 19),
+            ("below-latest", 6, 100),
+            ("passes-both", 10, 20),
+        ]:
+            rows.append(
+                {
+                    "pathogen": name,
+                    "antibiotic": "Cefotaxime",
+                    "latest_available_year": 2023,
+                    "future_year": 2025,
+                    "latest_available_count": latest_count,
+                    "total_publications": total_publications,
+                    "latest_available_predicted_SI": 0.1,
+                    "future_predicted_SI": 0.22,
+                    "future_predicted_count": 42,
+                    "post_fit_count_abs_pct_error_mean": 4.0,
+                    "n_count_error_years": 3,
+                    "status": "ok",
+                }
+            )
+
+        result = plot_interactive_latest_observed_count_vs_future_si_shift(
+            pd.DataFrame(rows),
+            min_last_available_count=7,
+            min_total_publications=20,
+            min_count_abs_pct_error_mean=0,
+            max_count_abs_pct_error_mean=10,
+            show=False,
+        )
+
+        self.assertEqual(result["plot_df"]["pathogen"].tolist(), ["passes-both"])
 
 
 if __name__ == "__main__":

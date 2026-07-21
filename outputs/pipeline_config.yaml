@@ -97,7 +97,8 @@ si:
 glass_interactive:
   antibiotic_analysis_level: antibiotic
   num_future_years: 3
-  min_last_available_count: 5
+  min_last_available_count: 7
+  min_total_publications: 100
   min_count_abs_pct_error_mean: 0
   max_count_abs_pct_error_mean: 75
   min_counts_background: 10

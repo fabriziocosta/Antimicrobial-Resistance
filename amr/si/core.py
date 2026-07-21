@@ -903,6 +903,7 @@ def rank_yearly_pairs_by_future_si_shift(
                     "raw_latest_available_year": raw_latest_available_year,
                     "latest_available_year": latest_available_year,
                     "n_pair_years": int(pair_df["year"].nunique()),
+                    "total_publications": float(pd.to_numeric(pair_df["count"], errors="coerce").fillna(0).sum()),
                     "current_si_source": current_source,
                     "current_count": current_count,
                     "latest_available_count": latest_available_count,
@@ -960,6 +961,7 @@ def rank_yearly_pairs_by_future_si_shift(
                     "raw_latest_available_year": np.nan,
                     "latest_available_year": np.nan,
                     "n_pair_years": np.nan,
+                    "total_publications": np.nan,
                     "current_si_source": None,
                     "current_count": np.nan,
                     "latest_available_count": np.nan,
@@ -1337,6 +1339,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     glass_pairs_df: pd.DataFrame | None = None,
     GLASS_pairs_df: pd.DataFrame | None = None,
     min_last_available_count: float = 10.0,
+    min_total_publications: float = 20.0,
     min_counts_background: float = 100.0,
     min_count_abs_pct_error_mean: float = 0.0,
     max_count_abs_pct_error_mean: float = 10.0,
@@ -1354,13 +1357,14 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     html_path: str | None = None,
     pdf_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Plot latest observed or predicted AMR count against the future SI shift."""
+    """Plot latest AMR count against future SI shift after applying support filters."""
     required_cols = {
         "pathogen",
         "antibiotic",
         "latest_available_year",
         "future_year",
         "latest_available_count",
+        "total_publications",
         "latest_available_predicted_SI",
         "future_predicted_SI",
         "future_predicted_count",
@@ -1393,6 +1397,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     plot_df = plot_df.dropna(
         subset=[
             "latest_available_count",
+            "total_publications",
             "latest_available_predicted_SI",
             "future_predicted_SI",
         ]
@@ -1404,6 +1409,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
     )
     plot_df = plot_df.loc[
         (pd.to_numeric(plot_df["latest_available_count"], errors="coerce") >= float(min_last_available_count))
+        & (pd.to_numeric(plot_df["total_publications"], errors="coerce") >= float(min_total_publications))
         & count_error_in_range
     ].reset_index(drop=True)
     if min_si_delta is not None and not plot_df.empty:
@@ -1550,6 +1556,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                         "glass_group_column",
                         "latest_count_source",
                         "count_error_display",
+                        "total_publications",
                     ]
                 ].to_numpy(),
                 hovertemplate=(
@@ -1561,6 +1568,7 @@ def plot_interactive_latest_observed_count_vs_future_si_shift(
                     "Delta SI: %{customdata[8]:.3f}<br>"
                     "Mean abs count error: %{customdata[14]}<br>"
                     "Count-error years: %{customdata[10]:.0f}<br>"
+                    "Total publications: %{customdata[15]:.0f}<br>"
                     "GLASS: %{customdata[11]}<extra></extra>"
                 ),
                 name="Pairs",
