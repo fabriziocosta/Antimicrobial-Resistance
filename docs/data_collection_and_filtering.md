@@ -2,7 +2,7 @@
 
 This document describes how the active workflow builds AMR publication signals from PubMed and filters them into pair-level yearly datasets.
 
-The active entrypoint is `notebooks/03_collect_yearly_data.ipynb`. The implementation lives mainly in:
+The active entrypoint is `notebooks/04_collect_yearly_data.ipynb`. The implementation lives mainly in:
 
 - `amr.pipelines.collection`
 - `amr.pubmed.intervals`

@@ -1,17 +1,17 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project uses a module-first workflow with nine sequentially numbered active
+This project uses a module-first workflow with nine active
 notebooks:
 
-1. `notebooks/00_configure_pipeline.ipynb`
-2. `notebooks/01_prepare_inputs.ipynb`
-3. `notebooks/02_query_examples.ipynb`
-4. `notebooks/03_collect_yearly_data.ipynb`
-5. `notebooks/04_estimate_llm_screening_cost.ipynb`
-6. `notebooks/05_model_scientific_interest.ipynb`
-7. `notebooks/06_glass_interactive_si_shift.ipynb`
-8. `notebooks/07_glass_dedicated_pair_plots.ipynb`
-9. `notebooks/08_inspect_pair_pmids.ipynb`
+0. `notebooks/00_configure_pipeline.ipynb`
+1. `notebooks/01_prepare_inputs.ipynb`
+2. `notebooks/02_estimate_llm_screening_cost.ipynb`
+3. `notebooks/03_query_examples.ipynb`
+4. `notebooks/04_collect_yearly_data.ipynb`
+5. `notebooks/05_model_scientific_interest.ipynb`
+6. `notebooks/06_glass_interactive_si_shift.ipynb`
+7. `notebooks/07_glass_dedicated_pair_plots.ipynb`
+8. `notebooks/08_inspect_pair_pmids.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -54,11 +54,15 @@ Prepares static input assets. It downloads/validates the pathogen priority list 
 - `assets/antibiotic_synonym_lookup.csv`
 - `assets/antibiotic_coarsening_lookup.csv`
 
-### Notebook 02: `notebooks/02_query_examples.ipynb`
+### Notebook 02: `notebooks/02_estimate_llm_screening_cost.ipynb`
+
+Estimates LLM screening costs before collection. It can project from an existing pilot candidate set to the configured pathogen count, while excluding rows already present in the decisions parquet.
+
+### Notebook 03: `notebooks/03_query_examples.ipynb`
 
 Prints example PubMed queries, cache preflight summaries, and prompt templates before collection.
 
-### Notebook 03: `notebooks/03_collect_yearly_data.ipynb`
+### Notebook 04: `notebooks/04_collect_yearly_data.ipynb`
 
 Builds the yearly AMR dataset end-to-end:
 
@@ -76,11 +80,6 @@ Primary APIs:
 - `amr.screening.prepare_yearly_candidate_pmids(...)`
 - `amr.screening.run_unified_llm_filter(...)`
 - `amr.screening.build_yearly_screened_pairs(...)`
-
-### Notebook 04: `notebooks/04_estimate_llm_screening_cost.ipynb`
-
-Estimates LLM screening costs from the candidate rows and cached abstracts produced
-by notebook 03. It does not call the LLM.
 
 ### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
@@ -186,7 +185,7 @@ snapshot.
 The refactored pipeline is designed for yearly (or multi-year slice) updates:
 
 1. Update shared settings in notebook 00 if required.
-2. Run notebook 03 on a slice (for example `2027-2027` or `2025-2027`).
+2. Run notebook 04 on a slice (for example `2027-2027` or `2025-2027`).
 3. Outputs merge into canonical stores:
    - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
    - `outputs/parquets/candidate_amr_pair_pmid_links.parquet`

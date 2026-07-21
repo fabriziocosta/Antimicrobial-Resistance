@@ -27,7 +27,7 @@ collection:
   slice_start_year: 2000
   slice_end_year: 2026
   interval_year_gap: 5
-  num_pathogens: 50
+  num_pathogens: 200
   num_antibiotics: null
   min_pathogenic_index: 0.0
   extra_amr_keywords:
@@ -59,14 +59,22 @@ llm:
   screened_include_decisions: &id001
   - strict
 cost_estimation:
-  input_usd_per_1m_tokens: 0.05
-  output_usd_per_1m_tokens: 0.4
-  cached_input_usd_per_1m_tokens: 0.005
+  pricing_by_model:
+    gpt-4o-mini:
+      input_usd_per_1m_tokens: 0.15
+      output_usd_per_1m_tokens: 0.6
+      cached_input_usd_per_1m_tokens: 0.075
+    gpt-5-nano:
+      input_usd_per_1m_tokens: 0.05
+      output_usd_per_1m_tokens: 0.4
+      cached_input_usd_per_1m_tokens: 0.005
   batch_api_multiplier: 1.0
   sample_size: 1000
   random_seed: 42
   assumed_output_tokens_per_call: 140
   use_cached_input_price: false
+  exclude_already_asked: true
+  project_to_configured_pathogens: true
 si:
   antibiotic_analysis_level: antibiotic
   fit_start_year: 2000
