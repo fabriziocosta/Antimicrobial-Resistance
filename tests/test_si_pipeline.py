@@ -28,6 +28,7 @@ from amr.pipelines.si import (
     filter_model_inputs_by_average_amr_publications,
     rank_future_high_interest_pairs,
     save_category_driver_plots,
+    save_category_driver_pie_grid,
 )
 
 
@@ -683,6 +684,63 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         finally:
             plt.close(result_with_mechanism["figure"])
             plt.close(result_without_mechanism["figure"])
+
+    def test_category_driver_pie_grid_sums_all_years_and_saves_one_figure(self) -> None:
+        category_counts_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2020,
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
+                    "count": 2,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2021,
+                    "amr_primary_category": "CLINICAL_OUTBREAKS_REPORTS",
+                    "count": 3,
+                },
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "year": 2021,
+                    "amr_primary_category": "SURVEILLANCE",
+                    "count": 5,
+                },
+                {
+                    "pathogen": "p2",
+                    "antibiotic": "a2",
+                    "year": 2020,
+                    "amr_primary_category": "OTHER",
+                    "count": 4,
+                },
+            ]
+        )
+        interesting_df = pd.DataFrame(
+            [{"pathogen": "p1", "antibiotic": "a1"}, {"pathogen": "p2", "antibiotic": "a2"}]
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(plt.Figure, "savefig") as mock_savefig,
+            patch("amr.pipelines.si.plt.close") as mock_close,
+        ):
+            output_path = Path(tmpdir) / "driver_pies.pdf"
+            saved_pairs = save_category_driver_pie_grid(
+                category_counts_df=category_counts_df,
+                interesting_df=interesting_df,
+                output_path=output_path,
+                num_columns=5,
+                verbose=False,
+            )
+
+        self.assertEqual(saved_pairs, 2)
+        mock_savefig.assert_called_once()
+        figure = mock_close.call_args_list[-1].args[0]
+        self.assertEqual(len(figure.axes), 5)
+        self.assertIn("n=10", figure.axes[0].get_title())
 
     def test_category_driver_plot_keeps_all_missing_llm_years_gray(self) -> None:
         category_counts_df = pd.DataFrame(

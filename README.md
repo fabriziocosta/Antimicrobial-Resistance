@@ -90,6 +90,7 @@ Performs SI modeling and forecasting:
 - Forecasts future SI using yearly LOESS count modeling.
 - Ranks pairs for reliable future high scientific interest.
 - Produces focused plots for shortlisted pairs.
+- Saves all-year driver-composition pie charts for the selected pairs in one PDF grid.
 
 Primary APIs:
 

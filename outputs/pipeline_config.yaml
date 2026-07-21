@@ -85,6 +85,7 @@ si:
   driver_category_level: coarse
   driver_lookback_years: 5
   max_driver_plots: 25
+  driver_pie_grid_columns: 5
   max_interesting_plots: 25
   figure_format: pdf
   display_plots: true

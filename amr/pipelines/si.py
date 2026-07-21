@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from math import ceil
 from pathlib import Path
 from typing import Any, Sequence
-from math import ceil
 import warnings
 
 from matplotlib.patches import Patch
