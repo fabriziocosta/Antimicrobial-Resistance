@@ -149,8 +149,16 @@ def search_term_clause(
             if total_count == 0:
                 return query, 0, None, None
             if not webenv or not query_key:
-                print("Warning: missing WebEnv or QueryKey — treating search as failed.")
-                return query, None, None, None
+                if i == RETRIES - 1:
+                    print("Missing WebEnv or QueryKey after retries — treating search as failed.")
+                    return query, None, None, None
+                delay = BACKOFF_FACTOR * (2**i)
+                print(
+                    f"Missing WebEnv or QueryKey (attempt {i + 1}/{RETRIES}). "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+                continue
             return query, total_count, webenv, query_key
         except NETWORK_EXCEPTIONS as e:
             delay = BACKOFF_FACTOR * (2**i)
@@ -215,8 +223,16 @@ def search_pmids(
             if total_count == 0:
                 return query, 0, None, None
             if not webenv or not query_key:
-                print("Warning: missing WebEnv or QueryKey — treating search as failed.")
-                return query, None, None, None
+                if i == RETRIES - 1:
+                    print("Missing WebEnv or QueryKey after retries — treating search as failed.")
+                    return query, None, None, None
+                delay = BACKOFF_FACTOR * (2**i)
+                print(
+                    f"Missing WebEnv or QueryKey (attempt {i + 1}/{RETRIES}). "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+                continue
 
             return query, total_count, webenv, query_key
 
