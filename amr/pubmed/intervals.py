@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
@@ -27,6 +28,20 @@ from amr.pubmed.cache import (
     get_metadata,
 )
 from amr.pubmed.pmids import normalize_pmids
+
+
+def _build_interval_cache_index(existing_df: pd.DataFrame) -> dict[tuple[str, str, str, str], int]:
+    """Index saved interval counts once for constant-time resume checks."""
+    if existing_df.empty:
+        return {}
+    required = ["pathogen", "antibiotic", "start_date", "end_date", "count"]
+    missing = set(required) - set(existing_df.columns)
+    if missing:
+        raise KeyError(f"existing interval cache missing required columns: {sorted(missing)}")
+    return {
+        (str(row.pathogen), str(row.antibiotic), str(row.start_date), str(row.end_date)): int(row.count)
+        for row in existing_df[required].itertuples(index=False)
+    }
 
 
 def count_pmids_per_year_for_pathogens(
@@ -110,6 +125,7 @@ def fetch_pmids_by_date_and_keywords(
     email: str = "your_email@example.com",
     batch_size: int = 5000,
     extra_clauses: Optional[Sequence[str]] = None,
+    verbose: bool = True,
 ) -> list[str]:
     """Retrieve PMIDs within a date range; splits queries that exceed PubMed limits."""
     query, count, webenv, query_key = search_pmids(
@@ -121,6 +137,7 @@ def fetch_pmids_by_date_and_keywords(
         min_date=min_date,
         max_date=max_date,
         email=email,
+        verbose=verbose,
     )
     if count is None:
         raise RuntimeError(
@@ -145,6 +162,7 @@ def fetch_pmids_by_date_and_keywords(
             email=email,
             batch_size=batch_size,
             extra_clauses=extra_clauses,
+            verbose=verbose,
         )
         right_pmids = fetch_pmids_by_date_and_keywords(
             min_date=(mid_dt + timedelta(days=1)).strftime("%Y/%m/%d"),
@@ -156,9 +174,10 @@ def fetch_pmids_by_date_and_keywords(
             email=email,
             batch_size=batch_size,
             extra_clauses=extra_clauses,
+            verbose=verbose,
         )
         return left_pmids + right_pmids
-    return retrieve_pmids(query, webenv, query_key, count, batch_size=batch_size)
+    return retrieve_pmids(query, webenv, query_key, count, batch_size=batch_size, verbose=verbose)
 
 
 def fetch_pmids_intervals(
@@ -177,6 +196,8 @@ def fetch_pmids_intervals(
     summary_batch_size: int = 200,
     verbose: int = 1,
     progress_every: int = 200,
+    search_recovery_attempts: int = 3,
+    search_recovery_delay_seconds: float = 30.0,
 ) -> pd.DataFrame:
     """Query PubMed in intervals for all pathogen/antibiotic combinations."""
     import os
@@ -197,6 +218,7 @@ def fetch_pmids_intervals(
                 "venue_histogram",
             ]
         )
+    cache_index = _build_interval_cache_index(existing_df)
 
     new_results: list[dict] = []
     metadata_cache: dict[str, dict] = {}
@@ -214,10 +236,39 @@ def fetch_pmids_intervals(
         current = datetime(end.year + 1, 1, 1)
 
     total_tasks = len(pathogens) * len(antibiotics)
+    total_pathogens = len(pathogens)
+    total_antibiotics = len(antibiotics)
+    total_years = overall_end_dt.year - overall_start_dt.year + 1
     task_counter = 0
     event_counter = 0
     progress_every = max(1, int(progress_every))
+    search_recovery_attempts = max(1, int(search_recovery_attempts))
+    search_recovery_delay_seconds = max(0.0, float(search_recovery_delay_seconds))
     event_stats = {"cached": 0, "zero": 0, "full_fetch_partitioned": 0, "new": 0}
+    low_level_verbose = verbose >= 2
+    antibiotic_status_every = max(1, progress_every // max(len(intervals), 1))
+
+    def _log_status(pathogen_idx: int, antibiotic_idx: int, pathogen: str) -> None:
+        if verbose < 1:
+            return
+        completed_pathogens = pathogen_idx - 1
+        completed_antibiotics = antibiotic_idx - 1
+        completed_pairs = completed_pathogens * total_antibiotics + completed_antibiotics
+        completed_pair_years = completed_pairs * total_years
+        total_pair_years = total_tasks * total_years
+        print(
+            "Collection status | "
+            f"pathogens {completed_pathogens}/{total_pathogens} "
+            f"({100 * completed_pathogens / max(total_pathogens, 1):.1f}%) | "
+            f"current {pathogen} | "
+            f"antibiotics {completed_antibiotics}/{total_antibiotics} "
+            f"({100 * completed_antibiotics / max(total_antibiotics, 1):.1f}%) | "
+            f"pairs {completed_pairs}/{total_tasks} "
+            f"({100 * completed_pairs / max(total_tasks, 1):.1f}%) | "
+            f"pair-years {completed_pair_years}/{total_pair_years} "
+            f"({100 * completed_pair_years / max(total_pair_years, 1):.1f}%)",
+            flush=True,
+        )
 
     def _log_event(kind: str, message: str) -> None:
         nonlocal event_counter
@@ -225,17 +276,11 @@ def fetch_pmids_intervals(
         event_stats[kind] = event_stats.get(kind, 0) + 1
         if verbose >= 2:
             print(message)
-        elif verbose >= 1 and event_counter % progress_every == 0:
-            print(
-                f"Progress events {event_counter}: "
-                f"cached={event_stats.get('cached',0)} "
-                f"zero={event_stats.get('zero',0)} "
-                f"full_fetch={event_stats.get('full_fetch_partitioned',0)} "
-                f"new={event_stats.get('new',0)}"
-            )
 
-    for pathogen in pathogens:
-        for antibiotic in antibiotics:
+    for pathogen_idx, pathogen in enumerate(pathogens, start=1):
+        for antibiotic_idx, antibiotic in enumerate(antibiotics, start=1):
+            if antibiotic_idx == 1 or (antibiotic_idx - 1) % antibiotic_status_every == 0:
+                _log_status(pathogen_idx, antibiotic_idx, pathogen)
             task_counter += 1
             task_progress = (task_counter / max(total_tasks, 1)) * 100
 
@@ -246,12 +291,7 @@ def fetch_pmids_intervals(
                 start_dt = datetime.strptime(interval_start, "%Y/%m/%d")
                 end_dt = datetime.strptime(interval_end, "%Y/%m/%d")
 
-                mask = (
-                    (existing_df["pathogen"] == pathogen)
-                    & (existing_df["antibiotic"] == antibiotic)
-                    & (existing_df["start_date"] == interval_start)
-                    & (existing_df["end_date"] == interval_end)
-                )
+                cache_key = (str(pathogen), str(antibiotic), interval_start, interval_end)
 
                 entry = {
                     "start": interval_start,
@@ -262,9 +302,9 @@ def fetch_pmids_intervals(
                     "count": 0,
                 }
 
-                if mask.any():
+                if cache_key in cache_index:
                     entry["cached"] = True
-                    entry["count"] = int(existing_df.loc[mask, "count"].iloc[0])
+                    entry["count"] = cache_index[cache_key]
                     _log_event(
                         "cached",
                         f"[{task_counter:>3}/{total_tasks}] "
@@ -280,21 +320,44 @@ def fetch_pmids_intervals(
             if not missing_entries:
                 continue
 
-            query, total_count, webenv, query_key = search_pmids(
-                antibiotic,
-                pathogen,
-                bacteria_synonym_df,
-                antibiotic_synonym_df=antibiotic_synonym_df,
-                extra_clauses=extra_keywords,
-                min_date=min_date,
-                max_date=max_date,
-                email=email,
-            )
+            query = ""
+            total_count = None
+            webenv = None
+            query_key = None
+            for recovery_attempt in range(1, search_recovery_attempts + 1):
+                query, total_count, webenv, query_key = search_pmids(
+                    antibiotic,
+                    pathogen,
+                    bacteria_synonym_df,
+                    antibiotic_synonym_df=antibiotic_synonym_df,
+                    extra_clauses=extra_keywords,
+                    min_date=min_date,
+                    max_date=max_date,
+                    email=email,
+                    verbose=low_level_verbose,
+                )
+                if total_count is not None:
+                    break
+                if recovery_attempt < search_recovery_attempts:
+                    recovery_delay = search_recovery_delay_seconds * (2 ** (recovery_attempt - 1))
+                    print(
+                        "PubMed recovery | "
+                        f"pathogen={pathogen} | antibiotic={antibiotic} | "
+                        f"search round {recovery_attempt}/{search_recovery_attempts} failed; "
+                        f"waiting {recovery_delay:g}s before retrying",
+                        flush=True,
+                    )
+                    time.sleep(recovery_delay)
 
             if total_count is None:
+                if new_results:
+                    df_new = pd.DataFrame(new_results)
+                    existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
+                    new_results = []
                 raise RuntimeError(
                     f"PubMed search failed for pathogen={pathogen!r}, antibiotic={antibiotic!r}, "
-                    f"window={min_date}..{max_date}; no zero rows were written."
+                    f"window={min_date}..{max_date} after {search_recovery_attempts} recovery rounds; "
+                    "pending completed rows were checkpointed and no false zero rows were written."
                 )
 
             if total_count == 0:
@@ -325,8 +388,14 @@ def fetch_pmids_intervals(
                 continue
 
             if total_count <= full_fetch_threshold:
-                pmids_all = retrieve_pmids(query, webenv, query_key, total_count)
-                update_metadata_cache(pmids_all, metadata_cache, email=email, batch_size=summary_batch_size)
+                pmids_all = retrieve_pmids(query, webenv, query_key, total_count, verbose=low_level_verbose)
+                update_metadata_cache(
+                    pmids_all,
+                    metadata_cache,
+                    email=email,
+                    batch_size=summary_batch_size,
+                    verbose=low_level_verbose,
+                )
 
                 for entry in missing_entries:
                     pmids_interval = []
@@ -378,8 +447,15 @@ def fetch_pmids_intervals(
                     antibiotic_synonym_df=antibiotic_synonym_df,
                     email=email,
                     extra_clauses=extra_keywords,
+                    verbose=low_level_verbose,
                 )
-                update_metadata_cache(pmids_interval, metadata_cache, email=email, batch_size=summary_batch_size)
+                update_metadata_cache(
+                    pmids_interval,
+                    metadata_cache,
+                    email=email,
+                    batch_size=summary_batch_size,
+                    verbose=low_level_verbose,
+                )
                 from collections import Counter as _Counter
 
                 venue_counter = _Counter()
@@ -420,6 +496,17 @@ def fetch_pmids_intervals(
     if new_results:
         df_new = pd.DataFrame(new_results)
         existing_df = merge_with_existing(df_new, parquet_path=parquet_path)
+
+    if verbose >= 1:
+        completed_pair_years = total_tasks * total_years
+        print(
+            "Collection status | "
+            f"pathogens {total_pathogens}/{total_pathogens} (100.0%) | "
+            f"antibiotics {total_antibiotics}/{total_antibiotics} (100.0%) | "
+            f"pairs {total_tasks}/{total_tasks} (100.0%) | "
+            f"pair-years {completed_pair_years}/{completed_pair_years} (100.0%)",
+            flush=True,
+        )
 
     if verbose >= 1:
         print(

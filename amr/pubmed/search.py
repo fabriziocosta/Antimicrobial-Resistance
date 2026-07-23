@@ -181,6 +181,7 @@ def search_pmids(
     max_date: str,
     email: str,
     antibiotic_synonym_df: pd.DataFrame | None = None,
+    verbose: bool = True,
 ) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
     """Search PubMed for PMIDs with retries and exponential backoff.
 
@@ -197,7 +198,8 @@ def search_pmids(
         min_date=min_date,
         max_date=max_date,
     )
-    print(f"[search_pmids] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
+    if verbose:
+        print(f"[search_pmids] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
 
     for i in range(RETRIES):
         try:
@@ -248,7 +250,15 @@ def search_pmids(
     return query, None, None, None
 
 
-def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_size: int = 5000) -> List[str]:
+def retrieve_pmids(
+    query: str,
+    webenv: str,
+    query_key: str,
+    count: int,
+    batch_size: int = 5000,
+    *,
+    verbose: bool = True,
+) -> List[str]:
     """Retrieve PMIDs in batches for a given search."""
     pmids: List[str] = []
     if not query or not webenv or not query_key or count == 0:
@@ -256,7 +266,8 @@ def retrieve_pmids(query: str, webenv: str, query_key: str, count: int, batch_si
 
     total_batches = (count + batch_size - 1) // batch_size
     for batch_idx, start in enumerate(range(0, count, batch_size), start=1):
-        print(f"[retrieve_pmids] batch {batch_idx}/{total_batches} (retstart={start})")
+        if verbose:
+            print(f"[retrieve_pmids] batch {batch_idx}/{total_batches} (retstart={start})")
         for attempt in range(RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
@@ -300,6 +311,7 @@ def fetch_pub_metadata(
     email: str = "your_email@example.com",
     batch_size: int = 200,
     on_batch_complete: Callable[[int, int, list[str], Dict[str, datetime], Dict[str, str]], None] | None = None,
+    verbose: bool = True,
 ):
     """Fetch publication dates and venues for a list of PMIDs."""
     _configure_entrez(email)
@@ -308,7 +320,7 @@ def fetch_pub_metadata(
     venue_map: Dict[str, str] = {}
 
     total_batches = (len(pmids) + batch_size - 1) // batch_size if len(pmids) > 0 else 0
-    if total_batches:
+    if verbose and total_batches:
         print(f"[fetch_pub_metadata] fetching metadata for {len(pmids)} PMIDs in {total_batches} batch(es)")
     start_time = time.time()
     for batch_idx, start in enumerate(range(0, len(pmids), batch_size), start=1):
@@ -324,10 +336,11 @@ def fetch_pub_metadata(
         else:
             eta_text = "estimating"
             est_finish = "--:--:--"
-        print(
-            f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} "
-            f"({len(batch)} PMIDs) | ETA {eta_text} | est finish {est_finish}"
-        )
+        if verbose:
+            print(
+                f"[fetch_pub_metadata] starting batch {batch_idx}/{total_batches} "
+                f"({len(batch)} PMIDs) | ETA {eta_text} | est finish {est_finish}"
+            )
         batch_date_map: Dict[str, datetime] = {}
         batch_venue_map: Dict[str, str] = {}
         batch_completed = False

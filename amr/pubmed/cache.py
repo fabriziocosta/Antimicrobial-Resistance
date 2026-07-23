@@ -39,12 +39,19 @@ def merge_with_existing(new_df: pd.DataFrame, parquet_path: str = "pmids_results
     return merged_df
 
 
-def update_metadata_cache(pmids: Sequence[str], metadata_cache: Dict[str, dict], email: str = "your_email@example.com", batch_size: int = 200):
+def update_metadata_cache(
+    pmids: Sequence[str],
+    metadata_cache: Dict[str, dict],
+    email: str = "your_email@example.com",
+    batch_size: int = 200,
+    *,
+    verbose: bool = True,
+):
     """Populate metadata cache with publication date and venue details."""
     missing = [pmid for pmid in normalize_pmids(pmids) if pmid not in metadata_cache]
     if not missing:
         return
-    date_map, venue_map = fetch_pub_metadata(missing, email=email, batch_size=batch_size)
+    date_map, venue_map = fetch_pub_metadata(missing, email=email, batch_size=batch_size, verbose=verbose)
     for pmid in missing:
         metadata_cache[pmid] = {
             "date": date_map.get(pmid),
