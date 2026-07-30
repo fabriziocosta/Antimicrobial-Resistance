@@ -69,204 +69,124 @@ Rules:
 Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one short sentence).
 """.strip()
 
-UNIFIED_AMR_INTEREST_SYSTEM_PROMPT = """
-You are classifying scientific abstracts about antimicrobial resistance (AMR).
+_UNIFIED_AMR_INTEREST_POLICY = """
+You classify scientific abstracts for antimicrobial-resistance (AMR) analysis.
 
 Task:
 Given a target pathogen, a target antibiotic or antibiotic class, a title, and an abstract,
-classify the abstract into exactly one primary category describing why the paper contributes
-to scientific interest for the target pathogen-antibiotic pair.
+decide whether the target pair is supported by the paper and select the main scientific-interest
+category for that supported pair.
 
-Core rule:
-Do not classify by keyword co-occurrence alone. First determine whether the abstract gives a
-reasonable AMR, susceptibility, treatment, testing, mechanism, surveillance, or policy context
-for considering the target pathogen-antibiotic/class pair. Assign a substantive category when
-the title or abstract supports considering that pair for AMR analysis.
+Use the text as evidence, not keyword co-occurrence. The pair is AMR-relevant when the title or
+abstract provides resistance, susceptibility, treatment, testing, mechanism, surveillance,
+stewardship, policy, or another substantive AMR context.
 
-If the target pathogen-antibiotic relation is only a stray co-mention, clearly belongs to a
-different organism or drug, or is unsupported by any AMR context, discard it by setting:
-- decision = "no"
-- primary_category = "NONE"
-- target_pair_relation_supported = false
+Target-pair attribution:
+- Strict support includes direct modification (for example, methicillin-resistant S. aureus),
+  an explicit pathogen-drug assertion, group attribution, or an explicit class relation.
+- Broader support includes a shared susceptibility/resistance study panel in which the target
+  pathogen is studied and the target drug/class is tested, reported, monitored, or discussed.
+- Class attribution is valid when the target drug belongs to a class explicitly tested or discussed
+  for the target pathogen; for example, carbapenems support imipenem or meropenem.
+- Do not transfer resistance, susceptibility, treatment, testing, or AMR relevance from one
+  pathogen or drug to another merely because they occur nearby. A shared panel is an exception.
+- A stray co-mention, a clearly different organism or drug, or a pair with no AMR context is not
+  supported.
 
-Attribution rules:
-A pathogen is linked to resistance, susceptibility, testing, treatment, or AMR relevance for an
-antimicrobial agent when the text clearly supports considering that relation.
-
-Supported links include:
-- direct modification: "methicillin-resistant Staphylococcus aureus", "meropenem-resistant Klebsiella pneumoniae";
-- explicit assertion: "E. coli isolates were resistant to gentamicin", "Klebsiella pneumoniae showed reduced susceptibility to meropenem";
-- group attribution: "gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens".
-- study-panel attribution: the target pathogen is among organisms studied for antimicrobial
-  resistance/susceptibility and the target antibiotic/class is among agents tested, reported,
-  monitored, or discussed, even when the abstract does not spell out every pathogen-drug result.
-- class attribution: the target antibiotic belongs to a class explicitly tested or discussed for
-  the target pathogen, such as third-generation cephalosporins supporting ceftazidime or
-  ceftriaxone, beta-lactams supporting ampicillin or cephalosporins, or carbapenems supporting
-  imipenem or meropenem.
-
-Do not transfer resistance, susceptibility, testing, treatment, or AMR relevance from one pathogen
-to another merely because they occur nearby in the same sentence. However, if the abstract frames
-the pathogens and agents as a shared susceptibility/resistance panel, that is enough support for
-considering each target pair in the panel.
-
-Examples:
-- "Methicillin-resistant Staphylococcus aureus and E. coli were detected" supports methicillin resistance for Staphylococcus aureus, not for E. coli.
-- "Resistance to gentamicin was common in Enterococcus faecalis, while E. coli was also detected" does not support gentamicin resistance in E. coli.
-- "Gentamicin-resistant coliforms, including Enterobacter cloacae, Klebsiella pneumoniae and Serratia marcescens" supports gentamicin resistance for all three listed species.
-- "Susceptibility of Acinetobacter baumannii isolates to commonly used antimicrobial agents was tested" supports target antibiotics that are named elsewhere in the abstract or query context as part of the tested panel.
-- "Resistance to third-generation cephalosporins among Acinetobacter baumannii isolates" supports ceftazidime and ceftriaxone for Acinetobacter baumannii.
-- "Carbapenem-resistant Klebsiella pneumoniae and Pseudomonas aeruginosa were isolated" supports carbapenem-class pairs for both species unless the grammar clearly limits resistance to one species.
-
-Categories:
-
-1. ENVIRONMENTAL_ANIMAL_NON_HUMAN
-Use when the main setting is outside direct human clinical care, including animals, livestock,
-companion animals, wildlife, aquaculture, veterinary medicine, food production, farms,
-slaughterhouses, wastewater, sewage, rivers, soil, water, environmental sampling, non-human
-reservoirs, or One Health transmission. Use this category when the main contribution is about
-non-human reservoirs, environmental spread, animal carriage, food-chain transmission, or
-cross-sector ecology.
-
-2. CLINICAL_OUTBREAKS_REPORTS
-Use when the abstract mainly concerns human clinical cases, patient cohorts, infections, case
-reports, case series, hospital events, clinical burden, treatment experience, patient outcomes,
-or outbreak investigations. This includes bloodstream infection, urinary tract infection,
-pneumonia, sepsis, wound infection, intensive care unit outbreaks, nosocomial spread, mortality,
-morbidity, and clinical risk factors. Do not use this category merely because isolates came from
-a hospital laboratory if the main contribution is routine resistance monitoring. Use SURVEILLANCE instead.
-
-3. SURVEILLANCE
-Use when the abstract mainly reports resistance rates, susceptibility patterns, prevalence,
-incidence, frequency, epidemiological trends, geographic spread, temporal changes, or routine
-monitoring of the target pathogen-antibiotic pair. This includes antibiogram-style studies,
-multicentre surveillance, national or regional monitoring, and reports of percentages or
-frequencies of resistant isolates. Do not use this category when the main contribution is
-explaining the genetic, molecular, or biological basis of resistance. Use
-MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES instead.
-
-4. MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES
-Use when the abstract mainly studies how resistance occurs, how it is encoded, how it spreads
-biologically, or how it behaves under laboratory investigation. This includes resistance genes,
-mutations, plasmids, integrons, transposons, horizontal gene transfer, beta-lactamases,
-carbapenemases, ESBLs, KPC, NDM, OXA, CTX-M, MCR, VAN, efflux pumps, porin loss, target
-modification, enzymatic inactivation, biofilm-associated resistance, adaptive resistance,
-whole-genome sequencing, molecular epidemiology, MIC shifts, gene expression, fitness cost, or
-laboratory resistance evolution. Prefer this category over SURVEILLANCE when the abstract both
-reports resistance rates and explains the mechanism of resistance.
-
-5. OTHER
-Use when the abstract is AMR-relevant but does not fit any of the categories above, including
-cases where the target pathogen-antibiotic relation demonstrates resistance but does not clearly
-belong in the other four categories. Use OTHER for diagnostics, policy, stewardship, guidelines,
-prescribing behaviour, antibiotic consumption, reviews, modelling, economic burden, education,
-or broad AMR discussions.
+Attribution examples:
+- "Methicillin-resistant Staphylococcus aureus and E. coli were detected" supports methicillin
+  resistance for Staphylococcus aureus, not for E. coli.
+- "Resistance to gentamicin was common in Enterococcus faecalis, while E. coli was also detected"
+  does not support gentamicin resistance in E. coli.
+- "Gentamicin-resistant coliforms, including Enterobacter cloacae and Klebsiella pneumoniae"
+  supports gentamicin resistance for both listed species.
+- "Susceptibility of Acinetobacter baumannii isolates to commonly used antimicrobial agents was
+  tested" supports target drugs named in the same study-panel context.
+- "Resistance to third-generation cephalosporins among Acinetobacter baumannii isolates" supports
+  ceftazidime and ceftriaxone for Acinetobacter baumannii.
 
 Decision labels:
-- strict: the abstract explicitly links the target pathogen to the target antibiotic/class with a
-  direct resistance, susceptibility, testing, treatment, or mechanism statement. Use strict for
-  direct modification, explicit assertion, group attribution, or an explicit class relation for
-  the target pathogen.
-- yes: the abstract is AMR-relevant and supports considering the target pathogen-antibiotic/class
-  pair for AMR analysis through broader study-panel attribution, class-level context, or another
-  shared AMR-relevant context, but does not explicitly state the target pathogen-antibiotic
-  relation strongly enough for strict.
-- no: the abstract is not AMR-relevant for the target pair, or the target pair relation is incidental, clearly contradicted, unsupported, or based only on co-occurrence outside an AMR/testing/treatment context.
-- uncertain: use only for technical failures or missing abstracts. Do not return uncertain for an
-  abstract that is present; if evidence is ambiguous or insufficient, return no.
+- strict: the target pathogen-drug/class relation is explicit.
+- yes: the pair is supported by a broader shared panel, class-level relation, or shared AMR context.
+- no: the pair is incidental, contradicted, unsupported, or not AMR-relevant.
+- uncertain: use only when the abstract is missing or a technical failure is being represented;
+  for a present but insufficient abstract, use no.
 
-Internal reasoning steps:
-1. Identify pathogens mentioned.
-2. Identify antibiotics/classes mentioned.
-3. Identify whether the abstract describes AMR, susceptibility, treatment, testing, surveillance,
-   mechanisms, stewardship, or another AMR-relevant context.
-4. Decide whether the target pathogen and antibiotic/class are part of the same AMR-relevant
-   study, panel, class, result, or discussion.
-5. If the pair is supported by a direct statement, class statement, or study-panel attribution,
-   set target_pair_relation_supported = true.
-6. Use decision = "strict" when the pair relation is explicit, and decision = "yes" when the pair
-   is supported more broadly by a shared AMR-relevant panel, class, or context.
-7. Choose the primary category based on the main contribution for the supported target pair.
-8. If the pathogen and antibiotic are merely unrelated co-mentions outside an AMR-relevant shared
-   context, set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
+Primary categories, in order of precedence:
+1. ENVIRONMENTAL_ANIMAL_NON_HUMAN — animals, livestock, wildlife, veterinary, food production,
+   aquaculture, wastewater, sewage, soil, water, environmental sampling, non-human reservoirs,
+   or One Health transmission.
+2. CLINICAL_OUTBREAKS_REPORTS — human clinical cases, patient cohorts, infections, treatment
+   experience, outcomes, hospital events, case reports, or outbreak investigations. Do not use this
+   merely because isolates came from a hospital laboratory.
+3. SURVEILLANCE — resistance rates, susceptibility patterns, prevalence, incidence, frequencies,
+   epidemiological trends, geographic spread, temporal change, or routine monitoring.
+4. MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES — resistance genes, mutations, plasmids,
+   integrons, transfer, beta-lactamases, carbapenemases, ESBLs, efflux, porin loss, target
+   modification, biofilms, sequencing, molecular epidemiology, MIC shifts, gene expression,
+   fitness cost, or laboratory resistance evolution. Prefer this over surveillance when mechanism
+   is a main contribution.
+5. OTHER — AMR-relevant diagnostics, policy, stewardship, guidelines, prescribing, consumption,
+   reviews, modelling, economic burden, education, or anything not covered above.
 
-Output only valid compact JSON using this schema:
-{
-  "decision": "strict | yes | no | uncertain",
-  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
-  "rationale": "Brief explanation in 1-3 sentences. Mention the specific title/abstract evidence and explain whether the target pathogen-antibiotic relation is supported.",
-  "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
-  "target_pair_relation_supported": true,
-  "is_amr_relevant": true,
-}
-
-Consistency rules:
-- If target_pair_relation_supported is false, decision must be "no".
-- If is_amr_relevant is false, decision must be "no".
-- If decision is "strict", target_pair_relation_supported and is_amr_relevant must both be true.
-- If the target pathogen and target antibiotic/class are mentioned separately but are part of the
-  same AMR/susceptibility/treatment/testing/stewardship context, target_pair_relation_supported
-  should be true.
-- If the target pathogen and target antibiotic/class are mentioned separately only as unrelated
-  co-occurrences, decision must be "no" and primary_category must be "NONE".
-- If resistance, susceptibility, testing, or treatment is attributed to a different pathogen or a different antibiotic than the target pair, decision must be "no" and primary_category must be "NONE".
-- If the abstract is present and the target pair has an AMR-relevant shared study context, prefer
-  "yes" over "no" even if the abstract does not provide a pair-specific percentage or MIC value.
-- If the abstract is present but the target pair has no AMR-relevant shared context, decision must
-  be "no" and primary_category must be "NONE".
-- evidence_phrases must only include phrases that support the classification.
-- Do not infer relations from unrelated co-mentions.
+Classification procedure:
+1. Identify the pathogens and antibiotics/classes in the text.
+2. Determine whether the target pair shares a supported AMR-relevant relation.
+3. Use strict for an explicit relation and yes for broader support.
+4. If the relation is unsupported, use decision no and primary_category NONE.
+5. Select the category for the paper's main contribution to the supported target pair.
 """.strip()
 
-UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT = (
-    UNIFIED_AMR_INTEREST_SYSTEM_PROMPT.replace(
-        """Internal reasoning steps:
-1. Identify pathogens mentioned.
-2. Identify antibiotics/classes mentioned.
-3. Identify whether the abstract describes AMR, susceptibility, treatment, testing, surveillance,
-   mechanisms, stewardship, or another AMR-relevant context.
-4. Decide whether the target pathogen and antibiotic/class are part of the same AMR-relevant
-   study, panel, class, result, or discussion.
-5. If the pair is supported by a direct statement, class statement, or study-panel attribution,
-   set target_pair_relation_supported = true.
-6. Use decision = "strict" when the pair relation is explicit, and decision = "yes" when the pair
-   is supported more broadly by a shared AMR-relevant panel, class, or context.
-7. Choose the primary category based on the main contribution for the supported target pair.
-8. If the pathogen and antibiotic are merely unrelated co-mentions outside an AMR-relevant shared
-   context, set decision = "no", primary_category = "NONE", and target_pair_relation_supported = false.
-""",
-        """Classification checklist, for internal use only. Do not output reasoning:
-1. Identify mentioned pathogens and antibiotics/classes.
-2. Check whether the text has an AMR, susceptibility, treatment, testing, surveillance, mechanism, stewardship, or policy context.
-3. Decide whether the target pathogen and antibiotic/class belong to the same supported AMR-relevant relation.
-4. Choose the decision and primary category.
-""",
-    )
-    .replace(
-        """Output only valid compact JSON using this schema:
-{
-  "decision": "strict | yes | no | uncertain",
-  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
-  "rationale": "Brief explanation in 1-3 sentences. Mention the specific title/abstract evidence and explain whether the target pathogen-antibiotic relation is supported.",
-  "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
-  "target_pair_relation_supported": true,
-  "is_amr_relevant": true,
-}
-""",
-        """Output only valid compact JSON using this schema. Do not include rationale, explanation, reasoning, evidence text, or copied phrases:
+_UNIFIED_COMPACT_OUTPUT_CONTRACT = """
+Output only valid compact JSON. Do not output rationale, explanation, reasoning, evidence text,
+or copied phrases:
 {
   "decision": "strict | yes | no | uncertain",
   "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
   "target_pair_relation_supported": true,
   "is_amr_relevant": true
 }
-""",
-    )
-    .replace(
-        "- evidence_phrases must only include phrases that support the classification.\n",
-        "- Do not output rationale, explanation, reasoning, evidence text, or copied phrases.\n",
-    )
+
+Consistency rules:
+- If target_pair_relation_supported is false, decision must be no and primary_category must be NONE.
+- If is_amr_relevant is false, decision must be no and primary_category must be NONE.
+- If decision is strict, both boolean fields must be true.
+- If the target pair has a shared AMR-relevant study context but no pair-specific percentage or MIC,
+  prefer yes over no.
+- Do not infer a relation from unrelated co-mentions.
+""".strip()
+
+_UNIFIED_EXPLANATORY_OUTPUT_CONTRACT = """
+Output only valid JSON:
+{
+  "decision": "strict | yes | no | uncertain",
+  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
+  "rationale": "Brief explanation in 1-3 sentences using the title or abstract evidence.",
+  "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
+  "target_pair_relation_supported": true,
+  "is_amr_relevant": true
+}
+
+Consistency rules:
+- If target_pair_relation_supported is false, decision must be no and primary_category must be NONE.
+- If is_amr_relevant is false, decision must be no and primary_category must be NONE.
+- If decision is strict, both boolean fields must be true.
+- If the target pair has a shared AMR-relevant study context but no pair-specific percentage or MIC,
+  prefer yes over no.
+- Evidence phrases must support the classification.
+- Do not infer a relation from unrelated co-mentions.
+""".strip()
+
+# This is the one production prompt. Keep it byte-for-byte stable between requests.
+UNIFIED_AMR_INTEREST_SYSTEM_PROMPT = (
+    f"{_UNIFIED_AMR_INTEREST_POLICY}\n\n{_UNIFIED_COMPACT_OUTPUT_CONTRACT}"
 )
+UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT = UNIFIED_AMR_INTEREST_SYSTEM_PROMPT
+UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT = (
+    f"{_UNIFIED_AMR_INTEREST_POLICY}\n\n{_UNIFIED_EXPLANATORY_OUTPUT_CONTRACT}"
+)
+UNIFIED_PROMPT_CACHE_KEY = "amr-unified-classifier-v2"
+UNIFIED_EXPLANATORY_PROMPT_CACHE_KEY = "amr-unified-classifier-explanatory-v1"
 
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETRIES = 3
@@ -413,26 +333,42 @@ def fetch_pubmed_abstracts_batch(
     return {pmid: ("", "", "network_error") for pmid in pmids}
 
 
+def _resolve_unified_system_prompt(system_prompt: str, include_explanatory_text: bool) -> str:
+    """Select the stable production or explanatory unified prompt variant."""
+    unified_prompts = {
+        UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+        UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT,
+        UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT,
+    }
+    if system_prompt in unified_prompts:
+        return (
+            UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT
+            if include_explanatory_text
+            else UNIFIED_AMR_INTEREST_SYSTEM_PROMPT
+        )
+    return system_prompt
+
+
+def _prompt_cache_key_for_system_prompt(system_prompt: str) -> str | None:
+    """Return the cache namespace for a known stable prompt, if applicable."""
+    if system_prompt == UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT:
+        return UNIFIED_EXPLANATORY_PROMPT_CACHE_KEY
+    if system_prompt == UNIFIED_AMR_INTEREST_SYSTEM_PROMPT:
+        return UNIFIED_PROMPT_CACHE_KEY
+    return None
+
+
 def build_user_prompt(pmid: str, pathogen: str, antibiotic: str, title: str, abstract: str) -> str:
-    """Create the LLM prompt for a single PMID."""
-    return f"""
-PMID: {pmid}
-target_pathogen:
-{pathogen}
-
-target_antibiotic:
-{antibiotic}
-
-title:
-{title}
-
-abstract:
-{abstract or '[no abstract available]'}
-
-Task:
-Classify only this target pathogen-antibiotic pair. Ignore other organisms or drugs unless they
-determine whether the target pair relation is explicitly supported. Return only the requested JSON.
-""".strip()
+    """Create a data-only, deterministically ordered per-record prompt."""
+    payload = {
+        "target_pathogen": str(pathogen or ""),
+        "target_antibiotic": str(antibiotic or ""),
+        "title": str(title or ""),
+        "abstract": str(abstract or "[no abstract available]"),
+        # Keep the PMID last: it is useful for tracing but is not classification input.
+        "pmid": str(pmid or ""),
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _extract_json_object(raw: str) -> dict:
@@ -577,8 +513,7 @@ def classify_abstract(
 ) -> dict:
     """Call the LLM to classify a single abstract with retries/backoff."""
     prompt = build_user_prompt(pmid, pathogen, antibiotic, title, abstract)
-    if not include_explanatory_text and system_prompt == UNIFIED_AMR_INTEREST_SYSTEM_PROMPT:
-        system_prompt = UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT
+    system_prompt = _resolve_unified_system_prompt(system_prompt, include_explanatory_text)
     last_error: Exception | None = None
     current_max_tokens = max_tokens
     retry_max_tokens = max(max_tokens, LLM_CLASSIFICATION_RETRY_MAX_TOKENS)
@@ -587,6 +522,9 @@ def classify_abstract(
             llm_kwargs = {}
             if reasoning_effort:
                 llm_kwargs["reasoning_effort"] = reasoning_effort
+            cache_key = _prompt_cache_key_for_system_prompt(system_prompt)
+            if cache_key and getattr(llm, "supports_prompt_cache", False):
+                llm_kwargs["prompt_cache_key"] = cache_key
             raw = llm.complete(
                 prompt,
                 system_prompt=system_prompt,
@@ -723,8 +661,7 @@ def run_unified_llm_filter(
     missing = required_cols - set(candidate_df.columns)
     if missing:
         raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
-    if not include_explanatory_text and system_prompt == UNIFIED_AMR_INTEREST_SYSTEM_PROMPT:
-        system_prompt = UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT
+    system_prompt = _resolve_unified_system_prompt(system_prompt, include_explanatory_text)
     category_cols = AMR_CATEGORY_COLUMNS
 
     def _append_log(message: str) -> None:
@@ -1185,6 +1122,15 @@ def run_unified_llm_filter(
         _checkpoint_cache()
     if failed_retry_path:
         _checkpoint_failures()
+    cache_usage = getattr(llm, "prompt_cache_usage", None)
+    if isinstance(cache_usage, dict) and int(cache_usage.get("requests", 0) or 0) > 0:
+        _progress(
+            "[unified_filter] prompt cache usage: "
+            f"requests={int(cache_usage.get('requests', 0) or 0)}, "
+            f"prompt_tokens={int(cache_usage.get('prompt_tokens', 0) or 0)}, "
+            f"cached_tokens={int(cache_usage.get('cached_tokens', 0) or 0)}, "
+            f"cache_write_tokens={int(cache_usage.get('cache_write_tokens', 0) or 0)}"
+        )
     session.close()
     return out_df
 
@@ -1605,6 +1551,9 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "UNIFIED_AMR_INTEREST_SYSTEM_PROMPT",
     "UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT",
+    "UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT",
+    "UNIFIED_PROMPT_CACHE_KEY",
+    "UNIFIED_EXPLANATORY_PROMPT_CACHE_KEY",
     "LLM_CLASSIFICATION_MAX_TOKENS",
     "AMR_CATEGORY_COLUMNS",
     "PUBMED_EFETCH",

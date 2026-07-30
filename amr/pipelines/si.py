@@ -451,16 +451,26 @@ def filter_model_inputs_by_average_amr_publications(
     unified_decisions_model_df: pd.DataFrame,
     fit_start_year: int,
     fit_end_year: int,
-    min_avg_amr_publications_per_year: float = 5.0,
+    min_avg_amr_publications_per_year: float | None = None,
+    min_total_amr_publications: float | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Keep model inputs whose pair-level AMR count averages above a fit-window threshold."""
+    """Keep model inputs above an average or total fit-window AMR threshold.
+
+    ``min_total_amr_publications`` takes precedence for callers that want a total-count
+    threshold. The average threshold remains available for existing callers; when neither
+    threshold is supplied, the historical default of 5 publications per year is used.
+    """
     required_cols = {"pathogen", "antibiotic", "year", "count"}
     missing = required_cols - set(yearly_screened_model_df.columns)
     if missing:
         raise KeyError(f"yearly_screened_model_df missing required columns: {sorted(missing)}")
     if fit_end_year < fit_start_year:
         raise ValueError("fit_end_year must be >= fit_start_year.")
+    if min_avg_amr_publications_per_year is not None and min_total_amr_publications is not None:
+        raise ValueError("Set only one of min_avg_amr_publications_per_year or min_total_amr_publications.")
+    if min_avg_amr_publications_per_year is None and min_total_amr_publications is None:
+        min_avg_amr_publications_per_year = 5.0
 
     fit_year_count = int(fit_end_year) - int(fit_start_year) + 1
     fit_window_df = yearly_screened_model_df.loc[
@@ -475,10 +485,23 @@ def filter_model_inputs_by_average_amr_publications(
         pair_publication_rates["fit_window_amr_publications"] / fit_year_count
     )
 
-    eligible_pairs = pair_publication_rates.loc[
-        pair_publication_rates["avg_amr_publications_per_year"] >= float(min_avg_amr_publications_per_year),
-        ["pathogen", "antibiotic"],
-    ]
+    if min_total_amr_publications is not None:
+        eligible_pairs = pair_publication_rates.loc[
+            pair_publication_rates["fit_window_amr_publications"] >= float(min_total_amr_publications),
+            ["pathogen", "antibiotic"],
+        ]
+        threshold_description = (
+            f">= {float(min_total_amr_publications):g} total publications"
+        )
+    else:
+        assert min_avg_amr_publications_per_year is not None
+        eligible_pairs = pair_publication_rates.loc[
+            pair_publication_rates["avg_amr_publications_per_year"] >= float(min_avg_amr_publications_per_year),
+            ["pathogen", "antibiotic"],
+        ]
+        threshold_description = (
+            f">= {float(min_avg_amr_publications_per_year):g} publications/year on average"
+        )
     pair_count_before = yearly_screened_model_df[["pathogen", "antibiotic"]].drop_duplicates().shape[0]
     filtered_yearly_df = yearly_screened_model_df.merge(
         eligible_pairs,
@@ -498,7 +521,7 @@ def filter_model_inputs_by_average_amr_publications(
     if verbose:
         print(
             f"AMR publication filter: kept {pair_count_after:,} / {pair_count_before:,} pairs "
-            f"with >= {min_avg_amr_publications_per_year:g} publications/year on average "
+            f"with {threshold_description} "
             f"from {fit_start_year} to {fit_end_year}."
         )
     return filtered_yearly_df, filtered_unified_df, pair_publication_rates

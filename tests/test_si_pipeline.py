@@ -150,6 +150,36 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertEqual(float(high_rate), 10.0)
         self.assertEqual(float(low_rate), 1.0)
 
+    def test_filter_model_inputs_by_total_amr_publications(self) -> None:
+        yearly_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2020, "count": 20},
+                {"pathogen": "p1", "antibiotic": "a1", "year": 2021, "count": 10},
+                {"pathogen": "p2", "antibiotic": "a2", "year": 2020, "count": 29},
+            ]
+        )
+        unified_df = pd.DataFrame(
+            {
+                "pathogen": ["p1", "p2"],
+                "antibiotic": ["a1", "a2"],
+                "pmid": ["1", "2"],
+            }
+        )
+
+        filtered_yearly_df, filtered_unified_df, rates_df = filter_model_inputs_by_average_amr_publications(
+            yearly_screened_model_df=yearly_df,
+            unified_decisions_model_df=unified_df,
+            fit_start_year=2020,
+            fit_end_year=2021,
+            min_total_amr_publications=30,
+            verbose=False,
+        )
+
+        self.assertEqual(set(filtered_yearly_df["pathogen"]), {"p1"})
+        self.assertEqual(set(filtered_unified_df["pathogen"]), {"p1"})
+        p1_total = rates_df.loc[rates_df["pathogen"] == "p1", "fit_window_amr_publications"].iloc[0]
+        self.assertEqual(float(p1_total), 30.0)
+
     def test_rank_output_includes_latest_count_fields_for_interactive_plots(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
         si_df, _, _ = build_yearly_si_dataset(

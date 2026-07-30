@@ -8,7 +8,9 @@ from amr.pubmed.yearly import explode_positive_pair_pmids
 from amr.screening import (
     AMR_CATEGORY_COLUMNS,
     UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT,
+    UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT,
     UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+    build_user_prompt,
     build_yearly_screened_pairs,
     classify_abstract,
     prepare_yearly_candidate_pmids,
@@ -27,20 +29,20 @@ class _FakeLLM:
         self.prompts.append(prompt)
         self.system_prompts.append(kwargs.get("system_prompt"))
         self.kwargs_seen.append(dict(kwargs))
-        if "PMID: 111" in prompt:
+        if '"pmid":"111"' in prompt:
             return (
                 '{"decision":"YES","primary_category":"SURVEILLANCE",'
                 '"rationale":"clear resistance in clinical isolates",'
                 '"evidence_phrases":["clinical resistant isolates"],'
                 '"target_pair_relation_supported":true,"is_amr_relevant":true}'
             )
-        if "PMID: 222" in prompt:
+        if '"pmid":"222"' in prompt:
             return (
                 '{"decision":"No","primary_category":"NONE",'
                 '"rationale":"lab model only","evidence_phrases":["lab model assay"],'
                 '"target_pair_relation_supported":false,"is_amr_relevant":false}'
             )
-        if "PMID: 444" in prompt:
+        if '"pmid":"444"' in prompt:
             return "not json"
         return '{"decision":"uncertain","rationale":"ambiguous"}'
 
@@ -81,7 +83,7 @@ class _InvalidPromptLLM:
 
 class _TerminalErrorAfterFirstLLM:
     def complete(self, prompt: str, **kwargs: object) -> str:
-        if "PMID: 999" in prompt:
+        if '"pmid":"999"' in prompt:
             raise RuntimeError(
                 "OpenAI completion failed: Error code: 431 - "
                 "{'error': {'message': 'Request headers are too large.', "
@@ -238,6 +240,32 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertIn("Do not include rationale", prompt)
         self.assertNotIn('"rationale"', prompt)
         self.assertNotIn('"evidence_phrases"', prompt)
+
+    def test_user_prompt_is_data_only_and_deterministically_ordered(self) -> None:
+        prompt = build_user_prompt("111", "E. coli", "gentamicin", "A title", "An abstract")
+
+        self.assertEqual(
+            prompt,
+            '{"target_pathogen":"E. coli","target_antibiotic":"gentamicin",'
+            '"title":"A title","abstract":"An abstract","pmid":"111"}',
+        )
+        self.assertNotIn("Classify only", prompt)
+
+    def test_unified_filter_can_select_explanatory_prompt_explicitly(self) -> None:
+        llm = _FakeLLM()
+
+        classify_abstract(
+            llm,
+            "111",
+            "p1",
+            "a1",
+            "title",
+            "abstract",
+            system_prompt=UNIFIED_AMR_INTEREST_SYSTEM_PROMPT,
+            include_explanatory_text=True,
+        )
+
+        self.assertEqual(llm.system_prompts, [UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT])
 
     @patch("amr.screening.core.fetch_pubmed_abstracts_batch")
     @patch("amr.screening.core.fetch_pubmed_abstract")

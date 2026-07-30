@@ -82,6 +82,7 @@ si:
   curve_fit_end_year: 2025
   num_future_years: 5
   min_avg_amr_publications_per_year: 1.0
+  min_tot_amr_publications: 20
   min_current_predicted_count: 10
   min_future_predicted_count: 10
   min_si_change: 0.01
@@ -121,6 +122,7 @@ glass_plots:
   antibiotic_analysis_level: antibiotic
   num_future_years: 5
   min_avg_amr_publications_per_year: 5.0
+  min_tot_amr_publications: 30
   category_include_decisions: *id001
   driver_category_level: coarse
   driver_lookback_years: 5
