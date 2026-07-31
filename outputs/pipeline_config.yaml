@@ -38,7 +38,7 @@ collection:
   pair_full_fetch_threshold: 9500
   summary_batch_size: 1000
   retrieve_batch_size: 9000
-  max_workers: 4
+  max_workers: 2
   max_pending_futures: 8
   partial_interval_max: 1
   background_scope: observed_entities

@@ -1,7 +1,7 @@
 """Central configuration for AMR utilities.
 
 Holds rate limits and retry/backoff settings used by PubMed E-utilities.
-Keep values conservative to respect NCBI policy (~3 requests/sec).
+Keep unauthenticated values below NCBI's 3 requests/sec free allowance.
 """
 
 from __future__ import annotations
@@ -14,7 +14,9 @@ EUTILS_RETRIES: int = 3
 EUTILS_BACKOFF_FACTOR: int = 5
 EUTILS_429_BACKOFF_SECONDS: float = float(os.getenv("EUTILS_429_BACKOFF_SECONDS", "30"))
 EUTILS_MAX_BACKOFF_SECONDS: float = float(os.getenv("EUTILS_MAX_BACKOFF_SECONDS", "300"))
-EUTILS_RATE_LIMIT_DELAY: float = 0.11 if EUTILS_API_KEY else 0.34
+EUTILS_RATE_LIMIT_DELAY: float = float(
+    os.getenv("EUTILS_RATE_LIMIT_DELAY", "0.11" if EUTILS_API_KEY else "0.5")
+)
 EUTILS_TIMEOUT_SECONDS: float = float(os.getenv("EUTILS_TIMEOUT_SECONDS", "45"))
 
 # PubMed efetch endpoint
