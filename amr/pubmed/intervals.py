@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections import Counter
+from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -528,6 +528,32 @@ def fetch_pmids_intervals(
     }
     low_level_verbose = verbose >= 2
     antibiotic_status_every = max(1, progress_every // max(len(intervals), 1))
+    recent_collection_progress = deque()
+    collection_eta_window_seconds = 900.0
+
+    def _format_collection_eta(progress: int) -> str:
+        if progress >= total_tasks:
+            return "0s"
+        now = time.monotonic()
+        recent_collection_progress.append((now, progress))
+        cutoff = now - collection_eta_window_seconds
+        while len(recent_collection_progress) > 1 and recent_collection_progress[0][0] < cutoff:
+            recent_collection_progress.popleft()
+        if len(recent_collection_progress) < 2:
+            return "--"
+        elapsed = recent_collection_progress[-1][0] - recent_collection_progress[0][0]
+        completed = recent_collection_progress[-1][1] - recent_collection_progress[0][1]
+        if elapsed <= 0 or completed <= 0:
+            return "--"
+        remaining_seconds = max(0.0, (total_tasks - progress) * elapsed / completed)
+        total_seconds = int(round(remaining_seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes}m"
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
 
     def _log_event(kind: str, message: str) -> None:
         nonlocal event_counter
@@ -573,6 +599,7 @@ def fetch_pmids_intervals(
                         completed_pairs = completed_pathogens * total_antibiotics + completed_antibiotics
                         completed_pair_years = completed_pairs * total_years
                         total_pair_years = total_tasks * total_years
+                        eta_text = _format_collection_eta(completed_pairs)
                         print(
                             "Collection status | "
                             f"pathogens {completed_pathogens}/{total_pathogens} "
@@ -583,7 +610,8 @@ def fetch_pmids_intervals(
                             f"pairs {completed_pairs}/{total_tasks} "
                             f"({100 * completed_pairs / max(total_tasks, 1):.1f}%) | "
                             f"pair-years {completed_pair_years}/{total_pair_years} "
-                            f"({100 * completed_pair_years / max(total_pair_years, 1):.1f}%)",
+                            f"({100 * completed_pair_years / max(total_pair_years, 1):.1f}%) | "
+                            f"ETA {eta_text}",
                             flush=True,
                         )
                 task_counter += 1
@@ -707,7 +735,8 @@ def fetch_pmids_intervals(
             f"pathogens {total_pathogens}/{total_pathogens} (100.0%) | "
             f"antibiotics {total_antibiotics}/{total_antibiotics} (100.0%) | "
             f"pairs {total_tasks}/{total_tasks} (100.0%) | "
-            f"pair-years {completed_pair_years}/{completed_pair_years} (100.0%)",
+            f"pair-years {completed_pair_years}/{completed_pair_years} (100.0%) | "
+            "ETA 0s",
             flush=True,
         )
         print(

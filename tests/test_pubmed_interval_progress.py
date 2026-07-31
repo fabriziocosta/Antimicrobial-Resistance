@@ -28,6 +28,7 @@ def test_interval_collection_reports_scoped_progress_and_hides_request_noise(cap
     assert "antibiotics 1/2 (50.0%)" in output
     assert "pairs 4/4 (100.0%)" in output
     assert "pair-years 8/8 (100.0%)" in output
+    assert "| ETA " in output
     assert "[search_pmids]" not in output
     assert len(result) == 4
     assert all(call.kwargs["verbose"] is False for call in search.call_args_list)
