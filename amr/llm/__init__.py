@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
+import threading
 from dataclasses import dataclass
 from types import ModuleType
 from typing import (
@@ -70,6 +72,8 @@ class OpenAIConfig:
     temperature: float = 0.0
     max_tokens: int = 512
     api_key: Optional[str] = None
+    prompt_cache_key: Optional[str] = None
+    enable_explicit_prompt_cache: bool = True
 
 
 @dataclass
@@ -90,6 +94,8 @@ class OllamaConfig:
 class OpenAILanguageModel(LanguageModel):
     """Concrete :class:`LanguageModel` backed by OpenAI's API."""
 
+    supports_prompt_cache = True
+
     def __init__(self, config: OpenAIConfig | None = None) -> None:
         if OpenAI is None or _openai_module is None:
             _load_openai()
@@ -100,6 +106,14 @@ class OpenAILanguageModel(LanguageModel):
             )
 
         self.config = config or OpenAIConfig()
+        self.last_usage: dict[str, int] = {}
+        self.prompt_cache_usage: dict[str, int] = {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+        self._usage_lock = threading.Lock()
         api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY must be supplied via config or environment variable.")
@@ -122,6 +136,7 @@ class OpenAILanguageModel(LanguageModel):
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        prompt_cache_key: Optional[str] = None,
         **kwargs: object,
     ) -> str:
         """Generate a completion using OpenAI's chat completion API."""
@@ -130,7 +145,18 @@ class OpenAILanguageModel(LanguageModel):
         chat_temperature = temperature if temperature is not None else self.config.temperature
         chat_max_tokens = max_tokens if max_tokens is not None else self.config.max_tokens
 
-        messages = _build_chat_messages(prompt, system_prompt=system_prompt)
+        effective_cache_key = prompt_cache_key or self.config.prompt_cache_key
+        use_explicit_cache = bool(
+            effective_cache_key
+            and system_prompt
+            and self.config.enable_explicit_prompt_cache
+            and _supports_explicit_prompt_cache(chat_model)
+        )
+        messages = _build_chat_messages(
+            prompt,
+            system_prompt=system_prompt,
+            explicit_prompt_cache_breakpoint=use_explicit_cache,
+        )
 
         try:
             if OpenAI is not None:
@@ -140,6 +166,10 @@ class OpenAILanguageModel(LanguageModel):
                     messages=messages,
                     **kwargs,
                 )
+                if effective_cache_key:
+                    payload["prompt_cache_key"] = effective_cache_key
+                if use_explicit_cache:
+                    payload["prompt_cache_options"] = {"mode": "explicit"}
                 temperature_override = chat_temperature
                 if temperature_override is not None:
                     if chat_model.startswith("gpt-5") and temperature_override != 1:
@@ -153,6 +183,7 @@ class OpenAILanguageModel(LanguageModel):
                 if chat_max_tokens is not None:
                     payload["max_completion_tokens"] = chat_max_tokens
                 response = self._client.chat.completions.create(**payload)
+                self._record_usage(response)
                 choice = response.choices[0]
                 content = getattr(choice.message, "content", None)
                 if content is None:
@@ -167,9 +198,20 @@ class OpenAILanguageModel(LanguageModel):
                 max_tokens=chat_max_tokens,
                 **kwargs,
             )
+            self._record_usage(response)
             return response["choices"][0]["message"]["content"]
         except OpenAIError as exc:  # pragma: no cover - network/API error handling
             raise RuntimeError(f"OpenAI completion failed: {exc}") from exc
+
+    def _record_usage(self, response: object) -> None:
+        usage = _extract_usage(response)
+        if not usage:
+            return
+        with self._usage_lock:
+            self.last_usage = usage
+            self.prompt_cache_usage["requests"] += 1
+            for key in ("prompt_tokens", "cached_tokens", "cache_write_tokens"):
+                self.prompt_cache_usage[key] += usage[key]
 
     def embed(
         self,
@@ -346,14 +388,61 @@ def _build_chat_messages(
     *,
     system_prompt: Optional[str] = None,
     extra_messages: Optional[Sequence[Mapping[str, object]]] = None,
+    explicit_prompt_cache_breakpoint: bool = False,
 ) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = []
     if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+        if explicit_prompt_cache_breakpoint:
+            system_content: object = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "prompt_cache_breakpoint": {"mode": "explicit"},
+                }
+            ]
+        else:
+            system_content = system_prompt
+        messages.append({"role": "system", "content": system_content})
     if extra_messages:
         messages.extend([dict(msg) for msg in extra_messages])
     messages.append({"role": "user", "content": prompt})
     return messages
+
+
+def _supports_explicit_prompt_cache(model: str) -> bool:
+    """Return whether the model is in the GPT-5.6+ explicit-breakpoint family."""
+    match = re.match(r"^gpt-(\d+)\.(\d+)", model)
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (5, 6)
+
+
+def _field(value: object, name: str, default: object = None) -> object:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _as_nonnegative_int(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage(response: object) -> dict[str, int]:
+    """Extract prompt/cache counters from modern or legacy SDK response objects."""
+    usage = _field(response, "usage")
+    if usage is None:
+        return {}
+    details = _field(usage, "prompt_tokens_details")
+    if details is None:
+        details = _field(usage, "input_tokens_details")
+    return {
+        "prompt_tokens": _as_nonnegative_int(_field(usage, "prompt_tokens")),
+        "cached_tokens": _as_nonnegative_int(_field(details, "cached_tokens")),
+        "cache_write_tokens": _as_nonnegative_int(_field(details, "cache_write_tokens")),
+    }
 
 
 def _load_requests() -> ModuleType:
