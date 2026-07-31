@@ -528,17 +528,13 @@ def fetch_pmids_intervals(
     }
     low_level_verbose = verbose >= 2
     antibiotic_status_every = max(1, progress_every // max(len(intervals), 1))
-    recent_collection_progress = deque()
-    collection_eta_window_seconds = 900.0
+    recent_collection_progress = deque(maxlen=3)
 
     def _format_collection_eta(progress: int) -> str:
         if progress >= total_tasks:
             return "0s"
         now = time.monotonic()
         recent_collection_progress.append((now, progress))
-        cutoff = now - collection_eta_window_seconds
-        while len(recent_collection_progress) > 1 and recent_collection_progress[0][0] < cutoff:
-            recent_collection_progress.popleft()
         if len(recent_collection_progress) < 2:
             return "--"
         elapsed = recent_collection_progress[-1][0] - recent_collection_progress[0][0]
