@@ -76,6 +76,13 @@ Shigella spp.,Ceftriaxone,Shigella flexneri,Ceftriaxone,True,False,Third-generat
 Shigella spp.,Ciprofloxacin,Shigella flexneri,Ciprofloxacin,True,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Shigella spp.,levofloxacin,Shigella flexneri,Levofloxacin,True,True,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Shigella spp.,Co-trimoxazole,Shigella flexneri,Sulfamethoxazole/trimethoprim,True,True,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Shigella spp.,Azithromycin,Shigella sonnei,Azithromycin,True,False,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Shigella spp.,cefotaxime,Shigella sonnei,Cefotaxime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Shigella spp.,ceftazidime,Shigella sonnei,Ceftazidime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Shigella spp.,Ceftriaxone,Shigella sonnei,Ceftriaxone,True,False,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Shigella spp.,Ciprofloxacin,Shigella sonnei,Ciprofloxacin,True,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Shigella spp.,levofloxacin,Shigella sonnei,Levofloxacin,True,True,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Shigella spp.,Co-trimoxazole,Shigella sonnei,Sulfamethoxazole/trimethoprim,True,True,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
 Staphylococcus aureus,oxacillin,Staphylococcus aureus,Oxacillin,False,True,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Streptococcus pneumoniae,Penicillin G,Streptococcus pneumoniae,Benzylpenicillin,False,True,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Streptococcus pneumoniae,cefotaxime,Streptococcus pneumoniae,Cefotaxime,False,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified

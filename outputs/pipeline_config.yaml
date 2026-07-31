@@ -27,7 +27,7 @@ collection:
   slice_start_year: 2000
   slice_end_year: 2026
   interval_year_gap: 5
-  num_pathogens: 200
+  num_pathogens: 400
   num_antibiotics: null
   min_pathogenic_index: 0.0
   extra_amr_keywords:
