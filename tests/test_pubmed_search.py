@@ -33,6 +33,21 @@ def test_search_term_clause_retries_incomplete_history(esearch, read, _sleep):
     assert esearch.call_count == 2
 
 
+@patch("amr.pubmed.search.Entrez.read", return_value={"Count": "0"})
+@patch("amr.pubmed.search.Entrez.esearch")
+def test_search_term_clause_is_quiet_by_default(esearch, read, capsys):
+    esearch.return_value = _entrez_handle()
+
+    search_term_clause(
+        "resistance[Title/Abstract]",
+        min_date="2000/01/01",
+        max_date="2026/12/31",
+        email="test@example.com",
+    )
+
+    assert "[search_term_clause]" not in capsys.readouterr().out
+
+
 @patch("amr.pubmed.search.build_antibiotic_pathogen_query", return_value="query")
 @patch("amr.pubmed.search.time.sleep")
 @patch("amr.pubmed.search.Entrez.read")

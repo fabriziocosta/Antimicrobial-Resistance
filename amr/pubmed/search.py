@@ -164,6 +164,7 @@ def search_term_clause(
     min_date: str,
     max_date: str,
     email: str,
+    verbose: bool = False,
 ) -> Tuple[str, Optional[int], Optional[str], Optional[str]]:
     """Search PubMed for a term/date window.
 
@@ -172,7 +173,8 @@ def search_term_clause(
     """
     _configure_entrez(email)
     query = f'({term_clause}) AND ("{min_date}"[Date - Publication] : "{max_date}"[Date - Publication])'
-    print(f"[search_term_clause] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
+    if verbose:
+        print(f"[search_term_clause] starting query window {min_date}..{max_date}; max attempts={RETRIES}")
 
     for i in range(RETRIES):
         try:
@@ -305,7 +307,7 @@ def retrieve_pmids(
     count: int,
     batch_size: int = 9000,
     *,
-    verbose: bool = True,
+    verbose: bool = False,
 ) -> List[str]:
     """Retrieve PMIDs in batches for a given search."""
     pmids: List[str] = []

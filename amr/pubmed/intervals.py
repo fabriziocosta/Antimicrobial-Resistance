@@ -1011,8 +1011,7 @@ def _count_pmids_per_year_resumable(
     import time
     from collections import deque
 
-    recent_progress = deque()
-    RECENT_WINDOW_SEC = 900
+    recent_progress = deque(maxlen=3)
 
     try:
         for idx, (entity_value, window_start, window_end) in enumerate(tasks, start=1):
@@ -1032,9 +1031,6 @@ def _count_pmids_per_year_resumable(
             if progress_every and (idx % progress_every == 0):
                 now = time.time()
                 recent_progress.append((now, idx))
-                cutoff = now - RECENT_WINDOW_SEC
-                while len(recent_progress) > 1 and recent_progress[0][0] < cutoff:
-                    recent_progress.popleft()
                 eta_str = "[ETA --]"
                 if len(recent_progress) >= 2:
                     dt = recent_progress[-1][0] - recent_progress[0][0]
@@ -1047,8 +1043,9 @@ def _count_pmids_per_year_resumable(
                         eta_m = int((eta_sec % 3600) // 60)
                         eta_str = f"[ETA {eta_h}h {eta_m} min]"
                 print(
-                    f"Progress: {idx}/{total} windows processed… {eta_str} | "
-                    f"{entity_col}={entity_value} | years={window_start}-{window_end}"
+                    f"Progress: {idx}/{total} windows processed… | "
+                    f"{entity_col}={entity_value} | years={window_start}-{window_end} | "
+                    f"{eta_str}"
                 )
 
             if save_every and (len(direct_results) >= save_every):
