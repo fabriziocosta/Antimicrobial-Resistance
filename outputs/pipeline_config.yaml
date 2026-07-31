@@ -34,10 +34,16 @@ collection:
   - '"antimicrobial resistance"[Title/Abstract] OR "antibiotic resistance"[Title/Abstract]'
   collection_verbose: 1
   collection_progress_every: 300
+  save_every: 500
   pair_full_fetch_threshold: 9500
+  summary_batch_size: 1000
+  retrieve_batch_size: 9000
+  max_workers: 4
+  max_pending_futures: 8
+  partial_interval_max: 1
   background_scope: observed_entities
   background_fetch_threshold: 9500
-  background_metadata_batch_size: 200
+  background_metadata_batch_size: 1000
 llm:
   model: gpt-5-nano
   run_filter: true

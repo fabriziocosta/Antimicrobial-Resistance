@@ -46,6 +46,37 @@ def load_pubmed_metadata_cache(cache_path: str | Path) -> pd.DataFrame:
     return clean_pubmed_metadata_df(cache_df.loc[:, expected_cols])
 
 
+def metadata_dataframe_to_dict(cache_df: pd.DataFrame) -> dict[str, dict[str, object]]:
+    """Convert the persisted metadata schema to the lightweight lookup schema."""
+    work = clean_pubmed_metadata_df(cache_df)
+    out: dict[str, dict[str, object]] = {}
+    for row in work.itertuples(index=False):
+        pub_date = row.pub_date
+        if pd.notna(pub_date) and hasattr(pub_date, "to_pydatetime"):
+            pub_date = pub_date.to_pydatetime()
+        out[str(row.pmid)] = {
+            "date": pub_date if pd.notna(pub_date) else None,
+            "venue": str(row.venue) if pd.notna(row.venue) else "Unknown",
+        }
+    return out
+
+
+def metadata_dict_to_dataframe(metadata_cache: dict[str, dict[str, object]]) -> pd.DataFrame:
+    """Convert the in-memory lookup schema to the persisted metadata schema."""
+    rows = []
+    for pmid, metadata in metadata_cache.items():
+        pub_date = pd.to_datetime(metadata.get("date"), errors="coerce")
+        rows.append(
+            {
+                "pmid": str(pmid),
+                "pub_date": pub_date,
+                "pub_year": int(pub_date.year) if pd.notna(pub_date) else pd.NA,
+                "venue": metadata.get("venue") or "Unknown",
+            }
+        )
+    return pd.DataFrame(rows, columns=["pmid", "pub_date", "pub_year", "venue"])
+
+
 def save_pubmed_metadata_cache(cache_df: pd.DataFrame, cache_path: str | Path) -> None:
     """Persist PMID metadata cache to parquet."""
     cache_path = Path(cache_path)
@@ -59,7 +90,7 @@ def refresh_pubmed_metadata_cache(
     *,
     cache_path: str | Path,
     email: str,
-    batch_size: int = 200,
+    batch_size: int = 1000,
     checkpoint_every_batches: int = 10,
 ) -> pd.DataFrame:
     """Fetch missing PubMed metadata for PMIDs and checkpoint to parquet."""
@@ -199,6 +230,8 @@ def summarize_metadata_coverage(enriched_df: pd.DataFrame) -> pd.DataFrame:
 __all__ = [
     "explode_positive_pair_pmids",
     "load_pubmed_metadata_cache",
+    "metadata_dataframe_to_dict",
+    "metadata_dict_to_dataframe",
     "save_pubmed_metadata_cache",
     "refresh_pubmed_metadata_cache",
     "attach_pubmed_metadata",

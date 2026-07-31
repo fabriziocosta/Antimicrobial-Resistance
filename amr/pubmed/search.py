@@ -21,6 +21,7 @@ from amr.config import (
 )
 from .pmids import normalize_pmids
 from .queries import build_antibiotic_pathogen_query
+from .rate_limit import RequestRateLimiter
 
 
 MONTH_LOOKUP = {
@@ -38,6 +39,7 @@ MONTH_LOOKUP = {
     "dec": 12,
 }
 NETWORK_EXCEPTIONS = (HTTPError, URLError, TimeoutError, socket.timeout)
+ENTREZ_RATE_LIMITER = RequestRateLimiter(RATE_LIMIT_DELAY)
 
 
 def _configure_entrez(email: str) -> None:
@@ -85,7 +87,7 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int | 
     print(f"[esearch_count_for_year] querying year={year} with up to {RETRIES} attempts")
     for i in range(RETRIES):
         try:
-            time.sleep(RATE_LIMIT_DELAY)
+            ENTREZ_RATE_LIMITER.wait()
             handle = Entrez.esearch(db="pubmed", term=term, retmax=0)
             try:
                 record = Entrez.read(handle)
@@ -128,7 +130,7 @@ def search_term_clause(
 
     for i in range(RETRIES):
         try:
-            time.sleep(RATE_LIMIT_DELAY)
+            ENTREZ_RATE_LIMITER.wait()
             handle = Entrez.esearch(db="pubmed", term=query, usehistory="y", retmax=0)
             try:
                 record = Entrez.read(handle)
@@ -203,7 +205,7 @@ def search_pmids(
 
     for i in range(RETRIES):
         try:
-            time.sleep(RATE_LIMIT_DELAY)
+            ENTREZ_RATE_LIMITER.wait()
             handle = Entrez.esearch(db="pubmed", term=query, usehistory="y", retmax=0)
             try:
                 record = Entrez.read(handle)
@@ -255,7 +257,7 @@ def retrieve_pmids(
     webenv: str,
     query_key: str,
     count: int,
-    batch_size: int = 5000,
+    batch_size: int = 9000,
     *,
     verbose: bool = True,
 ) -> List[str]:
@@ -270,7 +272,7 @@ def retrieve_pmids(
             print(f"[retrieve_pmids] batch {batch_idx}/{total_batches} (retstart={start})")
         for attempt in range(RETRIES):
             try:
-                time.sleep(RATE_LIMIT_DELAY)
+                ENTREZ_RATE_LIMITER.wait()
                 handle = Entrez.esearch(
                     db="pubmed",
                     term=query,
@@ -309,7 +311,7 @@ def retrieve_pmids(
 def fetch_pub_metadata(
     pmids: Sequence[str],
     email: str = "your_email@example.com",
-    batch_size: int = 200,
+    batch_size: int = 1000,
     on_batch_complete: Callable[[int, int, list[str], Dict[str, datetime], Dict[str, str]], None] | None = None,
     verbose: bool = True,
 ):
@@ -346,7 +348,7 @@ def fetch_pub_metadata(
         batch_completed = False
         for attempt in range(RETRIES):
             try:
-                time.sleep(RATE_LIMIT_DELAY)
+                ENTREZ_RATE_LIMITER.wait()
                 handle = Entrez.esummary(db="pubmed", id=",".join(batch))
                 try:
                     records = Entrez.read(handle)

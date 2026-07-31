@@ -22,6 +22,8 @@ __all__ = [
     # yearly helpers
     "explode_positive_pair_pmids",
     "load_pubmed_metadata_cache",
+    "metadata_dataframe_to_dict",
+    "metadata_dict_to_dataframe",
     "save_pubmed_metadata_cache",
     "refresh_pubmed_metadata_cache",
     "attach_pubmed_metadata",
@@ -56,6 +58,8 @@ _CACHE_EXPORTS = {"update_metadata_cache", "get_metadata", "merge_with_existing"
 _YEARLY_EXPORTS = {
     "explode_positive_pair_pmids",
     "load_pubmed_metadata_cache",
+    "metadata_dataframe_to_dict",
+    "metadata_dict_to_dataframe",
     "save_pubmed_metadata_cache",
     "refresh_pubmed_metadata_cache",
     "attach_pubmed_metadata",

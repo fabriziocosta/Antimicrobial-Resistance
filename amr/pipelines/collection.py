@@ -377,7 +377,7 @@ def collect_yearly_background_counts(
     save_every: int = 200,
     progress_every: int = 50,
     fetch_threshold: int = 9500,
-    metadata_batch_size: int = 200,
+    metadata_batch_size: int = 1000,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Collect yearly background publication counts for pathogens and antibiotics."""
     pathogen_counts_df = count_pmids_per_year_for_pathogens_resumable(
@@ -425,12 +425,16 @@ def collect_yearly_amr_dataset(
     yearly_pair_pmid_output_path: str | Path = "candidate_amr_pair_pmid_links.parquet",
     metadata_cache_path: str | Path = "pubmed_pmid_metadata.parquet",
     output_path: str | Path = "candidate_amr_pair_year_counts.parquet",
-    save_every: int = 50,
+    save_every: int = 500,
     extra_keywords: Sequence[str] | None = None,
     full_fetch_threshold: int = 9500,
-    summary_batch_size: int = 200,
-    metadata_batch_size: int = 200,
+    summary_batch_size: int = 1000,
+    metadata_batch_size: int = 1000,
     metadata_checkpoint_every_batches: int = 10,
+    retrieve_batch_size: int = 9000,
+    max_workers: int = 4,
+    max_pending_futures: int | None = None,
+    partial_interval_max: int = 1,
     collection_verbose: int = 1,
     collection_progress_every: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -452,6 +456,11 @@ def collect_yearly_amr_dataset(
         extra_keywords=extra_keywords,
         full_fetch_threshold=full_fetch_threshold,
         summary_batch_size=summary_batch_size,
+        retrieve_batch_size=retrieve_batch_size,
+        metadata_cache_path=str(metadata_cache_path),
+        max_workers=max_workers,
+        max_pending_futures=max_pending_futures,
+        partial_interval_max=partial_interval_max,
         verbose=collection_verbose,
         progress_every=collection_progress_every,
     )
