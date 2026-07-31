@@ -28,5 +28,14 @@ class RequestRateLimiter:
         with self._lock:
             self._next_allowed_at = 0.0
 
+    def penalize(self, delay_seconds: float) -> None:
+        """Delay all future callers after a server-side throttling response."""
+        delay_seconds = max(0.0, float(delay_seconds))
+        with self._lock:
+            self._next_allowed_at = max(
+                self._next_allowed_at,
+                time.monotonic() + delay_seconds,
+            )
+
 
 __all__ = ["RequestRateLimiter"]

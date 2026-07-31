@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
 
 import pandas as pd
 
-from amr.pubmed.search import search_pmids, search_term_clause
+from amr.pubmed.search import _retry_delay, search_pmids, search_term_clause
 
 
 def _entrez_handle():
@@ -55,3 +56,16 @@ def test_search_pmids_retries_incomplete_history(esearch, read, _sleep, _build_q
 
     assert (count, webenv, query_key) == (1, "env", "1")
     assert esearch.call_count == 2
+
+
+def test_http_429_uses_retry_after_and_longer_backoff():
+    error = HTTPError(
+        "https://eutils.ncbi.nlm.nih.gov/",
+        429,
+        "Too Many Requests",
+        {"Retry-After": "47"},
+        None,
+    )
+
+    assert _retry_delay(error, 0) == 47
+    assert _retry_delay(error, 1) == 60

@@ -16,6 +16,8 @@ from amr.config import (
     EUTILS_API_KEY as API_KEY,
     EUTILS_RETRIES as RETRIES,
     EUTILS_BACKOFF_FACTOR as BACKOFF_FACTOR,
+    EUTILS_429_BACKOFF_SECONDS as RATE_LIMIT_BACKOFF_SECONDS,
+    EUTILS_MAX_BACKOFF_SECONDS as MAX_BACKOFF_SECONDS,
     EUTILS_RATE_LIMIT_DELAY as RATE_LIMIT_DELAY,
     EUTILS_TIMEOUT_SECONDS as TIMEOUT_SECONDS,
 )
@@ -47,6 +49,50 @@ def _configure_entrez(email: str) -> None:
     if API_KEY:
         Entrez.api_key = API_KEY
     socket.setdefaulttimeout(TIMEOUT_SECONDS)
+
+
+def _is_rate_limit_error(error: BaseException) -> bool:
+    """Return whether an Entrez error indicates server-side throttling."""
+    return isinstance(error, HTTPError) and error.code == 429
+
+
+def _retry_after_seconds(error: BaseException) -> float | None:
+    """Read a numeric Retry-After header when the server provides one."""
+    if not _is_rate_limit_error(error):
+        return None
+    headers = getattr(error, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_delay(error: BaseException, attempt: int) -> float:
+    """Return a bounded delay, with a longer global cooldown for HTTP 429."""
+    ordinary_delay = BACKOFF_FACTOR * (2**attempt)
+    if not _is_rate_limit_error(error):
+        return ordinary_delay
+    configured_delay = RATE_LIMIT_BACKOFF_SECONDS * (2**attempt)
+    server_delay = _retry_after_seconds(error)
+    return min(
+        MAX_BACKOFF_SECONDS,
+        max(ordinary_delay, configured_delay, server_delay or 0.0),
+    )
+
+
+def _wait_before_retry(error: BaseException, attempt: int) -> float:
+    """Apply a retry delay and globally cool down after HTTP 429."""
+    delay = _retry_delay(error, attempt)
+    if _is_rate_limit_error(error):
+        ENTREZ_RATE_LIMITER.penalize(delay)
+    else:
+        time.sleep(delay)
+    return delay
 
 
 def _format_duration_hms(seconds: float | int) -> str:
@@ -96,16 +142,16 @@ def esearch_count_for_year(term_clause: str, year: int, *, email: str) -> int | 
                     print(f"Failed to parse Entrez response after retries: {e}")
                     return None
                 else:
-                    delay = BACKOFF_FACTOR * (2**i)
+                    delay = _retry_delay(e, i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    _wait_before_retry(e, i)
                     continue
             handle.close()
             return int(record.get("Count", 0))
         except NETWORK_EXCEPTIONS as e:
-            delay = BACKOFF_FACTOR * (2**i)
+            delay = _retry_delay(e, i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay}s...")
-            time.sleep(delay)
+            _wait_before_retry(e, i)
         except Exception as e:  # pragma: no cover - defensive
             print(f"Unexpected error in esearch_count_for_year: {e}")
             break
@@ -139,9 +185,9 @@ def search_term_clause(
                     print(f"Failed to parse Entrez response after retries: {e}")
                     return query, None, None, None
                 else:
-                    delay = BACKOFF_FACTOR * (2**i)
+                    delay = _retry_delay(e, i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    _wait_before_retry(e, i)
                     continue
             handle.close()
 
@@ -163,9 +209,9 @@ def search_term_clause(
                 continue
             return query, total_count, webenv, query_key
         except NETWORK_EXCEPTIONS as e:
-            delay = BACKOFF_FACTOR * (2**i)
+            delay = _retry_delay(e, i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay} seconds...")
-            time.sleep(delay)
+            _wait_before_retry(e, i)
         except Exception as e:  # pragma: no cover - defensive
             print(f"Unexpected error during Entrez search: {e}")
             break
@@ -214,9 +260,9 @@ def search_pmids(
                     print(f"Failed to parse Entrez response after retries: {e}")
                     return query, None, None, None
                 else:
-                    delay = BACKOFF_FACTOR * (2**i)
+                    delay = _retry_delay(e, i)
                     print(f"Failed to parse Entrez response (attempt {i + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
+                    _wait_before_retry(e, i)
                     continue
             handle.close()
 
@@ -241,9 +287,9 @@ def search_pmids(
             return query, total_count, webenv, query_key
 
         except NETWORK_EXCEPTIONS as e:
-            delay = BACKOFF_FACTOR * (2**i)
+            delay = _retry_delay(e, i)
             print(f"Network/HTTP error during Entrez search: {e}. Retrying in {delay} seconds...")
-            time.sleep(delay)
+            _wait_before_retry(e, i)
         except Exception as e:  # pragma: no cover - defensive
             print(f"Unexpected error during Entrez search: {e}")
             break
@@ -289,18 +335,18 @@ def retrieve_pmids(
                         print(f"Failed to parse Entrez record after retries: {e}")
                         record = {}
                     else:
-                        delay = BACKOFF_FACTOR * (2**attempt)
+                        delay = _retry_delay(e, attempt)
                         print(f"Failed to parse Entrez record (attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
-                        time.sleep(delay)
+                        _wait_before_retry(e, attempt)
                         continue
                 handle.close()
 
                 pmids.extend(record.get("IdList", []))
                 break
             except NETWORK_EXCEPTIONS as e:
-                delay = BACKOFF_FACTOR * (2**attempt)
+                delay = _retry_delay(e, attempt)
                 print(f"Network error fetching PMIDs: {e}. Retrying in {delay}s...")
-                time.sleep(delay)
+                _wait_before_retry(e, attempt)
             except Exception as e:  # pragma: no cover - defensive
                 print(f"Unexpected error retrieving PMIDs: {e}")
                 break
@@ -357,12 +403,12 @@ def fetch_pub_metadata(
                         print(f"Failed to parse Entrez summary after retries: {e}")
                         records = {}
                     else:
-                        delay = BACKOFF_FACTOR * (2**attempt)
+                        delay = _retry_delay(e, attempt)
                         print(
                             f"Failed to parse Entrez summary (batch {batch_idx}/{total_batches}, "
                             f"attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s..."
                         )
-                        time.sleep(delay)
+                        _wait_before_retry(e, attempt)
                         continue
                 handle.close()
 
@@ -390,9 +436,9 @@ def fetch_pub_metadata(
                 batch_completed = True
                 break
             except NETWORK_EXCEPTIONS as e:
-                delay = BACKOFF_FACTOR * (2**attempt)
+                delay = _retry_delay(e, attempt)
                 print(f"HTTP/Network error in fetch_pub_metadata: {e}. Retrying in {delay}s...")
-                time.sleep(delay)
+                _wait_before_retry(e, attempt)
             except Exception as e:  # pragma: no cover - defensive
                 print(f"Unexpected error in fetch_pub_metadata: {e}")
                 break
