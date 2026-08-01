@@ -2,6 +2,7 @@ import unittest
 import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
@@ -346,9 +347,11 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             for line in result["ax_si"].lines
             if line.get_linestyle() == ":" and all(float(y) == 0.0 for y in line.get_ydata())
         ]
+        title = result["ax_si"].get_title()
         plt.close(result["figure"])
 
         self.assertEqual(len(zero_lines), 1)
+        self.assertIn("total AMR pair publications: 220", title)
 
     def test_yearly_si_plot_can_fill_missing_pair_year_counts_with_zero(self) -> None:
         years = list(range(2000, 2005))

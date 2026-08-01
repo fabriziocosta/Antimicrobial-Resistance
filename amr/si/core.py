@@ -1306,7 +1306,13 @@ def plot_yearly_si_pair(
     ax1.set_ylabel("Scientific interest (SI)")
     ax2.set_ylabel("Publication counts (log scale)", color="#4e6475")
     ax2.tick_params(axis="y", labelcolor="#4e6475", colors="#4e6475")
-    ax1.set_title(f"{pathogen} vs {antibiotic} | fit {fit_start_year}-{fit_end_year}")
+    total_amr_pair_publications = int(
+        pd.to_numeric(pair_df["count"], errors="coerce").fillna(0).sum()
+    )
+    ax1.set_title(
+        f"{pathogen} vs {antibiotic} | fit {fit_start_year}-{fit_end_year} | "
+        f"total AMR pair publications: {total_amr_pair_publications:,}"
+    )
     ax1.grid(True, axis="y", color="#c7c7c7", alpha=0.45, linewidth=0.8)
     ax1.grid(False, axis="x")
     ax2.grid(False)
