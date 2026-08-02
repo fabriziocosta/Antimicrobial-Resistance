@@ -27,7 +27,7 @@ collection:
   slice_start_year: 2000
   slice_end_year: 2026
   interval_year_gap: 5
-  num_pathogens: 400
+  num_pathogens: null
   num_antibiotics: null
   min_pathogenic_index: 0.0
   extra_amr_keywords:
@@ -38,7 +38,7 @@ collection:
   pair_full_fetch_threshold: 9500
   summary_batch_size: 1000
   retrieve_batch_size: 9000
-  max_workers: 2
+  max_workers: 4
   max_pending_futures: 8
   partial_interval_max: 1
   background_scope: observed_entities
