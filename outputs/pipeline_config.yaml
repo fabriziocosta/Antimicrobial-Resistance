@@ -85,10 +85,11 @@ si:
   antibiotic_analysis_level: antibiotic
   fit_start_year: 2000
   fit_end_year: 2023
+  publication_filter_end_year: 2025
   curve_fit_end_year: 2025
   num_future_years: 5
   min_avg_amr_publications_per_year: 1.0
-  min_tot_amr_publications: 100
+  min_tot_amr_publications: 50
   min_current_predicted_count: 10
   min_future_predicted_count: 10
   min_si_change: 0.01
