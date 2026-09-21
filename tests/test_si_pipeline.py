@@ -5,6 +5,7 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from unittest.mock import patch
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.colors import to_rgba
 import pandas as pd
 
@@ -30,6 +31,8 @@ from amr.pipelines.si import (
     rank_future_high_interest_pairs,
     save_category_driver_plots,
     save_category_driver_pie_grid,
+    select_smoothed_si_shape_cases,
+    summarize_smoothed_si_shapes,
 )
 
 
@@ -573,6 +576,27 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             kept_pairs = set(zip(interesting_df["pathogen"], interesting_df["antibiotic"]))
             self.assertIn(("p1", "a1"), kept_pairs)
             self.assertNotIn(("p2", "a2"), kept_pairs)
+
+    def test_monotone_curve_is_not_classified_as_inverted_u(self) -> None:
+        years = np.arange(2000, 2031)
+        predicted_si = np.sqrt(years - 1999.0)
+        rank_df = pd.DataFrame([{"pathogen": "p1", "antibiotic": "a1", "status": "ok"}])
+
+        with patch(
+            "amr.pipelines.si.fit_predict_yearly_si_loess",
+            return_value={"pred_df": pd.DataFrame({"year": years, "predicted_SI": predicted_si})},
+        ):
+            shape_df = summarize_smoothed_si_shapes(
+                rank_df,
+                pd.DataFrame(),
+                fit_start_year=2000,
+                curve_fit_end_year=2025,
+                num_future_years=5,
+            )
+
+        self.assertLess(float(shape_df.loc[0, "concave_cap_score"]), 0.0)
+        _, concave_df = select_smoothed_si_shape_cases(shape_df, top_n=10)
+        self.assertTrue(concave_df.empty)
 
     def test_quadratic_loess_is_rejected(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()

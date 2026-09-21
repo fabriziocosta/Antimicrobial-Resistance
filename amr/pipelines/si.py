@@ -1167,6 +1167,8 @@ def summarize_smoothed_si_shapes(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
+    min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
 ) -> pd.DataFrame:
     """Score smoothed SI curves for U-shaped and inverted-U shape."""
     rows: list[dict[str, Any]] = []
@@ -1183,6 +1185,8 @@ def summarize_smoothed_si_shapes(
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
                 tail_damping_years=tail_damping_years,
+                min_amr_pair_publication_count=min_amr_pair_publication_count,
+                min_num_years_with_valid_counts=min_num_years_with_valid_counts,
             )
         except Exception as exc:
             rows.append(
@@ -1217,9 +1221,13 @@ def summarize_smoothed_si_shapes(
         start_si = float(pred_df.loc[pred_df["year"].eq(shape_start_year), "predicted_SI"].iloc[0])
         end_si = float(pred_df.loc[pred_df["year"].eq(shape_end_year), "predicted_SI"].iloc[0])
         midpoint_si = float(pred_df.loc[midpoint_idx, "predicted_SI"])
-        endpoint_mean = float(np.mean([start_si, end_si]))
-        convex_u_score = endpoint_mean - midpoint_si
-        concave_cap_score = midpoint_si - endpoint_mean
+        endpoint_min = float(min(start_si, end_si))
+        endpoint_max = float(max(start_si, end_si))
+        # Require both sides of the curve to support the shape. Comparing the
+        # midpoint only with the endpoint mean mislabels monotone curves whose
+        # quadratic fit has a small amount of flattening.
+        convex_u_score = endpoint_min - midpoint_si
+        concave_cap_score = midpoint_si - endpoint_max
 
         rows.append(
             {
@@ -1235,7 +1243,7 @@ def summarize_smoothed_si_shapes(
                 "endpoint_balance_abs_diff": float(abs(end_si - start_si)),
                 "convex_u_score": convex_u_score,
                 "concave_cap_score": concave_cap_score,
-                "shape_strength": float(abs(endpoint_mean - midpoint_si)),
+                "shape_strength": float(max(convex_u_score, concave_cap_score, 0.0)),
                 "si_quadratic_coef": float(quadratic_coef),
                 "si_quadratic_r2": quadratic_r2,
                 "current_predicted_SI": getattr(row, "current_predicted_SI", np.nan),
@@ -1260,13 +1268,19 @@ def select_smoothed_si_shape_cases(
     """Return top U-shaped and inverted-U smoothed SI curves."""
     ok_shape_df = shape_df.loc[shape_df["shape_status"].eq("ok")].copy()
     convex_df = (
-        ok_shape_df.loc[pd.to_numeric(ok_shape_df["convex_u_score"], errors="coerce").gt(0)]
+        ok_shape_df.loc[
+            pd.to_numeric(ok_shape_df["convex_u_score"], errors="coerce").gt(0)
+            & pd.to_numeric(ok_shape_df["si_quadratic_coef"], errors="coerce").gt(0)
+        ]
         .sort_values(["convex_u_score", "si_quadratic_r2"], ascending=[False, False])
         .head(int(top_n))
         .reset_index(drop=True)
     )
     concave_df = (
-        ok_shape_df.loc[pd.to_numeric(ok_shape_df["concave_cap_score"], errors="coerce").gt(0)]
+        ok_shape_df.loc[
+            pd.to_numeric(ok_shape_df["concave_cap_score"], errors="coerce").gt(0)
+            & pd.to_numeric(ok_shape_df["si_quadratic_coef"], errors="coerce").lt(0)
+        ]
         .sort_values(["concave_cap_score", "si_quadratic_r2"], ascending=[False, False])
         .head(int(top_n))
         .reset_index(drop=True)
