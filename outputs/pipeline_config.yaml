@@ -93,7 +93,7 @@ si:
   min_amr_pair_publication_count: 3
   min_current_predicted_count: 10
   min_current_amr_count: 10
-  min_num_years_with_valid_counts: 15
+  min_num_years_with_valid_counts: 10
   min_future_predicted_count: 10
   min_si_change: 0.01
   min_post_fit_observed_years: 1
