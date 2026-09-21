@@ -92,7 +92,7 @@ si:
   min_tot_amr_publications: 50
   min_amr_pair_publication_count: 3
   min_current_predicted_count: 10
-  min_current_amr_count: 10
+  min_current_amr_count: 15
   min_num_years_with_valid_counts: 10
   min_future_predicted_count: 10
   min_si_change: 0.01
