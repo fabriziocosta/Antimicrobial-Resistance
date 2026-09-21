@@ -99,6 +99,8 @@ def load_or_build_interactive_rank(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: int | None = None,
+    min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Load cached rank data when usable, otherwise rebuild it with interactive fields."""
@@ -159,6 +161,8 @@ def load_or_build_interactive_rank(
             loess_frac=loess_frac,
             loess_degree=loess_degree,
             tail_damping_years=tail_damping_years,
+            min_amr_pair_publication_count=min_amr_pair_publication_count,
+            min_num_years_with_valid_counts=min_num_years_with_valid_counts,
             verbose=verbose,
         )
     elif verbose:

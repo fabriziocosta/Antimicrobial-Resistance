@@ -617,6 +617,7 @@ def fit_predict_yearly_si_loess(
     num_additional_years: int = 5,
     *,
     min_train_points: int = 3,
+    min_num_years_with_valid_counts: int | None = None,
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
@@ -631,6 +632,11 @@ def fit_predict_yearly_si_loess(
     threshold = float(min_amr_pair_publication_count)
     if not np.isfinite(threshold) or threshold < 0:
         raise ValueError("min_amr_pair_publication_count must be a finite non-negative number.")
+    required_valid_years = int(
+        min_train_points if min_num_years_with_valid_counts is None else min_num_years_with_valid_counts
+    )
+    if required_valid_years < 1:
+        raise ValueError("min_num_years_with_valid_counts must be >= 1.")
 
     if pair_df is None:
         pair_df = build_pair_si_yearly_series(
@@ -655,10 +661,11 @@ def fit_predict_yearly_si_loess(
         & pair_df["log_count"].notna()
         & pair_df["expected_log_count_global"].notna()
     ].copy()
-    if train_df["year"].nunique() < min_train_points:
+    valid_year_count = int(train_df["year"].nunique())
+    if valid_year_count < required_valid_years:
         raise ValueError(
-            f"Need at least {min_train_points} observed years between {fit_start_year} and {fit_end_year}; "
-            f"found {train_df['year'].nunique()}."
+            f"Need at least {required_valid_years} years with valid AMR pair counts between "
+            f"{fit_start_year} and {fit_end_year}; found {valid_year_count}."
         )
 
     loess_fit = _fit_loess_log_count_curve(
@@ -746,6 +753,7 @@ def fit_predict_yearly_si_loess(
         "latest_available_year": latest_available_year,
         "num_additional_years": int(num_additional_years),
         "min_amr_pair_publication_count": threshold,
+        "min_num_years_with_valid_counts": required_valid_years,
         "loess_degree": int(loess_fit["degree"]),
         "model_plot_start_year": model_plot_start_year,
         "pair_df": pair_df,
@@ -768,6 +776,7 @@ def rank_yearly_pairs_by_future_si_shift(
     num_future_years: int = 20,
     reference_year: int | None = None,
     min_train_points: int = 3,
+    min_num_years_with_valid_counts: int | None = None,
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
@@ -848,6 +857,7 @@ def rank_yearly_pairs_by_future_si_shift(
                 fit_end_year=fit_end_year,
                 num_additional_years=validation_horizon_years,
                 min_train_points=min_train_points,
+                min_num_years_with_valid_counts=min_num_years_with_valid_counts,
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
                 tail_damping_years=tail_damping_years,
@@ -865,6 +875,7 @@ def rank_yearly_pairs_by_future_si_shift(
                     fit_end_year=curve_fit_end_year,
                     num_additional_years=curve_horizon_years,
                     min_train_points=min_train_points,
+                    min_num_years_with_valid_counts=min_num_years_with_valid_counts,
                     loess_frac=loess_frac,
                     loess_degree=loess_degree,
                     tail_damping_years=tail_damping_years,
@@ -1239,6 +1250,7 @@ def plot_yearly_si_pair(
     loess_degree: int = 1,
     tail_damping_years: Any = None,
     min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
     fill_missing_amr_counts_with_zero: bool = False,
     pathogen_background_df: pd.DataFrame | None = None,
     antibiotic_background_df: pd.DataFrame | None = None,
@@ -1255,6 +1267,7 @@ def plot_yearly_si_pair(
         loess_degree=loess_degree,
         tail_damping_years=tail_damping_years,
         min_amr_pair_publication_count=min_amr_pair_publication_count,
+        min_num_years_with_valid_counts=min_num_years_with_valid_counts,
     )
     pair_df = result["pair_df"]
     pred_df = result["pred_df"]

@@ -30,6 +30,10 @@ requires the observed, materialized AMR pair count at the current/reference (nor
 fit-end) year to meet the configured minimum; a high predicted current count alone is
 not sufficient.
 
+Interpolation also requires `min_num_years_with_valid_counts` valid yearly pair counts
+inside the fit window. Pairs below this minimum are excluded from interpolation and
+ranking instead of receiving a low-support curve.
+
 These background marginals do not encode resistance by themselves. Instead, they define a reasonable **background-attention baseline**. The model then asks:
 
 > Given only the general publication attention to this pathogen and this antibiotic, what AMR count would be typical?

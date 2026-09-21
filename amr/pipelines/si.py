@@ -664,6 +664,7 @@ def rank_future_high_interest_pairs(
     loess_degree: int = 1,
     tail_damping_years: Any = None,
     min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Rank future SI shifts, then apply reliability-aware interesting-case selection."""
@@ -679,6 +680,7 @@ def rank_future_high_interest_pairs(
         loess_degree=loess_degree,
         tail_damping_years=tail_damping_years,
         min_amr_pair_publication_count=min_amr_pair_publication_count,
+        min_num_years_with_valid_counts=min_num_years_with_valid_counts,
         verbose=verbose,
     )
     interesting_df = select_interesting_yearly_rank_cases(
@@ -1057,6 +1059,7 @@ def save_interesting_si_plots(
     loess_degree: int = 1,
     tail_damping_years: Any = None,
     min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
     fill_missing_amr_counts_with_zero: bool = False,
     figure_format: str = "pdf",
     display_plots: bool = False,
@@ -1068,24 +1071,34 @@ def save_interesting_si_plots(
     output_dir.mkdir(parents=True, exist_ok=True)
     figure_format = str(figure_format).strip().lstrip(".") or "pdf"
     saved_plots = 0
+    skipped_plots = 0
     displayed_plots = 0
     plot_fit_end_year = fit_end_year if curve_fit_end_year is None else int(curve_fit_end_year)
     for row in interesting_df.head(max_plots).itertuples(index=False):
-        result = plot_yearly_si_pair(
-            si_df=si_df,
-            pathogen=row.pathogen,
-            antibiotic=row.antibiotic,
-            fit_start_year=fit_start_year,
-            fit_end_year=plot_fit_end_year,
-            num_additional_years=num_future_years,
-            loess_frac=loess_frac,
-            loess_degree=loess_degree,
-            tail_damping_years=tail_damping_years,
-            min_amr_pair_publication_count=min_amr_pair_publication_count,
-            fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
-            pathogen_background_df=pathogen_background_df,
-            antibiotic_background_df=antibiotic_background_df,
-        )
+        try:
+            result = plot_yearly_si_pair(
+                si_df=si_df,
+                pathogen=row.pathogen,
+                antibiotic=row.antibiotic,
+                fit_start_year=fit_start_year,
+                fit_end_year=plot_fit_end_year,
+                num_additional_years=num_future_years,
+                loess_frac=loess_frac,
+                loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
+                min_amr_pair_publication_count=min_amr_pair_publication_count,
+                min_num_years_with_valid_counts=min_num_years_with_valid_counts,
+                fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
+                pathogen_background_df=pathogen_background_df,
+                antibiotic_background_df=antibiotic_background_df,
+            )
+        except ValueError as exc:
+            if "years with valid AMR pair counts" not in str(exc):
+                raise
+            skipped_plots += 1
+            if verbose:
+                print(f"Skipping {row.pathogen} vs {row.antibiotic}: {exc}")
+            continue
         pathogen_slug = str(row.pathogen).replace("/", "_").replace(" ", "_")
         antibiotic_slug = str(row.antibiotic).replace("/", "_").replace(" ", "_")
         out_path = output_dir / f"{pathogen_slug}__{antibiotic_slug}.{figure_format}"
@@ -1098,6 +1111,8 @@ def save_interesting_si_plots(
 
     if verbose:
         print(f"Saved {saved_plots} plots to {output_dir}")
+        if skipped_plots:
+            print(f"Skipped {skipped_plots} plots because they lacked enough valid yearly AMR counts.")
         if display_plots:
             print(f"Displayed {displayed_plots} plots inline.")
     return saved_plots
@@ -1282,6 +1297,7 @@ def save_smoothed_si_screen_plots(
     loess_degree: int = 1,
     tail_damping_years: Any = None,
     min_amr_pair_publication_count: float = 2.0,
+    min_num_years_with_valid_counts: int | None = None,
     fill_missing_amr_counts_with_zero: bool = False,
     figure_format: str = "pdf",
     display_plots: bool = False,
@@ -1292,22 +1308,32 @@ def save_smoothed_si_screen_plots(
     output_dir.mkdir(parents=True, exist_ok=True)
     figure_format = str(figure_format).strip().lstrip(".") or "pdf"
     saved_plots = 0
+    skipped_plots = 0
     for row in screen_df.head(max_plots).itertuples(index=False):
-        result = plot_yearly_si_pair(
-            si_df=si_df,
-            pathogen=row.pathogen,
-            antibiotic=row.antibiotic,
-            fit_start_year=fit_start_year,
-            fit_end_year=curve_fit_end_year,
-            num_additional_years=num_future_years,
-            loess_frac=loess_frac,
-            loess_degree=loess_degree,
-            tail_damping_years=tail_damping_years,
-            min_amr_pair_publication_count=min_amr_pair_publication_count,
-            fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
-            pathogen_background_df=pathogen_background_df,
-            antibiotic_background_df=antibiotic_background_df,
-        )
+        try:
+            result = plot_yearly_si_pair(
+                si_df=si_df,
+                pathogen=row.pathogen,
+                antibiotic=row.antibiotic,
+                fit_start_year=fit_start_year,
+                fit_end_year=curve_fit_end_year,
+                num_additional_years=num_future_years,
+                loess_frac=loess_frac,
+                loess_degree=loess_degree,
+                tail_damping_years=tail_damping_years,
+                min_amr_pair_publication_count=min_amr_pair_publication_count,
+                min_num_years_with_valid_counts=min_num_years_with_valid_counts,
+                fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
+                pathogen_background_df=pathogen_background_df,
+                antibiotic_background_df=antibiotic_background_df,
+            )
+        except ValueError as exc:
+            if "years with valid AMR pair counts" not in str(exc):
+                raise
+            skipped_plots += 1
+            if verbose:
+                print(f"Skipping {row.pathogen} vs {row.antibiotic}: {exc}")
+            continue
         plot_path = output_dir / f"{_slugify_plot_name(row.pathogen)}__{_slugify_plot_name(row.antibiotic)}.{figure_format}"
         result["figure"].savefig(plot_path, bbox_inches="tight")
         if display_plots:
@@ -1317,6 +1343,8 @@ def save_smoothed_si_screen_plots(
 
     if verbose:
         print(f"Saved {saved_plots} smoothed SI screen plots to {output_dir}")
+        if skipped_plots:
+            print(f"Skipped {skipped_plots} smoothed SI plots because they lacked enough valid yearly AMR counts.")
     return saved_plots
 
 

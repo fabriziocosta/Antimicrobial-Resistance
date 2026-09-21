@@ -164,6 +164,18 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertEqual(int(result["model_plot_start_year"]), 2002)
         self.assertEqual(result["pred_df"]["year"].min(), 2002)
 
+        with self.assertRaisesRegex(ValueError, "years with valid AMR pair counts"):
+            fit_predict_yearly_si_loess(
+                si_df,
+                pathogen="p1",
+                antibiotic="a1",
+                fit_start_year=2000,
+                fit_end_year=2003,
+                num_additional_years=0,
+                min_num_years_with_valid_counts=3,
+                min_amr_pair_publication_count=2,
+            )
+
     def test_filter_model_inputs_by_average_amr_publications_keeps_high_volume_pairs(self) -> None:
         yearly_df = pd.DataFrame(
             [
