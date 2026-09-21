@@ -111,6 +111,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
             yearly_amr_df,
             pathogen_bg_df,
             antibiotic_bg_df,
+            min_amr_pair_publication_count=0,
             output_path=None,
         )
         self.assertIn("expected_log_count_global", si_df.columns)
@@ -118,6 +119,50 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertFalse(si_df["expected_log_count_global"].isna().any())
         self.assertFalse(si_df["SI"].isna().any())
         self.assertIn("coverage_report", si_df.attrs)
+
+    def test_min_amr_pair_publication_count_marks_sparse_years_unavailable(self) -> None:
+        years = list(range(2000, 2004))
+        yearly_amr_df = pd.DataFrame(
+            [
+                {"pathogen": "p1", "antibiotic": "a1", "year": year, "count": count}
+                for year, count in zip(years, [0, 1, 2, 4])
+            ]
+        )
+        pathogen_bg_df = pd.DataFrame(
+            [{"pathogen": "p1", "year": year, "count": 100 + year - 2000} for year in years]
+        )
+        antibiotic_bg_df = pd.DataFrame(
+            [{"antibiotic": "a1", "year": year, "count": 80 + year - 2000} for year in years]
+        )
+
+        si_df, _, _ = build_yearly_si_dataset(
+            yearly_amr_df,
+            pathogen_bg_df,
+            antibiotic_bg_df,
+            min_amr_pair_publication_count=2,
+            output_path=None,
+        )
+
+        sparse = si_df.loc[si_df["year"].isin([2000, 2001])]
+        materialized = si_df.loc[si_df["year"].isin([2002, 2003])]
+        self.assertTrue(sparse["count_for_model"].isna().all())
+        self.assertTrue(sparse["log_count"].isna().all())
+        self.assertTrue(sparse["SI"].isna().all())
+        self.assertTrue(materialized["count_for_model"].notna().all())
+        self.assertTrue(materialized["SI"].notna().all())
+
+        result = fit_predict_yearly_si_loess(
+            si_df,
+            pathogen="p1",
+            antibiotic="a1",
+            fit_start_year=2000,
+            fit_end_year=2003,
+            num_additional_years=0,
+            min_train_points=2,
+            min_amr_pair_publication_count=2,
+        )
+        self.assertEqual(int(result["model_plot_start_year"]), 2002)
+        self.assertEqual(result["pred_df"]["year"].min(), 2002)
 
     def test_filter_model_inputs_by_average_amr_publications_keeps_high_volume_pairs(self) -> None:
         yearly_df = pd.DataFrame(
@@ -310,6 +355,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p1",
                     "antibiotic": "a1",
                     "status": "ok",
+                    "current_count": 20.0,
                     "current_predicted_count": 20.0,
                     "future_predicted_count": 30.0,
                     "future_predicted_SI": 1.0,
@@ -323,6 +369,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
                     "pathogen": "p2",
                     "antibiotic": "a2",
                     "status": "ok",
+                    "current_count": 1.0,
                     "current_predicted_count": 20.0,
                     "future_predicted_count": 30.0,
                     "future_predicted_SI": 2.0,
@@ -338,6 +385,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         selected = select_interesting_yearly_rank_cases(
             rank_df,
             min_current_predicted_count=1.0,
+            min_current_amr_count=10.0,
             min_future_predicted_count=1.0,
             min_si_change=0.0,
             min_post_fit_observed_years=1,
@@ -349,6 +397,33 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         self.assertEqual(set(zip(selected["pathogen"], selected["antibiotic"])), {("p1", "a1")})
         self.assertTrue(selected["passes_si_loess_residual_variance"].all())
+
+    def test_interesting_selection_requires_observed_current_amr_count(self) -> None:
+        rank_df = pd.DataFrame(
+            [
+                {
+                    "pathogen": "p1",
+                    "antibiotic": "a1",
+                    "status": "ok",
+                    "current_count": 1.0,
+                    "current_predicted_count": 20.0,
+                    "future_predicted_count": 30.0,
+                    "future_predicted_SI": 1.0,
+                    "si_change": 0.5,
+                }
+            ]
+        )
+
+        selected = select_interesting_yearly_rank_cases(
+            rank_df,
+            min_current_predicted_count=1.0,
+            min_current_amr_count=10.0,
+            min_future_predicted_count=1.0,
+            min_si_change=0.0,
+            fallback_top_n=1,
+        )
+
+        self.assertTrue(selected.empty)
 
     def test_yearly_si_plot_includes_zero_reference_line(self) -> None:
         yearly_amr_df, pathogen_bg_df, antibiotic_bg_df = self._build_synthetic_yearly_frames()
@@ -378,7 +453,7 @@ class ScientificInterestPipelineTests(unittest.TestCase):
         self.assertEqual(len(zero_lines), 1)
         self.assertIn("total AMR pair publications: 220", title)
 
-    def test_yearly_si_plot_can_fill_missing_pair_year_counts_with_zero(self) -> None:
+    def test_yearly_si_plot_preserves_missing_pair_year_counts_as_unavailable(self) -> None:
         years = list(range(2000, 2005))
         yearly_amr_df = pd.DataFrame(
             [
@@ -431,7 +506,8 @@ class ScientificInterestPipelineTests(unittest.TestCase):
 
         self.assertEqual(count_plot_df["year"].tolist(), years)
         missing_year_row = count_plot_df.loc[count_plot_df["year"] == 2002].iloc[0]
-        self.assertEqual(float(missing_year_row["count"]), 0.0)
+        self.assertTrue(pd.isna(missing_year_row["count_for_model"]))
+        self.assertTrue(pd.isna(missing_year_row["amr_count_plot"]))
         self.assertEqual(float(missing_year_row["bg_pathogen_n"]), 102.0)
         self.assertEqual(float(missing_year_row["bg_antibiotic_n"]), 82.0)
 

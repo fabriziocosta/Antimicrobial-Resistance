@@ -26,6 +26,7 @@ from amr.si.core import (
     rank_yearly_pairs_by_future_si_shift,
     select_interesting_yearly_rank_cases,
     summarize_si_change_drivers,
+    _materialize_pair_counts,
 )
 
 DEFAULT_DRIVER_REQUIRED_COLUMNS = {
@@ -372,6 +373,7 @@ def build_yearly_si_dataset(
     antibiotic_background_df: pd.DataFrame,
     *,
     alpha: float = 1.0,
+    min_amr_pair_publication_count: float = 2.0,
     output_path: str | Path | None = "yearly_si.parquet",
     warn_on_dropped_rows: bool = True,
 ) -> tuple[pd.DataFrame, Any, list[str]]:
@@ -433,11 +435,31 @@ def build_yearly_si_dataset(
     merged["bg_antibiotic_n"] = pd.to_numeric(merged["bg_antibiotic_n"], errors="coerce")
     merged = merged.dropna(subset=["count", "bg_pathogen_n", "bg_antibiotic_n"]).reset_index(drop=True)
 
-    merged["log_count"] = np.log10(1.0 + merged["count"])
+    merged["count_for_model"] = _materialize_pair_counts(
+        merged["count"],
+        min_amr_pair_publication_count,
+    )
+    merged["log_count"] = np.log10(1.0 + merged["count_for_model"])
     merged["log_bg_pathogen_n"] = np.log10(1.0 + merged["bg_pathogen_n"])
     merged["log_bg_antibiotic_n"] = np.log10(1.0 + merged["bg_antibiotic_n"])
 
-    si_df, pooled_model, design_columns = fit_global_pooled_si_model(merged, alpha=alpha)
+    model_input_mask = merged["log_count"].notna()
+    if not model_input_mask.any():
+        raise ValueError(
+            "No yearly AMR pair counts meet min_amr_pair_publication_count="
+            f"{float(min_amr_pair_publication_count):g}."
+        )
+    modeled_df, pooled_model, design_columns = fit_global_pooled_si_model(
+        merged.loc[model_input_mask].copy(),
+        alpha=alpha,
+    )
+    si_df = merged.copy()
+    for column in ["expected_log_count_global", "expected_count_global", "SI"]:
+        si_df[column] = np.nan
+    si_df.loc[model_input_mask, ["expected_log_count_global", "expected_count_global", "SI"]] = modeled_df[
+        ["expected_log_count_global", "expected_count_global", "SI"]
+    ].to_numpy()
+    si_df["min_amr_pair_publication_count"] = float(min_amr_pair_publication_count)
     si_df.attrs["coverage_report"] = coverage_report.to_dict(orient="records")
     if output_path:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -629,6 +651,7 @@ def rank_future_high_interest_pairs(
     curve_fit_end_year: int | None = None,
     post_fit_validation_end_year: int | None = None,
     min_current_predicted_count: float = 10.0,
+    min_current_amr_count: float = 10.0,
     min_future_predicted_count: float = 10.0,
     min_si_change: float = 0.1,
     min_post_fit_observed_years: int = 1,
@@ -640,6 +663,7 @@ def rank_future_high_interest_pairs(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
+    min_amr_pair_publication_count: float = 2.0,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Rank future SI shifts, then apply reliability-aware interesting-case selection."""
@@ -654,11 +678,13 @@ def rank_future_high_interest_pairs(
         loess_frac=loess_frac,
         loess_degree=loess_degree,
         tail_damping_years=tail_damping_years,
+        min_amr_pair_publication_count=min_amr_pair_publication_count,
         verbose=verbose,
     )
     interesting_df = select_interesting_yearly_rank_cases(
         rank_df,
         min_current_predicted_count=min_current_predicted_count,
+        min_current_amr_count=min_current_amr_count,
         min_future_predicted_count=min_future_predicted_count,
         min_si_change=min_si_change,
         min_post_fit_observed_years=min_post_fit_observed_years,
@@ -1030,7 +1056,8 @@ def save_interesting_si_plots(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
-    fill_missing_amr_counts_with_zero: bool = True,
+    min_amr_pair_publication_count: float = 2.0,
+    fill_missing_amr_counts_with_zero: bool = False,
     figure_format: str = "pdf",
     display_plots: bool = False,
     max_display_plots: int | None = None,
@@ -1054,6 +1081,7 @@ def save_interesting_si_plots(
             loess_frac=loess_frac,
             loess_degree=loess_degree,
             tail_damping_years=tail_damping_years,
+            min_amr_pair_publication_count=min_amr_pair_publication_count,
             fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
             pathogen_background_df=pathogen_background_df,
             antibiotic_background_df=antibiotic_background_df,
@@ -1253,7 +1281,8 @@ def save_smoothed_si_screen_plots(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
-    fill_missing_amr_counts_with_zero: bool = True,
+    min_amr_pair_publication_count: float = 2.0,
+    fill_missing_amr_counts_with_zero: bool = False,
     figure_format: str = "pdf",
     display_plots: bool = False,
     verbose: bool = True,
@@ -1274,6 +1303,7 @@ def save_smoothed_si_screen_plots(
             loess_frac=loess_frac,
             loess_degree=loess_degree,
             tail_damping_years=tail_damping_years,
+            min_amr_pair_publication_count=min_amr_pair_publication_count,
             fill_missing_amr_counts_with_zero=fill_missing_amr_counts_with_zero,
             pathogen_background_df=pathogen_background_df,
             antibiotic_background_df=antibiotic_background_df,

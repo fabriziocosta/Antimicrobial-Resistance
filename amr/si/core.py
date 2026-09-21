@@ -107,6 +107,18 @@ def _inverse_log_transform(values: pd.Series | np.ndarray | float) -> pd.Series 
     return np.power(10.0, values) - 1.0
 
 
+def _materialize_pair_counts(
+    counts: pd.Series | np.ndarray,
+    min_amr_pair_publication_count: float,
+) -> pd.Series | np.ndarray:
+    """Keep only yearly pair counts that meet the configured information threshold."""
+    threshold = float(min_amr_pair_publication_count)
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("min_amr_pair_publication_count must be a finite non-negative number.")
+    numeric_counts = pd.to_numeric(counts, errors="coerce")
+    return numeric_counts.where(numeric_counts >= threshold)
+
+
 def _normalise_driver_category_series(work: pd.DataFrame, category_col: str) -> pd.Series:
     categories = work[category_col].where(work[category_col].notna(), MISSING_LLM_INFORMATION_CATEGORY)
     categories = categories.astype(str).str.strip().replace({"": MISSING_LLM_INFORMATION_CATEGORY})
@@ -155,31 +167,45 @@ def fit_global_pooled_si_model(
     return work, model, design_df.columns.tolist()
 
 
-def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: str) -> pd.DataFrame:
+def build_pair_si_yearly_series(
+    si_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    *,
+    min_amr_pair_publication_count: float = 2.0,
+) -> pd.DataFrame:
     """Aggregate SI to one row per pathogen-antibiotic-year."""
+    work = si_df.copy()
+    work["count_for_model"] = _materialize_pair_counts(
+        work["count"],
+        min_amr_pair_publication_count,
+    )
+    work.loc[work["count_for_model"].isna(), ["expected_count_global", "expected_log_count_global", "SI"]] = np.nan
     required = {
         "pathogen",
         "antibiotic",
         "year",
         "count",
+        "count_for_model",
         "bg_pathogen_n",
         "bg_antibiotic_n",
         "expected_count_global",
         "expected_log_count_global",
         "SI",
     }
-    missing = required - set(si_df.columns)
+    missing = required - set(work.columns)
     if missing:
         raise KeyError(f"si_df missing required yearly SI columns: {sorted(missing)}")
 
     pair_df = (
-        si_df.loc[
-            (si_df["pathogen"] == pathogen) & (si_df["antibiotic"] == antibiotic),
+        work.loc[
+            (work["pathogen"] == pathogen) & (work["antibiotic"] == antibiotic),
             [
                 "pathogen",
                 "antibiotic",
                 "year",
                 "count",
+                "count_for_model",
                 "bg_pathogen_n",
                 "bg_antibiotic_n",
                 "expected_count_global",
@@ -192,9 +218,10 @@ def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: 
         .agg(
             {
                 "count": "sum",
+                "count_for_model": lambda values: values.sum(min_count=1),
                 "bg_pathogen_n": "max",
                 "bg_antibiotic_n": "max",
-                "expected_count_global": "sum",
+                "expected_count_global": lambda values: values.sum(min_count=1),
                 "expected_log_count_global": "mean",
                 "SI": "mean",
             }
@@ -203,7 +230,7 @@ def build_pair_si_yearly_series(si_df: pd.DataFrame, pathogen: str, antibiotic: 
     )
     if pair_df.empty:
         raise ValueError(f"No yearly SI data found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
-    pair_df["log_count"] = _log_transform(pair_df["count"].astype(float))
+    pair_df["log_count"] = _log_transform(pair_df["count_for_model"].astype(float))
     return pair_df
 
 
@@ -351,32 +378,44 @@ def summarize_si_change_drivers(
     return pd.DataFrame(rows, columns=AMR_DRIVER_SUMMARY_COLUMNS)
 
 
-def _build_pair_lookup(si_df: pd.DataFrame) -> dict[tuple[str, str], pd.DataFrame]:
+def _build_pair_lookup(
+    si_df: pd.DataFrame,
+    *,
+    min_amr_pair_publication_count: float = 2.0,
+) -> dict[tuple[str, str], pd.DataFrame]:
     """Precompute yearly pair tables once to avoid repeated full-frame filtering."""
+    work = si_df.copy()
+    work["count_for_model"] = _materialize_pair_counts(
+        work["count"],
+        min_amr_pair_publication_count,
+    )
+    work.loc[work["count_for_model"].isna(), ["expected_count_global", "expected_log_count_global", "SI"]] = np.nan
     required = {
         "pathogen",
         "antibiotic",
         "year",
         "count",
+        "count_for_model",
         "bg_pathogen_n",
         "bg_antibiotic_n",
         "expected_count_global",
         "expected_log_count_global",
         "SI",
     }
-    missing = required - set(si_df.columns)
+    missing = required - set(work.columns)
     if missing:
         raise KeyError(f"si_df missing required yearly SI columns: {sorted(missing)}")
 
     grouped = (
-        si_df[list(required)]
+        work[list(required)]
         .groupby(["pathogen", "antibiotic", "year"], as_index=False)
         .agg(
             {
                 "count": "sum",
+                "count_for_model": lambda values: values.sum(min_count=1),
                 "bg_pathogen_n": "max",
                 "bg_antibiotic_n": "max",
-                "expected_count_global": "sum",
+                "expected_count_global": lambda values: values.sum(min_count=1),
                 "expected_log_count_global": "mean",
                 "SI": "mean",
             }
@@ -384,7 +423,7 @@ def _build_pair_lookup(si_df: pd.DataFrame) -> dict[tuple[str, str], pd.DataFram
         .sort_values(["pathogen", "antibiotic", "year"])
         .reset_index(drop=True)
     )
-    grouped["log_count"] = _log_transform(grouped["count"].astype(float))
+    grouped["log_count"] = _log_transform(grouped["count_for_model"].astype(float))
 
     out: dict[tuple[str, str], pd.DataFrame] = {}
     for (pathogen, antibiotic), frame in grouped.groupby(["pathogen", "antibiotic"], sort=False):
@@ -482,7 +521,12 @@ def _fit_loess_log_count_curve(
     residuals = log_counts - fitted_log_counts
     residual_std = float(np.std(residuals, ddof=1)) if residuals.size > 1 else 0.0
     if residual_std < 1e-8 and log_counts.size > 1:
-        residual_std = float(max(1e-6, 0.25 * np.std(np.diff(log_counts), ddof=1)))
+        residual_std = float(
+            max(
+                1e-6,
+                0.25 * np.std(np.diff(log_counts), ddof=1 if log_counts.size > 2 else 0),
+            )
+        )
 
     left_slope = float((fitted_log_counts[1] - fitted_log_counts[0]) / (years[1] - years[0]))
     right_slope = float((fitted_log_counts[-1] - fitted_log_counts[-2]) / (years[-1] - years[-2]))
@@ -576,6 +620,7 @@ def fit_predict_yearly_si_loess(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+    min_amr_pair_publication_count: float = 2.0,
     pair_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Fit a smooth yearly count trajectory and derive yearly SI forecasts."""
@@ -583,17 +628,33 @@ def fit_predict_yearly_si_loess(
         raise ValueError("fit_end_year must be >= fit_start_year.")
     if num_additional_years < 0:
         raise ValueError("num_additional_years must be >= 0.")
+    threshold = float(min_amr_pair_publication_count)
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("min_amr_pair_publication_count must be a finite non-negative number.")
 
     if pair_df is None:
-        pair_df = build_pair_si_yearly_series(si_df, pathogen, antibiotic)
+        pair_df = build_pair_si_yearly_series(
+            si_df,
+            pathogen,
+            antibiotic,
+            min_amr_pair_publication_count=threshold,
+        )
     else:
         pair_df = pair_df.copy().sort_values("year").reset_index(drop=True)
         if pair_df.empty:
             raise ValueError(f"No yearly SI data found for pathogen={pathogen!r}, antibiotic={antibiotic!r}.")
-        if "log_count" not in pair_df.columns:
-            pair_df["log_count"] = _log_transform(pair_df["count"].astype(float))
+        pair_df["count_for_model"] = _materialize_pair_counts(pair_df["count"], threshold)
+        pair_df["log_count"] = _log_transform(pair_df["count_for_model"].astype(float))
+        pair_df.loc[
+            pair_df["count_for_model"].isna(),
+            ["expected_count_global", "expected_log_count_global", "SI"],
+        ] = np.nan
     latest_available_year = int(pair_df["year"].max())
-    train_df = pair_df.loc[pair_df["year"].between(int(fit_start_year), int(fit_end_year))].copy()
+    train_df = pair_df.loc[
+        pair_df["year"].between(int(fit_start_year), int(fit_end_year))
+        & pair_df["log_count"].notna()
+        & pair_df["expected_log_count_global"].notna()
+    ].copy()
     if train_df["year"].nunique() < min_train_points:
         raise ValueError(
             f"Need at least {min_train_points} observed years between {fit_start_year} and {fit_end_year}; "
@@ -609,7 +670,7 @@ def fit_predict_yearly_si_loess(
     )
 
     prediction_end_year = latest_available_year + int(num_additional_years)
-    model_plot_start_year = int(pair_df["year"].min())
+    model_plot_start_year = int(train_df["year"].min())
     pred_years = np.arange(model_plot_start_year, prediction_end_year + 1, dtype=float)
 
     baseline_fit = _fit_loess_log_count_curve(
@@ -639,10 +700,23 @@ def fit_predict_yearly_si_loess(
 
     observed_window_df = pair_df.loc[
         pair_df["year"] >= int(fit_start_year),
-        ["year", "SI", "count", "log_count", "expected_count_global", "expected_log_count_global"],
+        [
+            "year",
+            "SI",
+            "count",
+            "count_for_model",
+            "log_count",
+            "expected_count_global",
+            "expected_log_count_global",
+        ],
     ].copy()
     observed_window_df = observed_window_df.rename(
-        columns={"SI": "observed_SI", "count": "observed_count", "log_count": "observed_log_count"}
+        columns={
+            "SI": "observed_SI",
+            "count": "raw_observed_count",
+            "count_for_model": "observed_count",
+            "log_count": "observed_log_count",
+        }
     )
     detailed_comparison_df = observed_window_df.merge(pred_df, on="year", how="left")
     detailed_comparison_df["prediction_error"] = detailed_comparison_df["observed_SI"] - detailed_comparison_df["predicted_SI"]
@@ -655,8 +729,8 @@ def fit_predict_yearly_si_loess(
     detailed_comparison_df["count_abs_error_loess"] = detailed_comparison_df["count_prediction_error_loess"].abs()
 
     compact = detailed_comparison_df[["year"]].copy()
-    compact["observed_count"] = np.rint(detailed_comparison_df["observed_count"]).astype(int)
-    compact["predicted_count"] = np.rint(detailed_comparison_df["predicted_count_loess"]).astype(int)
+    compact["observed_count"] = np.rint(detailed_comparison_df["observed_count"])
+    compact["predicted_count"] = np.rint(detailed_comparison_df["predicted_count_loess"])
     compact["diff"] = compact["observed_count"] - compact["predicted_count"]
     compact["pct_error"] = np.where(
         compact["observed_count"] != 0,
@@ -671,6 +745,7 @@ def fit_predict_yearly_si_loess(
         "fit_end_year": int(fit_end_year),
         "latest_available_year": latest_available_year,
         "num_additional_years": int(num_additional_years),
+        "min_amr_pair_publication_count": threshold,
         "loess_degree": int(loess_fit["degree"]),
         "model_plot_start_year": model_plot_start_year,
         "pair_df": pair_df,
@@ -696,6 +771,7 @@ def rank_yearly_pairs_by_future_si_shift(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = _AUTO_TAIL_DAMPING,
+    min_amr_pair_publication_count: float = 2.0,
     save_path: str | None = None,
     verbose: bool = False,
 ) -> pd.DataFrame:
@@ -730,7 +806,10 @@ def rank_yearly_pairs_by_future_si_shift(
             post_fit_validation_end_year = int(complete_observed_years.max())
     post_fit_validation_end_year = int(post_fit_validation_end_year)
     target_year = int(reference_year + int(num_future_years))
-    pair_lookup = _build_pair_lookup(si_df)
+    pair_lookup = _build_pair_lookup(
+        si_df,
+        min_amr_pair_publication_count=min_amr_pair_publication_count,
+    )
     pair_index_df = (
         pd.DataFrame(
             [{"pathogen": k[0], "antibiotic": k[1]} for k in pair_lookup.keys()]
@@ -772,6 +851,7 @@ def rank_yearly_pairs_by_future_si_shift(
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
                 tail_damping_years=tail_damping_years,
+                min_amr_pair_publication_count=min_amr_pair_publication_count,
                 pair_df=pair_df,
             )
             if curve_fit_end_year == fit_end_year:
@@ -788,6 +868,7 @@ def rank_yearly_pairs_by_future_si_shift(
                     loess_frac=loess_frac,
                     loess_degree=loess_degree,
                     tail_damping_years=tail_damping_years,
+                    min_amr_pair_publication_count=min_amr_pair_publication_count,
                     pair_df=pair_df,
                 )
             pred_df = result["pred_df"]
@@ -800,16 +881,22 @@ def rank_yearly_pairs_by_future_si_shift(
             current_row = current_row.iloc[0]
             future_row = future_row.iloc[0]
 
-            observed_current_df = pair_df.loc[pair_df["year"] == reference_year]
+            observed_current_df = pair_df.loc[
+                (pair_df["year"] == reference_year) & pair_df["count_for_model"].notna()
+            ]
             current_source = "observed" if not observed_current_df.empty else "predicted"
             current_count = (
-                float(observed_current_df["count"].iloc[0]) if not observed_current_df.empty and "count" in observed_current_df.columns else np.nan
+                float(observed_current_df["count_for_model"].iloc[0])
+                if not observed_current_df.empty and "count_for_model" in observed_current_df.columns
+                else np.nan
             )
             latest_available_year = reference_year
-            latest_available_df = pair_df.loc[pair_df["year"] == latest_available_year]
+            latest_available_df = pair_df.loc[
+                (pair_df["year"] == latest_available_year) & pair_df["count_for_model"].notna()
+            ]
             latest_available_count = (
-                float(latest_available_df["count"].iloc[0])
-                if not latest_available_df.empty and "count" in latest_available_df.columns
+                float(latest_available_df["count_for_model"].iloc[0])
+                if not latest_available_df.empty and "count_for_model" in latest_available_df.columns
                 else np.nan
             )
             latest_available_si = (
@@ -831,6 +918,7 @@ def rank_yearly_pairs_by_future_si_shift(
             validation_comparison_df = validation_result["detailed_comparison_df"]
             curve_fit_comparison_df = result["detailed_comparison_df"].loc[
                 result["detailed_comparison_df"]["year"].between(fit_start_year, curve_fit_end_year)
+                & result["detailed_comparison_df"]["observed_SI"].notna()
             ].copy()
             if curve_fit_comparison_df.empty:
                 si_loess_residual_variance_mean = np.nan
@@ -840,10 +928,12 @@ def rank_yearly_pairs_by_future_si_shift(
                 si_loess_residual_std = float(np.sqrt(si_loess_residual_variance_mean))
             holdout_df = validation_comparison_df.loc[
                 validation_comparison_df["year"].between(fit_end_year + 1, post_fit_validation_end_year)
+                & validation_comparison_df["observed_SI"].notna()
             ].copy()
             holdout_df["si_pct_error"] = _safe_pct_error(holdout_df["prediction_error"], holdout_df["observed_SI"])
             count_error_df = validation_comparison_df.loc[
                 validation_comparison_df["year"].between(fit_end_year + 1, post_fit_validation_end_year)
+                & validation_comparison_df["observed_count"].notna()
             ].copy()
             count_error_df["count_pct_error_loess"] = _safe_pct_error(
                 count_error_df["count_prediction_error_loess"],
@@ -1033,6 +1123,7 @@ def select_interesting_yearly_rank_cases(
     rank_df: pd.DataFrame,
     *,
     min_current_predicted_count: float = 50.0,
+    min_current_amr_count: float = 10.0,
     min_future_predicted_count: float = 50.0,
     min_si_change: float = 0.75,
     min_post_fit_observed_years: int = 3,
@@ -1054,6 +1145,7 @@ def select_interesting_yearly_rank_cases(
 
     work = rank_df.loc[rank_df["status"].eq("ok")].copy()
     for col in [
+        "current_count",
         "post_fit_si_abs_error_mean",
         "post_fit_si_abs_pct_error_mean",
         "n_post_fit_observed_years",
@@ -1063,6 +1155,8 @@ def select_interesting_yearly_rank_cases(
             work[col] = np.nan
 
     work["passes_current_count"] = pd.to_numeric(work["current_predicted_count"], errors="coerce") >= float(min_current_predicted_count)
+    current_amr_count = pd.to_numeric(work["current_count"], errors="coerce")
+    work["passes_current_amr_count"] = current_amr_count >= float(min_current_amr_count)
     work["passes_future_count"] = pd.to_numeric(work["future_predicted_count"], errors="coerce") >= float(min_future_predicted_count)
     current_count = pd.to_numeric(work["current_predicted_count"], errors="coerce")
     future_count = pd.to_numeric(work["future_predicted_count"], errors="coerce")
@@ -1096,6 +1190,7 @@ def select_interesting_yearly_rank_cases(
 
     work["is_interesting_case"] = (
         work["passes_current_count"]
+        & work["passes_current_amr_count"]
         & work["passes_future_count"]
         & work["passes_future_count_ceiling"]
         & work["passes_future_growth_ratio"]
@@ -1116,7 +1211,12 @@ def select_interesting_yearly_rank_cases(
 
     selected = work.loc[work["is_interesting_case"]].copy()
     if selected.empty and fallback_top_n > 0:
-        selected = work.sort_values(["interest_score", "future_predicted_SI"], ascending=[False, False]).head(int(fallback_top_n)).copy()
+        selected = (
+            work.loc[work["passes_current_amr_count"]]
+            .sort_values(["interest_score", "future_predicted_SI"], ascending=[False, False])
+            .head(int(fallback_top_n))
+            .copy()
+        )
         selected["selection_mode"] = "fallback_top_n"
     else:
         selected["selection_mode"] = "strict_filter"
@@ -1138,7 +1238,8 @@ def plot_yearly_si_pair(
     loess_frac: float = 0.6,
     loess_degree: int = 1,
     tail_damping_years: Any = None,
-    fill_missing_amr_counts_with_zero: bool = True,
+    min_amr_pair_publication_count: float = 2.0,
+    fill_missing_amr_counts_with_zero: bool = False,
     pathogen_background_df: pd.DataFrame | None = None,
     antibiotic_background_df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
@@ -1153,6 +1254,7 @@ def plot_yearly_si_pair(
         loess_frac=loess_frac,
         loess_degree=loess_degree,
         tail_damping_years=tail_damping_years,
+        min_amr_pair_publication_count=min_amr_pair_publication_count,
     )
     pair_df = result["pair_df"]
     pred_df = result["pred_df"]
@@ -1168,71 +1270,72 @@ def plot_yearly_si_pair(
         ax1.spines[spine].set_visible(False)
     ax2.spines["top"].set_visible(False)
 
+    plot_years = pd.DataFrame(
+        {
+            "year": np.arange(
+                int(pair_df["year"].min()),
+                int(pair_df["year"].max()) + 1,
+                dtype=int,
+            )
+        }
+    )
+    pair_plot_columns = ["year", "count", "count_for_model", "bg_pathogen_n", "bg_antibiotic_n"]
+    count_plot_df = plot_years.merge(
+        pair_df[pair_plot_columns],
+        on="year",
+        how="left",
+        indicator="pair_year_present",
+    )
+    count_plot_df["pair_year_present"] = count_plot_df["pair_year_present"].eq("both")
     if fill_missing_amr_counts_with_zero:
-        plot_years = pd.DataFrame(
-            {
-                "year": np.arange(
-                    int(pair_df["year"].min()),
-                    int(pair_df["year"].max()) + 1,
-                    dtype=int,
-                )
-            }
+        count_plot_df.loc[~count_plot_df["pair_year_present"], "count_for_model"] = 0.0
+    if pathogen_background_df is not None and not pathogen_background_df.empty:
+        pathogen_bg_by_year = (
+            pathogen_background_df.loc[
+                pathogen_background_df["pathogen"] == pathogen,
+                ["year", "count"],
+            ]
+            .rename(columns={"count": "bg_pathogen_n"})
+            .groupby("year", as_index=False)["bg_pathogen_n"]
+            .max()
         )
-        count_plot_df = plot_years.merge(
-            pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]],
-            on="year",
-            how="left",
-        )
-        if pathogen_background_df is not None and not pathogen_background_df.empty:
-            pathogen_bg_by_year = (
-                pathogen_background_df.loc[
-                    pathogen_background_df["pathogen"] == pathogen,
-                    ["year", "count"],
-                ]
-                .rename(columns={"count": "bg_pathogen_n"})
-                .groupby("year", as_index=False)["bg_pathogen_n"]
-                .max()
-            )
-        else:
-            pathogen_bg_by_year = (
-                si_df.loc[si_df["pathogen"] == pathogen, ["year", "bg_pathogen_n"]]
-                .groupby("year", as_index=False)["bg_pathogen_n"]
-                .max()
-            )
-        if antibiotic_background_df is not None and not antibiotic_background_df.empty:
-            antibiotic_bg_by_year = (
-                antibiotic_background_df.loc[
-                    antibiotic_background_df["antibiotic"] == antibiotic,
-                    ["year", "count"],
-                ]
-                .rename(columns={"count": "bg_antibiotic_n"})
-                .groupby("year", as_index=False)["bg_antibiotic_n"]
-                .max()
-            )
-        else:
-            antibiotic_bg_by_year = (
-                si_df.loc[si_df["antibiotic"] == antibiotic, ["year", "bg_antibiotic_n"]]
-                .groupby("year", as_index=False)["bg_antibiotic_n"]
-                .max()
-            )
-        count_plot_df = count_plot_df.merge(
-            pathogen_bg_by_year.rename(columns={"bg_pathogen_n": "bg_pathogen_n_filled"}),
-            on="year",
-            how="left",
-        ).merge(
-            antibiotic_bg_by_year.rename(columns={"bg_antibiotic_n": "bg_antibiotic_n_filled"}),
-            on="year",
-            how="left",
-        )
-        count_plot_df["count"] = count_plot_df["count"].fillna(0.0)
-        count_plot_df["bg_pathogen_n"] = count_plot_df["bg_pathogen_n"].fillna(count_plot_df["bg_pathogen_n_filled"])
-        count_plot_df["bg_antibiotic_n"] = count_plot_df["bg_antibiotic_n"].fillna(
-            count_plot_df["bg_antibiotic_n_filled"]
-        )
-        count_plot_df = count_plot_df.drop(columns=["bg_pathogen_n_filled", "bg_antibiotic_n_filled"])
     else:
-        count_plot_df = pair_df[["year", "count", "bg_pathogen_n", "bg_antibiotic_n"]].copy()
-    count_plot_df["amr_count_plot"] = np.clip(count_plot_df["count"].astype(float), 1.0, None)
+        pathogen_bg_by_year = (
+            si_df.loc[si_df["pathogen"] == pathogen, ["year", "bg_pathogen_n"]]
+            .groupby("year", as_index=False)["bg_pathogen_n"]
+            .max()
+        )
+    if antibiotic_background_df is not None and not antibiotic_background_df.empty:
+        antibiotic_bg_by_year = (
+            antibiotic_background_df.loc[
+                antibiotic_background_df["antibiotic"] == antibiotic,
+                ["year", "count"],
+            ]
+            .rename(columns={"count": "bg_antibiotic_n"})
+            .groupby("year", as_index=False)["bg_antibiotic_n"]
+            .max()
+        )
+    else:
+        antibiotic_bg_by_year = (
+            si_df.loc[si_df["antibiotic"] == antibiotic, ["year", "bg_antibiotic_n"]]
+            .groupby("year", as_index=False)["bg_antibiotic_n"]
+            .max()
+        )
+    count_plot_df = count_plot_df.merge(
+        pathogen_bg_by_year.rename(columns={"bg_pathogen_n": "bg_pathogen_n_filled"}),
+        on="year",
+        how="left",
+    ).merge(
+        antibiotic_bg_by_year.rename(columns={"bg_antibiotic_n": "bg_antibiotic_n_filled"}),
+        on="year",
+        how="left",
+    )
+    count_plot_df["bg_pathogen_n"] = count_plot_df["bg_pathogen_n"].fillna(count_plot_df["bg_pathogen_n_filled"])
+    count_plot_df["bg_antibiotic_n"] = count_plot_df["bg_antibiotic_n"].fillna(
+        count_plot_df["bg_antibiotic_n_filled"]
+    )
+    count_plot_df = count_plot_df.drop(columns=["bg_pathogen_n_filled", "bg_antibiotic_n_filled"])
+    count_plot_df["amr_count_plot"] = np.clip(count_plot_df["count_for_model"].astype(float), 1.0, None)
     count_plot_df["pathogen_count_plot"] = np.clip(count_plot_df["bg_pathogen_n"].astype(float), 1.0, None)
     count_plot_df["antibiotic_count_plot"] = np.clip(count_plot_df["bg_antibiotic_n"].astype(float), 1.0, None)
     bar_width = 0.85
@@ -1268,9 +1371,10 @@ def plot_yearly_si_pair(
     )
     ax2.set_yscale("log")
 
+    observed_plot_df = plot_years.merge(pair_df[["year", "SI"]], on="year", how="left")
     ax1.plot(
-        pair_df["year"],
-        pair_df["SI"],
+        observed_plot_df["year"],
+        observed_plot_df["SI"],
         color="#111111",
         marker="o",
         lw=2.6,

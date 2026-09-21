@@ -18,6 +18,18 @@ The starting quantities are:
 - `bg_pathogen_n`: the total publication background for the pathogen in the same year
 - `bg_antibiotic_n`: the total publication background for the antibiotic in the same year
 
+The configurable `min_amr_pair_publication_count` threshold controls whether a yearly
+pair count is informative enough to model. The default is `2`: counts below the
+threshold remain in the yearly input for auditability, but their modeled count,
+log-count, expected count, and SI are unavailable (`NaN`). They are therefore not
+used when fitting the pooled baseline or the LOESS trajectory, and plots show gaps
+rather than treating them as zero-count observations.
+
+The interesting-pair ranking also has a separate `min_current_amr_count` gate. This
+requires the observed, materialized AMR pair count at the current/reference (normally
+fit-end) year to meet the configured minimum; a high predicted current count alone is
+not sufficient.
+
 These background marginals do not encode resistance by themselves. Instead, they define a reasonable **background-attention baseline**. The model then asks:
 
 > Given only the general publication attention to this pathogen and this antibiotic, what AMR count would be typical?

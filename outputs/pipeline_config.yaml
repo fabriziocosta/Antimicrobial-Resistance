@@ -90,7 +90,9 @@ si:
   num_future_years: 5
   min_avg_amr_publications_per_year: 1.0
   min_tot_amr_publications: 50
+  min_amr_pair_publication_count: 3
   min_current_predicted_count: 10
+  min_current_amr_count: 10
   min_future_predicted_count: 10
   min_si_change: 0.01
   min_post_fit_observed_years: 1
@@ -106,7 +108,7 @@ si:
   figure_format: pdf
   display_plots: true
   max_display_plots: 10
-  fill_missing_amr_counts_with_zero: true
+  fill_missing_amr_counts_with_zero: false
   loess_frac: 0.6
   loess_degree: 1
   tail_damping_years: null
