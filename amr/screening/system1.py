@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -19,6 +20,8 @@ from amr.screening.core import (
 )
 
 OPENROUTER_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 JEV_DEFAULT_MODEL = "typesafe/jev-1.13"
 SYSTEM1_QUESTION_VERSION = "amr-pair-support-noul-v1"
 SYSTEM1_AMR_SUPPORT_QUESTION = (
@@ -29,6 +32,15 @@ SYSTEM1_AMR_SUPPORT_QUESTION = (
     "stewardship, or policy as relevant. Do not infer support from unrelated co-mentions. "
     "The target pathogen and antibiotic must be linked by the paper's evidence or study context."
 )
+
+
+def _format_duration(seconds: float) -> str:
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    return f"{minutes}m {seconds:02d}s"
 
 
 class DecisionClient(Protocol):
@@ -59,6 +71,44 @@ class OpenRouterJevClient:
         self.retries = max(1, int(retries))
         self.backoff = max(0.0, float(backoff))
         self.session = session or requests.Session()
+
+    def credit_status(self) -> tuple[str, float | None]:
+        """Return a printable OpenRouter balance/limit, without interrupting scoring.
+
+        The account credits endpoint requires a management key. If this key cannot
+        access it, the key-status endpoint may still expose its remaining limit.
+        """
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
+            response = self.session.get(OPENROUTER_CREDITS_URL, headers=headers, timeout=5)
+            if response.ok:
+                data = response.json().get("data", {})
+                total = data.get("total_credits")
+                used = data.get("total_usage")
+                if isinstance(total, (int, float)) and isinstance(used, (int, float)):
+                    remaining = max(0.0, float(total - used))
+                    return f"account credits remaining ${remaining:.4f}", remaining
+            credits_status = response.status_code
+        except Exception:
+            credits_status = None
+
+        try:
+            response = self.session.get(OPENROUTER_KEY_URL, headers=headers, timeout=5)
+            if response.ok:
+                data = response.json().get("data", {})
+                remaining = data.get("limit_remaining")
+                if isinstance(remaining, (int, float)):
+                    remaining = max(0.0, float(remaining))
+                    return f"API key limit remaining ${remaining:.4f}", remaining
+            key_status = response.status_code
+        except Exception:
+            key_status = None
+
+        if credits_status == 403:
+            return "remaining credit unavailable (account credits require a management key)", None
+        if key_status is not None:
+            return f"remaining credit unavailable (OpenRouter HTTP {key_status})", None
+        return "remaining credit unavailable (OpenRouter could not be reached)", None
 
     def decide(self, state: str, *, question: str) -> dict[str, Any]:
         payload = {
@@ -211,13 +261,46 @@ def run_system1_filter(
     candidates = candidates.dropna(subset=["year"])
     candidates["year"] = candidates["year"].astype(int)
     candidates = candidates.drop_duplicates(subset=["pmid", "pathogen", "antibiotic", "year"])
+    candidate_keys = {
+        (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+        for row in candidates.itertuples(index=False)
+    }
+    already_done_keys = done_keys & candidate_keys
+
+    prior_status_by_key: dict[tuple[str, str, str, int], str] = {}
+    if not existing.empty and {"system1_run_id", "system1_status", *key_cols[:-1]}.issubset(existing.columns):
+        current_run = existing.loc[existing["system1_run_id"].astype(str) == run_id]
+        if not current_run.empty:
+            current_run = current_run.drop_duplicates(subset=key_cols, keep="last")
+            for row in current_run.itertuples(index=False):
+                key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
+                if key in candidate_keys:
+                    prior_status_by_key[key] = str(row.system1_status)
+
     pending = []
     for row in candidates.itertuples(index=False):
         key = (str(row.pmid), str(row.pathogen), str(row.antibiotic), int(row.year))
         if key not in done_keys:
             pending.append(row)
+    pending_before_cap = len(pending)
+    capped_rows = 0
     if max_calls is not None:
         pending = pending[: max(0, int(max_calls))]
+        capped_rows = pending_before_cap - len(pending)
+
+    print(
+        f"System 1 run {run_id}: {len(candidates):,} candidate rows; "
+        f"resuming {len(already_done_keys):,} completed; "
+        f"{len(pending):,} pending this session."
+    )
+    previous_failures = sum(
+        prior_status_by_key.get(key) in {"error", "abstract_error"}
+        for key in candidate_keys - already_done_keys
+    )
+    if previous_failures:
+        print(f"Retrying {previous_failures:,} previously failed rows.")
+    if capped_rows:
+        print(f"max_calls deferred {capped_rows:,} pending rows for a later run.")
 
     abstract_cache = _load_abstract_cache(abstract_cache_path)
     missing_pmids = sorted({str(row.pmid) for row in pending if str(row.pmid) not in abstract_cache})
@@ -236,6 +319,59 @@ def run_system1_filter(
 
     rows: list[dict[str, Any]] = []
     attempted = 0
+    session_processed = 0
+    session_successes = 0
+    session_request_failures = 0
+    session_abstract_failures = 0
+    session_no_abstract = 0
+    progressed_keys = set(already_done_keys)
+    status_by_key = dict(prior_status_by_key)
+    run_started_at = time.monotonic()
+    credit_status = getattr(client, "credit_status", None)
+    if callable(credit_status):
+        latest_credit_status, latest_credit_amount = credit_status()
+    else:
+        latest_credit_status, latest_credit_amount = "balance lookup not supported by client", None
+    starting_credit_amount = latest_credit_amount
+
+    def _progress_line() -> str:
+        counts = Counter(status_by_key.get(key, "pending") for key in progressed_keys)
+        progressed = len(progressed_keys)
+        total = len(candidates)
+        elapsed = time.monotonic() - run_started_at
+        rate = session_processed / elapsed if elapsed > 0 else 0.0
+        remaining = max(0, len(pending) - session_processed)
+        eta = remaining / rate if rate > 0 else 0.0
+        percent = (100.0 * progressed / total) if total else 100.0
+        unresolved = max(0, total - counts["ok"] - counts["no_abstract"])
+        estimated_end_amount = None
+        if (
+            latest_credit_amount is not None
+        ):
+            if unresolved == 0:
+                estimated_end_amount = latest_credit_amount
+            elif starting_credit_amount is not None and attempted > 0:
+                observed_spend = max(0.0, starting_credit_amount - latest_credit_amount)
+                estimated_end_amount = max(
+                    0.0, latest_credit_amount - observed_spend / attempted * unresolved
+                )
+        estimate_text = (
+            f"estimated balance after {unresolved:,} unresolved candidates "
+            f"${estimated_end_amount:.4f}"
+            if estimated_end_amount is not None
+            else "end balance estimate unavailable until request spend is observed"
+        )
+        return (
+            f"System 1 [{run_id}] {progressed:,}/{total:,} candidates ({percent:.1f}%) "
+            f"| resumed {len(already_done_keys):,} | this session {session_processed:,}/{len(pending):,} "
+            f"| successes {counts['ok']:,} | request/parse failures {counts['error']:,} "
+            f"| abstract failures {counts['abstract_error']:,} | no abstract {counts['no_abstract']:,} "
+            f"| API attempts this session {attempted:,} "
+            f"({session_successes:,} succeeded, {session_request_failures:,} failed) "
+            f"| elapsed {_format_duration(elapsed)} | ETA this session {_format_duration(eta)} "
+            f"| {latest_credit_status} | {estimate_text}"
+        )
+
     for row in pending:
         pmid = str(row.pmid)
         pathogen = str(row.pathogen)
@@ -277,19 +413,38 @@ def run_system1_filter(
                 result["system1_provider"] = str(response.get("provider") or "")
                 result["system1_error"] = ""
                 attempted += 1
+                session_successes += 1
             except Exception as exc:
                 result["system1_error"] = f"{type(exc).__name__}: {exc}"
                 attempted += 1
+                session_request_failures += 1
         rows.append(result)
+        key = (pmid, pathogen, antibiotic, year)
+        session_processed += 1
+        progressed_keys.add(key)
+        status_by_key[key] = str(result["system1_status"])
+        if result["system1_status"] == "abstract_error":
+            session_abstract_failures += 1
+        elif result["system1_status"] == "no_abstract":
+            session_no_abstract += 1
         if output_path and len(rows) % max(1, int(save_every)) == 0:
             _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
             rows = []
-        if progress_every > 0 and (attempted > 0 and attempted % progress_every == 0):
-            print(f"System 1 predictions attempted: {attempted:,}")
+        if progress_every > 0 and session_processed % progress_every == 0:
+            # Make every reported progress point durable so a restart resumes from it.
+            if output_path and rows:
+                _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
+                rows = []
+            if callable(credit_status):
+                latest_credit_status, latest_credit_amount = credit_status()
+            print(_progress_line())
         if rate_limit:
             time.sleep(rate_limit)
     if output_path and rows:
         _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
+    if callable(credit_status):
+        latest_credit_status, latest_credit_amount = credit_status()
+    print(f"System 1 final: {_progress_line()}")
     if output_path and not pending and not Path(output_path).exists():
         columns = key_cols + [
             "system1_model", "system1_question_version", "system1_p_yes", "system1_status",
@@ -312,6 +467,8 @@ def run_system1_filter(
 __all__ = [
     "JEV_DEFAULT_MODEL",
     "OPENROUTER_DECISIONS_URL",
+    "OPENROUTER_CREDITS_URL",
+    "OPENROUTER_KEY_URL",
     "SYSTEM1_AMR_SUPPORT_QUESTION",
     "SYSTEM1_QUESTION_VERSION",
     "OpenRouterJevClient",
