@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 import uuid
 from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock, local
 from typing import Any, Protocol
 
 import pandas as pd
@@ -110,6 +112,16 @@ class OpenRouterJevClient:
             return f"remaining credit unavailable (OpenRouter HTTP {key_status})", None
         return "remaining credit unavailable (OpenRouter could not be reached)", None
 
+    def for_worker(self) -> "OpenRouterJevClient":
+        """Create a worker client with its own HTTP session for concurrent calls."""
+        return OpenRouterJevClient(
+            api_key=self.api_key,
+            model=self.model,
+            timeout=self.timeout,
+            retries=self.retries,
+            backoff=self.backoff,
+        )
+
     def decide(self, state: str, *, question: str) -> dict[str, Any]:
         payload = {
             "model": self.model,
@@ -203,6 +215,7 @@ def run_system1_filter(
     save_every: int = 100,
     progress_every: int = 100,
     rate_limit: float = 0.0,
+    max_workers: int = 1,
     max_calls: int | None = None,
     question_version: str = SYSTEM1_QUESTION_VERSION,
 ) -> pd.DataFrame:
@@ -217,6 +230,9 @@ def run_system1_filter(
         raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
     if not 0 <= float(rate_limit):
         raise ValueError("rate_limit must be non-negative.")
+    if int(max_workers) < 1:
+        raise ValueError("max_workers must be at least 1.")
+    max_workers = int(max_workers)
 
     run_id = str(run_id or f"jev-{uuid.uuid4().hex[:12]}")
     key_cols = ["pmid", "pathogen", "antibiotic", "year", "system1_run_id"]
@@ -291,7 +307,7 @@ def run_system1_filter(
     print(
         f"System 1 run {run_id}: {len(candidates):,} candidate rows; "
         f"resuming {len(already_done_keys):,} completed; "
-        f"{len(pending):,} pending this session."
+        f"{len(pending):,} pending this session; up to {max_workers} concurrent requests."
     )
     previous_failures = sum(
         prior_status_by_key.get(key) in {"error", "abstract_error"}
@@ -362,8 +378,8 @@ def run_system1_filter(
             else "end balance estimate unavailable until request spend is observed"
         )
         return (
-            f"System 1 [{run_id}] {progressed:,}/{total:,} candidates ({percent:.1f}%) "
-            f"| resumed {len(already_done_keys):,} | this session {session_processed:,}/{len(pending):,} "
+            f"{progressed:,}/{total:,} candidates ({percent:.1f}%) "
+            f"| this session {session_processed:,}/{len(pending):,} "
             f"| successes {counts['ok']:,} | request/parse failures {counts['error']:,} "
             f"| abstract failures {counts['abstract_error']:,} | no abstract {counts['no_abstract']:,} "
             f"| API attempts this session {attempted:,} "
@@ -372,7 +388,18 @@ def run_system1_filter(
             f"| {latest_credit_status} | {estimate_text}"
         )
 
-    for row in pending:
+    worker_local = local()
+    rate_limit_lock = Lock()
+    next_request_at = 0.0
+
+    def _worker_client() -> DecisionClient:
+        if not hasattr(worker_local, "client"):
+            make_worker = getattr(client, "for_worker", None)
+            worker_local.client = make_worker() if callable(make_worker) else client
+        return worker_local.client
+
+    def _score_candidate(row: Any) -> tuple[dict[str, Any], bool]:
+        nonlocal next_request_at
         pmid = str(row.pmid)
         pathogen = str(row.pathogen)
         antibiotic = str(row.antibiotic)
@@ -402,7 +429,14 @@ def run_system1_filter(
             result["system1_status"] = "no_abstract"
         else:
             try:
-                response = client.decide(
+                if rate_limit:
+                    with rate_limit_lock:
+                        now_monotonic = time.monotonic()
+                        scheduled_at = max(now_monotonic, next_request_at)
+                        next_request_at = scheduled_at + rate_limit
+                    if scheduled_at > now_monotonic:
+                        time.sleep(scheduled_at - now_monotonic)
+                response = _worker_client().decide(
                     build_system1_state(pmid, pathogen, antibiotic, title, abstract),
                     question=SYSTEM1_AMR_SUPPORT_QUESTION,
                 )
@@ -412,13 +446,43 @@ def run_system1_filter(
                 result["system1_request_id"] = str(response.get("id") or "")
                 result["system1_provider"] = str(response.get("provider") or "")
                 result["system1_error"] = ""
-                attempted += 1
-                session_successes += 1
             except Exception as exc:
                 result["system1_error"] = f"{type(exc).__name__}: {exc}"
-                attempted += 1
-                session_request_failures += 1
+        return result, result["system1_status"] in {"ok", "error"} and bool(abstract.strip())
+
+    def _result_stream():
+        if max_workers == 1:
+            for pending_row in pending:
+                yield _score_candidate(pending_row)
+            return
+        row_iter = iter(pending)
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="system1") as executor:
+            futures: set[Future] = set()
+            max_in_flight = max_workers * 2
+            while True:
+                while len(futures) < max_in_flight:
+                    try:
+                        pending_row = next(row_iter)
+                    except StopIteration:
+                        break
+                    futures.add(executor.submit(_score_candidate, pending_row))
+                if not futures:
+                    break
+                completed, futures = wait(futures, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    yield future.result()
+
+    for result, was_api_attempt in _result_stream():
+        attempted += int(was_api_attempt)
+        if result["system1_status"] == "ok":
+            session_successes += 1
+        elif was_api_attempt:
+            session_request_failures += 1
         rows.append(result)
+        pmid = str(result["pmid"])
+        pathogen = str(result["pathogen"])
+        antibiotic = str(result["antibiotic"])
+        year = int(result["year"])
         key = (pmid, pathogen, antibiotic, year)
         session_processed += 1
         progressed_keys.add(key)
@@ -427,7 +491,7 @@ def run_system1_filter(
             session_abstract_failures += 1
         elif result["system1_status"] == "no_abstract":
             session_no_abstract += 1
-        if output_path and len(rows) % max(1, int(save_every)) == 0:
+        if output_path and len(rows) >= max(1, int(save_every)):
             _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
             rows = []
         if progress_every > 0 and session_processed % progress_every == 0:
@@ -438,8 +502,6 @@ def run_system1_filter(
             if callable(credit_status):
                 latest_credit_status, latest_credit_amount = credit_status()
             print(_progress_line())
-        if rate_limit:
-            time.sleep(rate_limit)
     if output_path and rows:
         _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
     if callable(credit_status):

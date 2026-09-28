@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -138,6 +140,47 @@ class TestSystem1Predictions(unittest.TestCase):
         self.assertEqual(kwargs["json"]["model"], "typesafe/jev-1.13")
         self.assertEqual(kwargs["json"]["questions"]["amr_pair_supported"]["type"], "noul")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+
+    @patch("amr.screening.system1.fetch_pubmed_abstracts_batch")
+    def test_system1_runs_requests_concurrently_when_configured(self, fetch):
+        candidates = pd.DataFrame(
+            [
+                {"pmid": str(pmid), "pathogen": "E. coli", "antibiotic": "Ciprofloxacin", "year": 2022}
+                for pmid in range(4)
+            ]
+        )
+        fetch.return_value = {
+            str(pmid): ("title", "abstract", "ok") for pmid in range(4)
+        }
+
+        class ConcurrentClient(_FakeDecisionClient):
+            def __init__(self):
+                super().__init__()
+                self.guard = threading.Lock()
+                self.active = 0
+                self.max_active = 0
+
+            def decide(self, state, *, question):
+                with self.guard:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.03)
+                with self.guard:
+                    self.active -= 1
+                return self.response
+
+        client = ConcurrentClient()
+        results = run_system1_filter(
+            candidates,
+            client,
+            run_id="parallel-run",
+            abstract_cache_path=None,
+            max_workers=4,
+            progress_every=0,
+        )
+        self.assertEqual(len(results), 4)
+        self.assertTrue(results["system1_status"].eq("ok").all())
+        self.assertGreater(client.max_active, 1)
 
     def test_system1_threshold_and_run_selection(self):
         yearly = pd.DataFrame(
