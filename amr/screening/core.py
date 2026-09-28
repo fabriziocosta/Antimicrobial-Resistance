@@ -1407,23 +1407,73 @@ def build_yearly_screened_pairs(
     unified_df: pd.DataFrame,
     *,
     include_decisions: Iterable[str] = ("strict", "yes"),
+    prediction_source: str = "llm",
+    probability_threshold: float | None = None,
+    system1_run_id: str | None = None,
     output_path: str | None = None,
     merge_with_existing_output: bool = True,
 ) -> pd.DataFrame:
-    """Filter yearly PMIDs by unified decisions and reaggregate yearly pair counts."""
+    """Filter yearly PMIDs by LLM decisions or System 1 probabilities."""
     required_yearly = {"pathogen", "antibiotic", "year", "pmids"}
     missing_yearly = required_yearly - set(yearly_df.columns)
     if missing_yearly:
         raise KeyError(f"yearly_df missing required columns: {sorted(missing_yearly)}")
 
-    required_screen = {"pmid", "pathogen", "antibiotic", "year", "unified_decision"}
-    missing_screen = required_screen - set(unified_df.columns)
-    if missing_screen:
-        raise KeyError(f"unified_df missing required columns: {sorted(missing_screen)}")
+    prediction_source = str(prediction_source).strip().lower()
+    if prediction_source not in {"llm", "system1"}:
+        raise ValueError("prediction_source must be 'llm' or 'system1'.")
 
-    include_set = {str(v).strip().lower() for v in include_decisions}
-    if not include_set:
-        raise ValueError("include_decisions cannot be empty.")
+    if prediction_source == "llm":
+        required_screen = {"pmid", "pathogen", "antibiotic", "year", "unified_decision"}
+        missing_screen = required_screen - set(unified_df.columns)
+        if missing_screen:
+            raise KeyError(f"unified_df missing columns: {sorted(missing_screen)}")
+        include_set = {str(v).strip().lower() for v in include_decisions}
+        if not include_set:
+            raise ValueError("include_decisions cannot be empty.")
+        keep_keys = (
+            unified_df.loc[
+                unified_df["unified_decision"].astype(str).str.lower().isin(include_set),
+                ["pmid", "pathogen", "antibiotic", "year"],
+            ]
+            .drop_duplicates()
+            .astype({"pmid": str, "pathogen": str, "antibiotic": str, "year": int})
+        )
+    else:
+        required_screen = {
+            "pmid", "pathogen", "antibiotic", "year", "system1_p_yes", "system1_status",
+        }
+        missing_screen = required_screen - set(unified_df.columns)
+        if missing_screen:
+            raise KeyError(f"system1_df missing columns: {sorted(missing_screen)}")
+        if probability_threshold is None or not 0.0 <= float(probability_threshold) <= 1.0:
+            raise ValueError("System 1 probability_threshold must be between 0 and 1.")
+        system1_df = unified_df
+        if "system1_run_id" in system1_df.columns:
+            available_run_ids = system1_df["system1_run_id"].dropna().astype(str).unique().tolist()
+            if system1_run_id is None:
+                if len(available_run_ids) > 1:
+                    raise ValueError("system1_run_id is required when multiple System 1 runs are present.")
+                if available_run_ids:
+                    system1_run_id = available_run_ids[0]
+            elif available_run_ids and str(system1_run_id) not in set(available_run_ids):
+                raise ValueError(f"System 1 run_id {system1_run_id!r} was not found in system1_df.")
+            if system1_run_id is not None and not system1_df.empty:
+                system1_df = system1_df.loc[
+                    system1_df["system1_run_id"].astype(str) == str(system1_run_id)
+                ]
+        elif system1_run_id is not None:
+            raise KeyError("system1_df has no system1_run_id column.")
+        p_yes = pd.to_numeric(system1_df["system1_p_yes"], errors="coerce")
+        keep_keys = (
+            system1_df.loc[
+                system1_df["system1_status"].astype(str).eq("ok")
+                & p_yes.ge(float(probability_threshold)),
+                ["pmid", "pathogen", "antibiotic", "year"],
+            ]
+            .drop_duplicates()
+            .astype({"pmid": str, "pathogen": str, "antibiotic": str, "year": int})
+        )
 
     work = yearly_df.copy()
     work = work.explode("pmids").dropna(subset=["pmids"]).copy()
@@ -1433,14 +1483,6 @@ def build_yearly_screened_pairs(
     work = work.dropna(subset=["year"])
     work["year"] = work["year"].astype(int)
 
-    keep_keys = (
-        unified_df.loc[
-            unified_df["unified_decision"].astype(str).str.lower().isin(include_set),
-            ["pmid", "pathogen", "antibiotic", "year"],
-        ]
-        .drop_duplicates()
-        .astype({"pmid": str, "pathogen": str, "antibiotic": str, "year": int})
-    )
     if keep_keys.empty:
         out = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
         if output_path:

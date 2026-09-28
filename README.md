@@ -69,9 +69,9 @@ Builds the yearly AMR dataset end-to-end:
 - Collects pathogen-antibiotic PMIDs through PubMed interval queries.
 - Converts pair-PMID associations to yearly counts from publication dates.
 - Collects yearly background publication counts for pathogens and antibiotics.
-- Runs one unified strict LLM pass (`AMR evidence` + `scientific-interest relevance`).
+- Runs either the existing unified LLM screen or Jev/System 1 through OpenRouter.
 - Exports the canonical screened yearly dataset.
-- Supports partitioned runs via `SLICE_START_YEAR` / `SLICE_END_YEAR` and auto-merges with existing parquet outputs.
+- Supports partitioned runs via `SLICE_START_YEAR` / `SLICE_END_YEAR`; prediction stores resume independently and retain past results.
 
 Primary APIs:
 
@@ -79,7 +79,10 @@ Primary APIs:
 - `amr.pipelines.collection.collect_yearly_background_counts(...)`
 - `amr.screening.prepare_yearly_candidate_pmids(...)`
 - `amr.screening.run_unified_llm_filter(...)`
+- `amr.screening.run_system1_filter(...)`
 - `amr.screening.build_yearly_screened_pairs(...)`
+
+Choose the active source in `outputs/pipeline_config.yaml` using `screening.active_source: llm` or `system1`. For System 1, set `OPENROUTER_API_KEY`, then adjust `screening.system1_probability_threshold` to rebuild the screened dataset from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
 
 ### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
@@ -116,7 +119,9 @@ configured pathogen–antibiotic pair.
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
 - `outputs/parquets/yearly_amr_screened_pairs.parquet`
   - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
-  - Built from unified decisions using the configured accepted decision set
+  - Rebuilt from the active LLM or System 1 prediction source and its configured selection rule
+- `outputs/parquets/yearly_amr_system1_decisions.parquet`
+  - Append-preserving System 1 prediction runs with `system1_p_yes`, status, model, and run metadata
 - `outputs/parquets/yearly_si.parquet`
   - Includes `bg_pathogen_n`, `bg_antibiotic_n`, `expected_log_count_global`, `SI`
 - `outputs/parquets/yearly_si_ranked_future.parquet`

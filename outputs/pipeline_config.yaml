@@ -14,6 +14,7 @@ paths:
   yearly_pair_pmids: outputs/parquets/candidate_amr_pair_pmid_links.parquet
   yearly_screened: outputs/parquets/yearly_amr_screened_pairs.parquet
   unified_decisions: outputs/parquets/yearly_amr_unified_decisions.parquet
+  system1_decisions: outputs/parquets/yearly_amr_system1_decisions.parquet
   unified_failures: outputs/parquets/yearly_amr_unified_failures.parquet
   pathogen_background: outputs/parquets/pathogen_tiab_counts.parquet
   antibiotic_background: outputs/parquets/antibiotic_tiab_counts.parquet
@@ -64,6 +65,17 @@ llm:
   progress_every: 200
   screened_include_decisions: &id001
   - strict
+screening:
+  active_source: llm
+  system1_probability_threshold: 0.5
+system1:
+  run_filter: true
+  model: typesafe/jev-1.13
+  run_id: jev-1.13-amr-support-v1
+  max_calls: null
+  rate_limit: 0.0
+  save_every: 100
+  progress_every: 100
 cost_estimation:
   pricing_by_model:
     gpt-4o-mini:
