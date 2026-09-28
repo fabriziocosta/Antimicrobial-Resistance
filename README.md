@@ -95,7 +95,7 @@ Run the screening stages in this order after collection:
 5. `05_model_scientific_interest.ipynb` reads the screened dataset using its
    existing input contract.
 
-Choose the active source in `outputs/pipeline_config.yaml` using `screening.active_source: llm` or `system1`. For System 1, set `OPENROUTER_API_KEY`; adjust `screening.system1_probability_threshold` in notebook 04c to rebuild from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
+Choose the active prediction source once in notebook 00 by setting `PREDICTION_SOURCE` to `"llm"` or `"system1"`, then run the config cell. It writes `screening.active_source` to `outputs/pipeline_config.yaml`; notebooks 04b and 04c use that same selection. Notebook 02 continues to estimate both approaches. For System 1, set `OPENROUTER_API_KEY`; adjust `screening.system1_probability_threshold` in notebook 00 and rerun the config cell, then run notebook 04c to rebuild from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
 
 ### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
