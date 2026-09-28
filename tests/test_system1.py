@@ -18,7 +18,7 @@ class _FakeDecisionClient:
             "model": "typesafe/jev-1.13-20260917",
             "provider": "TypeSafe",
             "id": "req-1",
-            "answers": {"amr_pair_supported": {"type": "noul", "probability": 0.82}},
+            "answers": {"amr_pair_supported": {"type": "noul", "noul": 0.82}},
         }
         self.error = error
         self.calls = 0
@@ -91,7 +91,7 @@ class TestSystem1Predictions(unittest.TestCase):
                 abstract_cache_path=None,
             )
             malformed = _FakeDecisionClient(
-                response={"answers": {"amr_pair_supported": {"type": "noul", "probability": 1.2}}}
+                response={"answers": {"amr_pair_supported": {"type": "noul", "noul": 1.2}}}
             )
             failed = run_system1_filter(
                 self.candidates,

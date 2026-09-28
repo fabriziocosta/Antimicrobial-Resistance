@@ -50,7 +50,10 @@ class OpenRouterJevClient:
     ) -> None:
         self.api_key = api_key or OPENROUTER_API_KEY
         if not self.api_key:
-            raise ValueError("Set OPENROUTER_API_KEY before running Jev predictions.")
+            raise ValueError(
+                "OpenRouter credentials were not found. Set OPENROUTER_API_KEY or store a "
+                "generic-password item in macOS Keychain (service: OpenRouter by default)."
+            )
         self.model = model
         self.timeout = timeout
         self.retries = max(1, int(retries))
@@ -112,7 +115,8 @@ def _extract_probability(response: dict[str, Any]) -> float:
     answer = answers.get("amr_pair_supported") if isinstance(answers, dict) else None
     if not isinstance(answer, dict) or answer.get("type") != "noul":
         raise ValueError("OpenRouter response is missing the AMR noul answer.")
-    probability = answer.get("probability")
+    # The Decisions API returns a noul answer as {"type": "noul", "noul": p_true}.
+    probability = answer.get("noul")
     if isinstance(probability, bool) or not isinstance(probability, (int, float)):
         raise ValueError("Jev returned a non-numeric AMR probability.")
     value = float(probability)

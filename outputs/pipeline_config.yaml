@@ -66,7 +66,7 @@ llm:
   screened_include_decisions: &id001
   - strict
 screening:
-  active_source: llm
+  active_source: system1
   system1_probability_threshold: 0.5
 system1:
   run_filter: true
@@ -77,11 +77,6 @@ system1:
   save_every: 100
   progress_every: 100
 cost_estimation:
-  system1_pricing_by_model:
-    typesafe/jev-1.13:
-      input_usd_per_1m_tokens: 0.042
-      output_usd_per_1m_tokens: 0.0
-  system1_cached_input_fraction: 0.0
   pricing_by_model:
     gpt-4o-mini:
       input_usd_per_1m_tokens: 0.15
@@ -91,6 +86,11 @@ cost_estimation:
       input_usd_per_1m_tokens: 0.05
       output_usd_per_1m_tokens: 0.4
       cached_input_usd_per_1m_tokens: 0.005
+  system1_pricing_by_model:
+    typesafe/jev-1.13:
+      input_usd_per_1m_tokens: 0.042
+      output_usd_per_1m_tokens: 0.0
+  system1_cached_input_fraction: 0.0
   batch_api_multiplier: 1.0
   sample_size: 1000
   random_seed: 42
