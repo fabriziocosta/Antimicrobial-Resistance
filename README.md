@@ -1,6 +1,6 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project uses a module-first workflow with nine active
+This project uses a module-first workflow with twelve active
 notebooks:
 
 0. `notebooks/00_configure_pipeline.ipynb`
@@ -8,10 +8,13 @@ notebooks:
 2. `notebooks/02_estimate_llm_screening_cost.ipynb`
 3. `notebooks/03_query_examples.ipynb`
 4. `notebooks/04_collect_yearly_data.ipynb`
-5. `notebooks/05_model_scientific_interest.ipynb`
-6. `notebooks/06_glass_interactive_si_shift.ipynb`
-7. `notebooks/07_glass_dedicated_pair_plots.ipynb`
-8. `notebooks/08_inspect_pair_pmids.ipynb`
+5. `notebooks/04a_prepare_candidate_abstracts.ipynb`
+6. `notebooks/04b_predict_candidate_pairs.ipynb`
+7. `notebooks/04c_build_screened_dataset.ipynb`
+8. `notebooks/05_model_scientific_interest.ipynb`
+9. `notebooks/06_glass_interactive_si_shift.ipynb`
+10. `notebooks/07_glass_dedicated_pair_plots.ipynb`
+11. `notebooks/08_inspect_pair_pmids.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -64,25 +67,35 @@ Prints example PubMed queries, cache preflight summaries, and prompt templates b
 
 ### Notebook 04: `notebooks/04_collect_yearly_data.ipynb`
 
-Builds the yearly AMR dataset end-to-end:
+Collects yearly candidates and background marginals:
 
 - Collects pathogen-antibiotic PMIDs through PubMed interval queries.
 - Converts pair-PMID associations to yearly counts from publication dates.
 - Collects yearly background publication counts for pathogens and antibiotics.
-- Runs either the existing unified LLM screen or Jev/System 1 through OpenRouter.
-- Exports the canonical screened yearly dataset.
-- Supports partitioned runs via `SLICE_START_YEAR` / `SLICE_END_YEAR`; prediction stores resume independently and retain past results.
+- Supports partitioned collection runs via `SLICE_START_YEAR` / `SLICE_END_YEAR`.
 
 Primary APIs:
 
 - `amr.pipelines.collection.collect_yearly_amr_dataset(...)`
 - `amr.pipelines.collection.collect_yearly_background_counts(...)`
-- `amr.screening.prepare_yearly_candidate_pmids(...)`
-- `amr.screening.run_unified_llm_filter(...)`
-- `amr.screening.run_system1_filter(...)`
-- `amr.screening.build_yearly_screened_pairs(...)`
 
-Choose the active source in `outputs/pipeline_config.yaml` using `screening.active_source: llm` or `system1`. For System 1, set `OPENROUTER_API_KEY`, then adjust `screening.system1_probability_threshold` to rebuild the screened dataset from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
+Run the screening stages in this order after collection:
+
+1. `04a_prepare_candidate_abstracts.ipynb` fills `pmid_abstracts.parquet` for
+   every unique candidate PMID. Existing cache rows are reused, no-abstract
+   results are retained, and failed fetches are retried on later runs.
+2. `02_estimate_llm_screening_cost.ipynb` estimates both LLM and Jev costs.
+   It stops with missing PMID examples if abstract cache coverage is incomplete.
+3. `04b_predict_candidate_pairs.ipynb` runs the active LLM or System 1 source
+   for the configured year slice. The prediction stores remain separate and
+   resume independently.
+4. `04c_build_screened_dataset.ipynb` applies the configured source and, for
+   System 1, run ID and probability threshold. It rebuilds the screened parquet
+   offline from saved predictions.
+5. `05_model_scientific_interest.ipynb` reads the screened dataset using its
+   existing input contract.
+
+Choose the active source in `outputs/pipeline_config.yaml` using `screening.active_source: llm` or `system1`. For System 1, set `OPENROUTER_API_KEY`; adjust `screening.system1_probability_threshold` in notebook 04c to rebuild from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
 
 ### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
@@ -190,12 +203,15 @@ snapshot.
 The refactored pipeline is designed for yearly (or multi-year slice) updates:
 
 1. Update shared settings in notebook 00 if required.
-2. Run notebook 04 on a slice (for example `2027-2027` or `2025-2027`).
-3. Outputs merge into canonical stores:
+2. Run notebook 04 on a slice (for example `2027-2027` or `2025-2027`), then run
+   `04a → 02 → 04b → 04c` in order.
+3. Collection and prediction outputs resume into their canonical stores:
    - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
    - `outputs/parquets/candidate_amr_pair_pmid_links.parquet`
    - `outputs/parquets/yearly_amr_unified_decisions.parquet`
-   - `outputs/parquets/yearly_amr_screened_pairs.parquet`
+   - `outputs/parquets/yearly_amr_system1_decisions.parquet`
+   - `outputs/parquets/yearly_amr_screened_pairs.parquet` (rebuilt from the
+     selected source, run ID, and threshold)
 4. Re-run notebook 05 with the chosen modeling window.
 5. Re-run notebooks 06–08 as needed to refresh comparisons, figures, and PMID
    inspection exports.

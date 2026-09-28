@@ -21,6 +21,14 @@ from amr.screening.core import (
 OPENROUTER_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 JEV_DEFAULT_MODEL = "typesafe/jev-1.13"
 SYSTEM1_QUESTION_VERSION = "amr-pair-support-noul-v1"
+SYSTEM1_AMR_SUPPORT_QUESTION = (
+    "Is the following statement true based only on the provided title and abstract? "
+    "The paper provides substantive antimicrobial-resistance evidence or context for the "
+    "specified target pathogen and target antibiotic (or an explicitly applicable antibiotic class). "
+    "Count resistance, susceptibility testing or patterns, AMR mechanisms, treatment, surveillance, "
+    "stewardship, or policy as relevant. Do not infer support from unrelated co-mentions. "
+    "The target pathogen and antibiotic must be linked by the paper's evidence or study context."
+)
 
 
 class DecisionClient(Protocol):
@@ -82,7 +90,7 @@ class OpenRouterJevClient:
         raise RuntimeError(f"OpenRouter Jev request failed: {last_error}") from last_error
 
 
-def _build_state(
+def build_system1_state(
     pmid: str,
     pathogen: str,
     antibiotic: str,
@@ -222,14 +230,6 @@ def run_system1_filter(
             )
             atomic_write_parquet(cache_df, abstract_cache_path, index=False)
 
-    question = (
-        "Is the following statement true based only on the provided title and abstract? "
-        "The paper provides substantive antimicrobial-resistance evidence or context for the "
-        "specified target pathogen and target antibiotic (or an explicitly applicable antibiotic class). "
-        "Count resistance, susceptibility testing or patterns, AMR mechanisms, treatment, surveillance, "
-        "stewardship, or policy as relevant. Do not infer support from unrelated co-mentions. "
-        "The target pathogen and antibiotic must be linked by the paper's evidence or study context."
-    )
     rows: list[dict[str, Any]] = []
     attempted = 0
     for row in pending:
@@ -263,8 +263,8 @@ def run_system1_filter(
         else:
             try:
                 response = client.decide(
-                    _build_state(pmid, pathogen, antibiotic, title, abstract),
-                    question=question,
+                    build_system1_state(pmid, pathogen, antibiotic, title, abstract),
+                    question=SYSTEM1_AMR_SUPPORT_QUESTION,
                 )
                 result["system1_p_yes"] = _extract_probability(response)
                 result["system1_status"] = "ok"
@@ -308,7 +308,9 @@ def run_system1_filter(
 __all__ = [
     "JEV_DEFAULT_MODEL",
     "OPENROUTER_DECISIONS_URL",
+    "SYSTEM1_AMR_SUPPORT_QUESTION",
     "SYSTEM1_QUESTION_VERSION",
     "OpenRouterJevClient",
+    "build_system1_state",
     "run_system1_filter",
 ]

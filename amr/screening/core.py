@@ -333,6 +333,75 @@ def fetch_pubmed_abstracts_batch(
     return {pmid: ("", "", "network_error") for pmid in pmids}
 
 
+def prefetch_candidate_abstracts(
+    candidate_df: pd.DataFrame,
+    *,
+    abstract_cache_path: str | Path,
+    email: str | None = None,
+    batch_size: int = 200,
+    session: requests.Session | None = None,
+) -> pd.DataFrame:
+    """Fill the abstract cache for candidate PMIDs, preserving completed rows.
+
+    Successful fetches without an abstract are cached as blank title/abstract rows,
+    so they are distinguishable from PMIDs that have not been fetched. Network
+    failures are not cached and are retried the next time this function runs.
+    Returns the complete cache after the run.
+    """
+    if "pmid" not in candidate_df.columns:
+        raise KeyError("candidate_df must contain a 'pmid' column")
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+
+    cache_path = Path(abstract_cache_path)
+    cache_cols = ["pmid", "title", "abstract"]
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        cache = pd.read_parquet(cache_path)
+        missing_cols = set(cache_cols) - set(cache.columns)
+        if missing_cols:
+            raise ValueError(f"Abstract cache is missing columns: {sorted(missing_cols)}")
+        cache = cache[cache_cols].copy()
+        cache["pmid"] = cache["pmid"].astype(str).str.strip()
+        cache = cache.drop_duplicates("pmid", keep="last")
+    else:
+        cache = pd.DataFrame(columns=cache_cols)
+
+    requested = (
+        candidate_df["pmid"].dropna().astype(str).str.strip()
+        .loc[lambda values: values.ne("")].drop_duplicates().tolist()
+    )
+    cached_pmids = set(cache["pmid"].astype(str))
+    missing_pmids = [pmid for pmid in requested if pmid not in cached_pmids]
+
+    for start in range(0, len(missing_pmids), batch_size):
+        batch = missing_pmids[start : start + batch_size]
+        fetched = fetch_pubmed_abstracts_batch(batch, email=email, session=session)
+        rows = [
+            {"pmid": pmid, "title": title, "abstract": abstract}
+            for pmid, (title, abstract, status) in fetched.items()
+            if status in {"ok", "no_abstract"}
+        ]
+        if rows:
+            cache = _merge_checkpoint_rows(
+                cache_path,
+                pd.DataFrame(rows, columns=cache_cols),
+                key_cols=["pmid"],
+                fallback=cache,
+            )
+        remaining = len(missing_pmids) - (start + len(batch))
+        print(
+            f"Abstract prefetch: processed {start + len(batch):,}/{len(missing_pmids):,} "
+            f"missing PMIDs; {remaining:,} batches remain."
+        )
+
+    # Ensure even an empty initial run leaves a usable cache artifact on disk.
+    if not cache_path.exists():
+        atomic_write_parquet(cache, cache_path, index=False)
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        cache = pd.read_parquet(cache_path)[cache_cols]
+    return cache.reset_index(drop=True)
+
+
 def _resolve_unified_system_prompt(system_prompt: str, include_explanatory_text: bool) -> str:
     """Select the stable production or explanatory unified prompt variant."""
     unified_prompts = {
@@ -1601,6 +1670,7 @@ __all__ = [
     "PUBMED_EFETCH",
     "fetch_pubmed_abstract",
     "fetch_pubmed_abstracts_batch",
+    "prefetch_candidate_abstracts",
     "build_user_prompt",
     "classify_abstract",
     "prepare_pmids_to_review",

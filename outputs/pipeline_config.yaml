@@ -77,6 +77,11 @@ system1:
   save_every: 100
   progress_every: 100
 cost_estimation:
+  system1_pricing_by_model:
+    typesafe/jev-1.13:
+      input_usd_per_1m_tokens: 0.042
+      output_usd_per_1m_tokens: 0.0
+  system1_cached_input_fraction: 0.0
   pricing_by_model:
     gpt-4o-mini:
       input_usd_per_1m_tokens: 0.15
