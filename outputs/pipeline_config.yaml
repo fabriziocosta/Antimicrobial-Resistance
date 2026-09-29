@@ -70,6 +70,7 @@ screening:
   system1_probability_threshold: 0.5
 system1:
   run_filter: true
+  max_workers: 128
   model: typesafe/jev-1.13
   run_id: jev-1.13-amr-support-v1
   max_calls: null

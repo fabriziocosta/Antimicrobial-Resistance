@@ -2,6 +2,8 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -181,6 +183,38 @@ class TestSystem1Predictions(unittest.TestCase):
         self.assertEqual(len(results), 4)
         self.assertTrue(results["system1_status"].eq("ok").all())
         self.assertGreater(client.max_active, 1)
+
+    @patch("amr.screening.system1.fetch_pubmed_abstracts_batch")
+    def test_credit_forecast_waits_for_reported_spend(self, fetch):
+        candidates = pd.DataFrame(
+            [
+                {"pmid": str(pmid), "pathogen": "E. coli", "antibiotic": "Ciprofloxacin", "year": 2022}
+                for pmid in range(2)
+            ]
+        )
+        fetch.return_value = {str(pmid): ("title", "abstract", "ok") for pmid in range(2)}
+
+        class CreditClient(_FakeDecisionClient):
+            def __init__(self):
+                super().__init__()
+                self.balances = iter([10.0, 10.0, 9.9, 9.9])
+
+            def credit_status(self):
+                balance = next(self.balances)
+                return f"account credits remaining ${balance:.4f}", balance
+
+        output = StringIO()
+        with redirect_stdout(output):
+            run_system1_filter(
+                candidates,
+                CreditClient(),
+                run_id="credit-run",
+                abstract_cache_path=None,
+                progress_every=1,
+            )
+        lines = output.getvalue().splitlines()
+        self.assertIn("end balance estimate waiting for OpenRouter to report spend", lines[1])
+        self.assertIn("estimated balance after 0 unresolved candidates $9.9000", lines[2])
 
     def test_system1_threshold_and_run_selection(self):
         yearly = pd.DataFrame(

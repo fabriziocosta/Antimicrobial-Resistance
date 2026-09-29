@@ -349,6 +349,30 @@ def run_system1_filter(
     else:
         latest_credit_status, latest_credit_amount = "balance lookup not supported by client", None
     starting_credit_amount = latest_credit_amount
+    last_credit_amount = latest_credit_amount
+    observed_cost_per_call: float | None = None
+
+    def _refresh_credit_info() -> None:
+        nonlocal latest_credit_status, latest_credit_amount, last_credit_amount
+        nonlocal observed_cost_per_call
+        if not callable(credit_status):
+            return
+        latest_credit_status, latest_credit_amount = credit_status()
+        if (
+            latest_credit_amount is not None
+            and last_credit_amount is not None
+            and starting_credit_amount is not None
+            and latest_credit_amount < last_credit_amount
+            and attempted > 0
+        ):
+            # OpenRouter's balance can remain unchanged across several polls, then
+            # catch up in a lump. Update the cost rate only when the reported
+            # balance moves so a stale balance is never mistaken for zero spend.
+            total_observed_spend = max(0.0, starting_credit_amount - latest_credit_amount)
+            if total_observed_spend > 0:
+                observed_cost_per_call = total_observed_spend / attempted
+        if latest_credit_amount is not None:
+            last_credit_amount = latest_credit_amount
 
     def _progress_line() -> str:
         counts = Counter(status_by_key.get(key, "pending") for key in progressed_keys)
@@ -361,21 +385,18 @@ def run_system1_filter(
         percent = (100.0 * progressed / total) if total else 100.0
         unresolved = max(0, total - counts["ok"] - counts["no_abstract"])
         estimated_end_amount = None
-        if (
-            latest_credit_amount is not None
-        ):
+        if latest_credit_amount is not None and observed_cost_per_call is not None:
             if unresolved == 0:
                 estimated_end_amount = latest_credit_amount
-            elif starting_credit_amount is not None and attempted > 0:
-                observed_spend = max(0.0, starting_credit_amount - latest_credit_amount)
+            else:
                 estimated_end_amount = max(
-                    0.0, latest_credit_amount - observed_spend / attempted * unresolved
+                    0.0, latest_credit_amount - observed_cost_per_call * unresolved
                 )
         estimate_text = (
             f"estimated balance after {unresolved:,} unresolved candidates "
             f"${estimated_end_amount:.4f}"
             if estimated_end_amount is not None
-            else "end balance estimate unavailable until request spend is observed"
+            else "end balance estimate waiting for OpenRouter to report spend"
         )
         return (
             f"{progressed:,}/{total:,} candidates ({percent:.1f}%) "
@@ -499,13 +520,11 @@ def run_system1_filter(
             if output_path and rows:
                 _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
                 rows = []
-            if callable(credit_status):
-                latest_credit_status, latest_credit_amount = credit_status()
+            _refresh_credit_info()
             print(_progress_line())
     if output_path and rows:
         _merge_checkpoint_rows(output_path, pd.DataFrame(rows), key_cols=key_cols, fallback=existing)
-    if callable(credit_status):
-        latest_credit_status, latest_credit_amount = credit_status()
+    _refresh_credit_info()
     print(f"System 1 final: {_progress_line()}")
     if output_path and not pending and not Path(output_path).exists():
         columns = key_cols + [
