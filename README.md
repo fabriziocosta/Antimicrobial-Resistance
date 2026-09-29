@@ -1,6 +1,6 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project uses a module-first workflow with twelve active
+This project uses a module-first workflow with thirteen active
 notebooks:
 
 0. `notebooks/00_configure_pipeline.ipynb`
@@ -12,9 +12,10 @@ notebooks:
 6. `notebooks/04b_predict_candidate_pairs.ipynb`
 7. `notebooks/04c_build_screened_dataset.ipynb`
 8. `notebooks/05_model_scientific_interest.ipynb`
-9. `notebooks/06_glass_interactive_si_shift.ipynb`
-10. `notebooks/07_glass_dedicated_pair_plots.ipynb`
-11. `notebooks/08_inspect_pair_pmids.ipynb`
+9. `notebooks/05a_analyze_si_drivers.ipynb`
+10. `notebooks/06_glass_interactive_si_shift.ipynb`
+11. `notebooks/07_glass_dedicated_pair_plots.ipynb`
+12. `notebooks/08_inspect_pair_pmids.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -92,8 +93,8 @@ Run the screening stages in this order after collection:
 4. `04c_build_screened_dataset.ipynb` applies the configured source and, for
    System 1, run ID and probability threshold. It rebuilds the screened parquet
    offline from saved predictions.
-5. `05_model_scientific_interest.ipynb` reads the screened dataset using its
-   existing input contract.
+5. `05_model_scientific_interest.ipynb` builds SI and ranks future high-interest pairs.
+6. `05a_analyze_si_drivers.ipynb` uses the saved SI/ranking outputs and LLM category metadata to explain the selected pairs.
 
 Choose the active prediction source once in notebook 00 by setting `PREDICTION_SOURCE` to `"llm"` or `"system1"`, then run the config cell. It writes `screening.active_source` to `outputs/pipeline_config.yaml`; notebooks 04b and 04c use that same selection. Notebook 02 continues to estimate both approaches. For System 1, credentials can come from `OPENROUTER_API_KEY` or a macOS Keychain generic-password item with service `OpenRouter` by default. Use account name `OPENROUTER_API_KEY` by default; set `OPENROUTER_KEYCHAIN_SERVICE`, `OPENROUTER_KEYCHAIN_INTERNET_SERVER`, or `OPENROUTER_KEYCHAIN_ACCOUNT` to match differently named items. Notebook 04b runs Jev requests concurrently; tune `system1.max_workers` in notebook 00 (default 128) and lower it if OpenRouter returns rate limits. Adjust `screening.system1_probability_threshold` in notebook 00 and rerun the config cell, then run notebook 04c to rebuild from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
 
@@ -104,13 +105,16 @@ Performs SI modeling and forecasting:
 - Builds yearly SI with pooled background-adjusted baseline.
 - Forecasts future SI using yearly LOESS count modeling.
 - Ranks pairs for reliable future high scientific interest.
-- Produces focused plots for shortlisted pairs.
-- Saves all-year driver-composition pie charts for the selected pairs in one PDF grid.
+- Produces focused plots and shape screens for shortlisted pairs.
 
 Primary APIs:
 
 - `amr.pipelines.si.build_yearly_si_dataset(...)`
 - `amr.pipelines.si.rank_future_high_interest_pairs(...)`
+
+### Notebook 05a: `notebooks/05a_analyze_si_drivers.ipynb`
+
+Explains the paper-category mix behind ranked pairs using LLM classification metadata. It writes driver summaries, category trend plots, and an all-years driver-composition pie-chart grid. Run it after notebook 05; it does not rebuild SI or rankings.
 
 ### Notebook 06: `notebooks/06_glass_interactive_si_shift.ipynb`
 
@@ -168,7 +172,7 @@ git lfs install
 git lfs pull
 ```
 
-### Re-running notebooks 05–08 from a clone
+### Re-running the SI and GLASS notebooks from a clone
 
 After installing the project and running `git lfs pull`, notebooks 05–08 can use the
 versioned configuration, static assets, and parquet caches directly:
@@ -178,8 +182,9 @@ pip install -e ".[dev,notebooks,loess]"
 git lfs pull
 ```
 
-Run notebooks 05, 06, 07, and 08 in order. Notebook 05 rebuilds the SI and ranking
-parquets from the screened AMR, background-count, and unified-decision caches.
+Run notebooks 05, 05a, 06, 07, and 08 in order. Notebook 05 rebuilds the SI and ranking
+parquets from the screened AMR and background-count caches. Notebook 05a builds the
+driver summaries and plots from those rankings and the unified-decision cache.
 Notebooks 06 and 07 rebuild the GLASS comparisons and figures; notebook 08 rebuilds
 the selected pair-PMID Excel export. Generated figures and exports remain local.
 
@@ -212,6 +217,6 @@ The refactored pipeline is designed for yearly (or multi-year slice) updates:
    - `outputs/parquets/yearly_amr_system1_decisions.parquet`
    - `outputs/parquets/yearly_amr_screened_pairs.parquet` (rebuilt from the
      selected source, run ID, and threshold)
-4. Re-run notebook 05 with the chosen modeling window.
+4. Re-run notebook 05 with the chosen modeling window, then notebook 05a to refresh driver analyses.
 5. Re-run notebooks 06–08 as needed to refresh comparisons, figures, and PMID
    inspection exports.
