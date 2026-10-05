@@ -198,6 +198,8 @@ def clean_enriched_pair_pmid_df(df: pd.DataFrame) -> pd.DataFrame:
     work = work.loc[start.le(end)].copy()
     work["pub_date"] = pd.to_datetime(work["pub_date"], errors="coerce")
     work["pub_year"] = pd.to_numeric(work["pub_year"], errors="coerce").astype("Int64")
+    missing_year = work["pub_year"].isna() & work["pub_date"].notna()
+    work.loc[missing_year, "pub_year"] = work.loc[missing_year, "pub_date"].dt.year.astype("Int64")
     work = work.dropna(subset=["pub_year"]).copy()
     work["pub_year"] = work["pub_year"].astype(int)
     work = work.loc[work["pub_year"].between(1900, _current_year_upper_bound())].copy()

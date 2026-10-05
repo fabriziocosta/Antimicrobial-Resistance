@@ -757,6 +757,21 @@ def run_unified_llm_filter(
     missing = required_cols - set(candidate_df.columns)
     if missing:
         raise KeyError(f"candidate_df missing required columns: {sorted(missing)}")
+    candidate_df = candidate_df.copy()
+    candidate_years = pd.to_numeric(candidate_df["year"], errors="coerce")
+    invalid_years = candidate_years.isna() | candidate_years.mod(1).ne(0)
+    if invalid_years.any():
+        raise ValueError(
+            f"candidate_df contains {int(invalid_years.sum())} missing, non-numeric, "
+            "or non-integer year value(s)."
+        )
+    candidate_df["year"] = candidate_years.astype(int)
+    # This is the classification grain and may arrive duplicated from merged
+    # yearly/link tables. Deduplicate before prefetching or batching so one key
+    # never triggers multiple abstract fetches or paid LLM calls in this run.
+    candidate_df = candidate_df.drop_duplicates(
+        subset=["pmid", "pathogen", "antibiotic", "year"]
+    ).reset_index(drop=True)
     system_prompt = _resolve_unified_system_prompt(system_prompt, include_explanatory_text)
     category_cols = AMR_CATEGORY_COLUMNS
 
@@ -1045,16 +1060,25 @@ def run_unified_llm_filter(
             return [_classify(item) for item in batch]
 
         out: list[dict] = []
+        terminal_error: TerminalLLMError | None = None
         with ThreadPoolExecutor(max_workers=int(max(1, llm_max_workers))) as pool:
             futures = [pool.submit(_classify, item) for item in batch]
             for fut in as_completed(futures):
+                if fut.cancelled():
+                    continue
                 try:
                     out.append(fut.result())
                 except TerminalLLMError as exc:
-                    for pending in futures:
-                        pending.cancel()
-                    exc.partial_results = out + exc.partial_results
-                    raise
+                    if terminal_error is None:
+                        terminal_error = exc
+                        for pending in futures:
+                            if pending is not fut:
+                                pending.cancel()
+                    else:
+                        terminal_error.partial_results.extend(exc.partial_results)
+        if terminal_error is not None:
+            terminal_error.partial_results = out + terminal_error.partial_results
+            raise terminal_error
         return out
 
     results: list[dict] = []

@@ -413,7 +413,11 @@ def _materialize_pair_results(
             meta = get_metadata(pmid, metadata_cache)
             pub_date = meta["date"]
             if mode == "full":
-                if not pub_date or not (overall_start_dt <= pub_date <= overall_end_dt):
+                if (
+                    not pub_date
+                    or not (overall_start_dt <= pub_date <= overall_end_dt)
+                    or not (entry["start_dt"] <= pub_date <= entry["end_dt"])
+                ):
                     continue
             elif pub_date and not (entry["start_dt"] <= pub_date <= entry["end_dt"]):
                 continue
