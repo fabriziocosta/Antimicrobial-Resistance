@@ -15,6 +15,7 @@ from amr.pubmed.intervals import (
     count_pmids_per_year_for_pathogens_resumable,
     fetch_pmids_intervals,
 )
+from amr.pubmed.grouped import fetch_pmids_intervals_grouped
 from ..pubmed.yearly import (
     aggregate_pair_counts_by_year,
     attach_pubmed_metadata,
@@ -435,6 +436,10 @@ def collect_yearly_amr_dataset(
     max_workers: int = 4,
     max_pending_futures: int | None = None,
     partial_interval_max: int = 1,
+    search_mode: str = "grouped",
+    antibiotic_group_size: int = 10,
+    group_search_cache_path: str | Path = "pubmed_group_search.sqlite",
+    abstract_cache_path: str | Path | None = None,
     refresh_cached_intervals: bool = False,
     refresh_cached_pairs: Sequence[tuple[str, str]] | None = None,
     collection_verbose: int = 1,
@@ -447,30 +452,59 @@ def collect_yearly_amr_dataset(
     pass ``refresh_cached_pairs`` to limit the refresh. Already cached PMID metadata
     and existing pair/year counts are reused.
     """
-    interval_df = fetch_pmids_intervals(
-        pathogens=pathogens,
-        antibiotics=antibiotics,
-        bacteria_synonym_df=bacteria_synonym_df,
-        antibiotic_synonym_df=antibiotic_synonym_df,
-        min_date=min_date,
-        max_date=max_date,
-        year_gap=interval_year_gap,
-        email=email,
-        parquet_path=str(intervals_output_path),
-        save_every=save_every,
-        extra_keywords=extra_keywords,
-        full_fetch_threshold=full_fetch_threshold,
-        summary_batch_size=summary_batch_size,
-        retrieve_batch_size=retrieve_batch_size,
-        metadata_cache_path=str(metadata_cache_path),
-        max_workers=max_workers,
-        max_pending_futures=max_pending_futures,
-        partial_interval_max=partial_interval_max,
-        refresh_cached_intervals=refresh_cached_intervals,
-        refresh_cached_pairs=refresh_cached_pairs,
-        verbose=collection_verbose,
-        progress_every=collection_progress_every,
-    )
+    if search_mode == "grouped":
+        interval_df = fetch_pmids_intervals_grouped(
+            pathogens=pathogens,
+            antibiotics=antibiotics,
+            bacteria_synonym_df=bacteria_synonym_df,
+            antibiotic_synonym_df=antibiotic_synonym_df,
+            min_date=min_date,
+            max_date=max_date,
+            year_gap=interval_year_gap,
+            email=email,
+            parquet_path=intervals_output_path,
+            metadata_cache_path=metadata_cache_path,
+            abstract_cache_path=abstract_cache_path,
+            group_search_cache_path=group_search_cache_path,
+            group_size=antibiotic_group_size,
+            extra_keywords=extra_keywords,
+            full_fetch_threshold=full_fetch_threshold,
+            retrieve_batch_size=retrieve_batch_size,
+            metadata_batch_size=metadata_batch_size,
+            max_workers=max_workers,
+            max_pending_futures=max_pending_futures,
+            refresh_cached_intervals=refresh_cached_intervals,
+            refresh_cached_pairs=refresh_cached_pairs,
+            verbose=collection_verbose,
+            progress_every=collection_progress_every,
+        )
+    elif search_mode == "pair":
+        interval_df = fetch_pmids_intervals(
+            pathogens=pathogens,
+            antibiotics=antibiotics,
+            bacteria_synonym_df=bacteria_synonym_df,
+            antibiotic_synonym_df=antibiotic_synonym_df,
+            min_date=min_date,
+            max_date=max_date,
+            year_gap=interval_year_gap,
+            email=email,
+            parquet_path=str(intervals_output_path),
+            save_every=save_every,
+            extra_keywords=extra_keywords,
+            full_fetch_threshold=full_fetch_threshold,
+            summary_batch_size=summary_batch_size,
+            retrieve_batch_size=retrieve_batch_size,
+            metadata_cache_path=str(metadata_cache_path),
+            max_workers=max_workers,
+            max_pending_futures=max_pending_futures,
+            partial_interval_max=partial_interval_max,
+            refresh_cached_intervals=refresh_cached_intervals,
+            refresh_cached_pairs=refresh_cached_pairs,
+            verbose=collection_verbose,
+            progress_every=collection_progress_every,
+        )
+    else:
+        raise ValueError("search_mode must be 'grouped' or 'pair'.")
 
     pair_pmid_df_raw = explode_positive_pair_pmids(interval_df)
     if Path(yearly_pair_pmid_output_path).exists():
@@ -484,6 +518,9 @@ def collect_yearly_amr_dataset(
         new_pair_pmid_df["collection_run_min_date"] = min_date
         new_pair_pmid_df["collection_run_max_date"] = max_date
     pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, new_pair_pmid_df)
+    pair_pmid_df = pair_pmid_df.sort_values(
+        ["pathogen", "antibiotic", "start_date", "end_date", "pmid"], kind="stable"
+    ).reset_index(drop=True)
     Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_parquet(pair_pmid_df, yearly_pair_pmid_output_path, index=False)
 
@@ -513,6 +550,11 @@ def collect_yearly_amr_dataset(
     else:
         existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
     yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
+    yearly_df = yearly_df.sort_values(["pathogen", "antibiotic", "year"], kind="stable").reset_index(drop=True)
+    if not enriched_df.empty:
+        enriched_df = enriched_df.sort_values(
+            ["pathogen", "antibiotic", "start_date", "end_date", "pmid"], kind="stable"
+        ).reset_index(drop=True)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_parquet(yearly_df, output_path, index=False)

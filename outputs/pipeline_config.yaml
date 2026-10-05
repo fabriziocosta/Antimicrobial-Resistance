@@ -21,7 +21,10 @@ paths:
   interval_pmids: outputs/parquets/pmids_results.parquet
   pubmed_metadata_cache: outputs/parquets/pubmed_pmid_metadata.parquet
   abstract_cache: outputs/parquets/pmid_abstracts.parquet
+  group_search_cache: outputs/parquets/pubmed_group_search.sqlite
 collection:
+  search_mode: grouped
+  antibiotic_group_size: 10
   pubmed_email: xfcosta@gmail.com
   total_start_year: 1970
   total_end_year: 2026

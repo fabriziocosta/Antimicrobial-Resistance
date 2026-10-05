@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import socket
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Callable, Dict, Optional, Sequence, Tuple, List
 from urllib.error import HTTPError, URLError
@@ -450,10 +451,64 @@ def fetch_pub_metadata(
     return date_map, venue_map
 
 
+def fetch_pubmed_abstracts_batch(
+    pmids: Sequence[str],
+    *,
+    email: str,
+    verbose: bool = False,
+) -> Dict[str, Tuple[str, str]]:
+    """Fetch PubMed titles and abstracts for one bounded PMID batch."""
+    _configure_entrez(email)
+    normalized = normalize_pmids(pmids)
+    if not normalized:
+        return {}
+    title_abstracts: Dict[str, Tuple[str, str]] = {}
+    for attempt in range(RETRIES):
+        try:
+            ENTREZ_RATE_LIMITER.wait()
+            handle = Entrez.efetch(db="pubmed", id=normalized, retmode="xml")
+            try:
+                root = ET.parse(handle).getroot()
+            finally:
+                handle.close()
+            for article in root.findall(".//PubmedArticle"):
+                pmid_el = article.find(".//MedlineCitation/PMID")
+                if pmid_el is None or not pmid_el.text:
+                    continue
+                pmid = pmid_el.text.strip()
+                article_el = article.find(".//Article")
+                if article_el is None:
+                    title_abstracts[pmid] = ("", "")
+                    continue
+                title_el = article_el.find("./ArticleTitle")
+                title = " ".join(title_el.itertext()).strip() if title_el is not None else ""
+                abstract_el = article_el.find("./Abstract")
+                abstract = "\n".join(
+                    " ".join(section.itertext()).strip()
+                    for section in abstract_el.findall("./AbstractText")
+                    if abstract_el is not None and " ".join(section.itertext()).strip()
+                ) if abstract_el is not None else ""
+                title_abstracts[pmid] = (title, abstract)
+            for pmid in normalized:
+                title_abstracts.setdefault(pmid, ("", ""))
+            return title_abstracts
+        except NETWORK_EXCEPTIONS as exc:
+            delay = _wait_before_retry(exc, attempt)
+            if verbose:
+                print(f"Abstract batch fetch failed (attempt {attempt + 1}/{RETRIES}); retrying in {delay:g}s: {exc}")
+        except Exception as exc:
+            if attempt == RETRIES - 1:
+                raise RuntimeError(f"Failed to fetch abstracts for a batch of {len(normalized)} PMIDs.") from exc
+            delay = BACKOFF_FACTOR * (2**attempt)
+            time.sleep(delay)
+    raise RuntimeError(f"Failed to fetch abstracts for a batch of {len(normalized)} PMIDs.")
+
+
 __all__ = [
     "parse_pubdate",
     "esearch_count_for_year",
     "search_pmids",
     "retrieve_pmids",
     "fetch_pub_metadata",
+    "fetch_pubmed_abstracts_batch",
 ]

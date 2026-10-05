@@ -67,8 +67,28 @@ def _openrouter_key_from_keychain() -> str | None:
                     return key
     return None
 
+
+def _ncbi_key_from_keychain() -> str | None:
+    """Read the NCBI E-utilities key from macOS Keychain if configured there."""
+    if sys.platform != "darwin" or shutil.which("security") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "NCBI", "-a", "NCBI_API_KEY", "-w"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    key = result.stdout.strip()
+    return key if result.returncode == 0 and key else None
+
 # PubMed E-utilities (Entrez) network settings
-EUTILS_API_KEY: str | None = os.getenv("NCBI_API_KEY") or os.getenv("EUTILS_API_KEY")
+EUTILS_API_KEY: str | None = (
+    os.getenv("NCBI_API_KEY") or os.getenv("EUTILS_API_KEY") or _ncbi_key_from_keychain()
+)
 OPENROUTER_API_KEY: str | None = (
     os.getenv("OPENROUTER_API_KEY") or _openrouter_key_from_keychain()
 )

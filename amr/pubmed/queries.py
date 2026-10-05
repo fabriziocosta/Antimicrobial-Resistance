@@ -104,6 +104,11 @@ def build_antibiotic_query(
 ) -> str:
     """Construct an antibiotic clause using canonical name, synonyms, and split variants."""
     variants = expand_antibiotic_synonyms(antibiotic, antibiotic_synonym_df)
+    return build_antibiotic_query_from_variants(variants, field=field)
+
+
+def build_antibiotic_query_from_variants(variants: list[str], *, field: str = "Abstract") -> str:
+    """Build an antibiotic clause from variants that have already been expanded."""
     variant_clauses: list[str] = []
     for variant in variants:
         parts = re.split(r"[-/]", variant)
@@ -156,12 +161,47 @@ def build_antibiotic_pathogen_query(
     return " AND ".join(term_parts)
 
 
+def build_antibiotic_group_pathogen_query(
+    antibiotics: list[str],
+    pathogen: str,
+    bacteria_synonym_df: pd.DataFrame,
+    antibiotic_synonym_df: pd.DataFrame | None = None,
+    extra_clauses: list[str] | None = None,
+    *,
+    pathogen_clause: str | None = None,
+    variants_by_antibiotic: dict[str, list[str]] | None = None,
+) -> str:
+    """Build one pathogen/AMR PubMed query for a bounded group of antibiotics."""
+    if not antibiotics:
+        raise ValueError("At least one antibiotic is required for a grouped query.")
+    if len(antibiotics) > 10:
+        raise ValueError("Grouped PubMed queries support at most 10 antibiotics.")
+
+    pathogen_clause = pathogen_clause or build_pathogen_tiab_query(pathogen, bacteria_synonym_df)
+    antibiotic_clauses = [
+        build_antibiotic_query_from_variants(
+            variants_by_antibiotic[antibiotic], field="Title/Abstract"
+        )
+        if variants_by_antibiotic is not None
+        else build_antibiotic_query(antibiotic, antibiotic_synonym_df, field="Title/Abstract")
+        for antibiotic in antibiotics
+    ]
+    term_parts = [
+        f"({pathogen_clause} AND ({' OR '.join(antibiotic_clauses)}))"
+    ]
+    if extra_clauses:
+        term_parts.extend(f"({clause})" for clause in extra_clauses)
+    return " AND ".join(term_parts)
+
+
 __all__ = [
     "prepare_antibiotic_pubmed_query",
     "prepare_antibiotic_pubmed_query_tiab",
     "expand_synonyms",
     "expand_antibiotic_synonyms",
     "build_antibiotic_query",
+    "build_antibiotic_query_from_variants",
     "build_pathogen_tiab_query",
     "build_antibiotic_pathogen_query",
+    "build_antibiotic_group_pathogen_query",
 ]
