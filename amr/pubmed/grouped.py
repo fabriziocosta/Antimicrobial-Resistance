@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
@@ -487,6 +488,7 @@ def fetch_pmids_intervals_grouped(
     pair_venues: dict[tuple[str, str, str, str], Counter[str]] = {}
     completed = 0
     total = len(tasks)
+    search_started_at = time.monotonic()
 
     def _run_task(task: dict[str, object]) -> dict[str, object]:
         connection = _db_connect(cache_path)
@@ -544,7 +546,31 @@ def fetch_pmids_intervals_grouped(
 
         completed += 1
         if verbose >= 1 and (completed % max(1, progress_every) == 0 or completed == total):
-            print(f"Grouped PubMed searches: {completed:,}/{total:,} ({pathogen}; {len(group)} antibiotics).")
+            elapsed_seconds = max(0.0, time.monotonic() - search_started_at)
+            searches_per_second = completed / elapsed_seconds if elapsed_seconds > 0 else 0.0
+            remaining_seconds = (
+                (total - completed) / searches_per_second if searches_per_second > 0 else 0.0
+            )
+
+            def _format_duration(seconds: float) -> str:
+                total_seconds = max(0, int(round(seconds)))
+                days, remainder = divmod(total_seconds, 86400)
+                hours, remainder = divmod(remainder, 3600)
+                minutes, secs = divmod(remainder, 60)
+                if days:
+                    return f"{days}d {hours}h {minutes}m"
+                if hours:
+                    return f"{hours}h {minutes}m"
+                if minutes:
+                    return f"{minutes}m {secs}s"
+                return f"{secs}s"
+
+            print(
+                f"Grouped PubMed searches: {completed:,}/{total:,} "
+                f"({pathogen}; {len(group)} antibiotics) | "
+                f"elapsed {_format_duration(elapsed_seconds)} | "
+                f"ETA ~{_format_duration(remaining_seconds)}."
+            )
         if metadata_dirty and metadata_cache_path and (completed % 25 == 0 or completed == total):
             save_pubmed_metadata_cache(metadata_dict_to_dataframe(metadata_cache), metadata_cache_path)
             metadata_dirty = False
