@@ -244,6 +244,18 @@ def _normalize_for_match(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _nullable_text(value: object) -> str:
+    """Return empty text for null cache fields, including pandas.NA."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def _variant_matches(text: str, variant: str) -> bool:
     normalized_text = _normalize_for_match(text)
     normalized_variant = _normalize_for_match(variant)
@@ -281,7 +293,7 @@ def _load_abstract_cache(path: str | Path | None, search_cache_path: Path) -> di
             frame = None
     if frame is not None and {"pmid", "title", "abstract"}.issubset(frame.columns):
         cache.update({
-            str(row.pmid): (str(row.title or ""), str(row.abstract or ""))
+            str(row.pmid): (_nullable_text(row.title), _nullable_text(row.abstract))
             for row in frame[["pmid", "title", "abstract"]].itertuples(index=False)
         })
     connection = _db_connect(search_cache_path)

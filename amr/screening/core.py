@@ -209,6 +209,20 @@ AMR_PRIMARY_CATEGORIES = {
     "OTHER",
     "NONE",
 }
+
+
+def _safe_text(value: object) -> str:
+    """Convert nullable scalar text fields to strings without boolean-testing NA."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def _log(log_path: str | None, message: str) -> None:
     """Write log to stdout and, if provided, append to a file."""
     import datetime as _dt
@@ -442,12 +456,12 @@ def _prompt_cache_key_for_system_prompt(system_prompt: str) -> str | None:
 def build_user_prompt(pmid: str, pathogen: str, antibiotic: str, title: str, abstract: str) -> str:
     """Create a data-only, deterministically ordered per-record prompt."""
     payload = {
-        "target_pathogen": str(pathogen or ""),
-        "target_antibiotic": str(antibiotic or ""),
-        "title": str(title or ""),
-        "abstract": str(abstract or "[no abstract available]"),
+        "target_pathogen": _safe_text(pathogen),
+        "target_antibiotic": _safe_text(antibiotic),
+        "title": _safe_text(title),
+        "abstract": _safe_text(abstract) or "[no abstract available]",
         # Keep the PMID last: it is useful for tracing but is not classification input.
-        "pmid": str(pmid or ""),
+        "pmid": _safe_text(pmid),
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -696,7 +710,7 @@ def prepare_yearly_candidate_pmids(
 
 
 def _normalize_unified_decision(value: object) -> str:
-    text = str(value or "").strip().lower()
+    text = _safe_text(value).strip().lower()
     if text.startswith("strict"):
         return "strict"
     if text.startswith("yes"):
@@ -859,7 +873,7 @@ def run_unified_llm_filter(
             cache_df = pd.read_parquet(abstract_cache_path)
             if {"pmid", "title", "abstract"}.issubset(cache_df.columns):
                 for row in cache_df[["pmid", "title", "abstract"]].itertuples(index=False):
-                    abstract_cache[str(row.pmid)] = (row.title or "", row.abstract or "")
+                    abstract_cache[str(row.pmid)] = (_safe_text(row.title), _safe_text(row.abstract))
         except Exception as exc:
             _append_log(f"Failed loading abstract cache from {abstract_cache_path}: {exc}")
 
@@ -1283,7 +1297,7 @@ def run_llm_filter(
             _df_cache = pd.read_parquet(abstract_cache_path)
             if {"pmid", "title", "abstract"}.issubset(_df_cache.columns):
                 for r in _df_cache[["pmid", "title", "abstract"]].itertuples(index=False):
-                    abstract_cache[str(r.pmid)] = (r.title or "", r.abstract or "")
+                    abstract_cache[str(r.pmid)] = (_safe_text(r.title), _safe_text(r.abstract))
                 _log_verbose(f"Loaded abstract cache: {len(abstract_cache)} PMIDs from {abstract_cache_path}")
         except Exception as e:
             _log_verbose(f"Failed to load abstract cache from {abstract_cache_path}: {e}")

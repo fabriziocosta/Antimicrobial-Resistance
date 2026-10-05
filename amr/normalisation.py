@@ -105,12 +105,20 @@ def _resolve_antibiotic_level_column(level: str) -> str:
     return level_map.get(_normalise_level_name(level), level)
 
 
-def _prepare_year_counts(year_df: pd.DataFrame) -> pd.DataFrame:
+def _prepare_year_counts(year_df: pd.DataFrame, *, entity_col: str) -> pd.DataFrame:
     """Normalise a yearly background dataframe to integer years and numeric counts."""
     work = year_df.copy()
     work["year"] = pd.to_numeric(work["year"], errors="coerce").astype("Int64")
     work["count"] = pd.to_numeric(work["count"], errors="coerce").fillna(0.0)
-    return work.dropna(subset=["year"]).astype({"year": int})
+    work = work.dropna(subset=[entity_col, "year"]).copy()
+    work["year"] = work["year"].astype(int)
+    # Background artifacts are snapshots keyed by entity/year; match the cache
+    # cleaner's keep-last behavior to avoid multiplying counts in interval joins.
+    return (
+        work.drop_duplicates(subset=[entity_col, "year"], keep="last")
+        .loc[:, [entity_col, "year", "count"]]
+        .reset_index(drop=True)
+    )
 
 
 def _expand_interval_years(work: pd.DataFrame) -> pd.DataFrame:
@@ -300,8 +308,8 @@ def normalise_by_background(
     work["end_year"] = pd.to_datetime(work["end_date"]).dt.year.astype(int)
 
     # Pre-aggregate yearly background counts per (entity, year).
-    p_year = _prepare_year_counts(pathogen_year_df)
-    a_year = _prepare_year_counts(antibiotic_year_df)
+    p_year = _prepare_year_counts(pathogen_year_df, entity_col="pathogen")
+    a_year = _prepare_year_counts(antibiotic_year_df, entity_col="antibiotic")
 
     work["_row_id"] = np.arange(len(work), dtype=int)
     exploded = _expand_interval_years(work)

@@ -27,7 +27,13 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
 
 def _clean_pubmed_phrase(value: object) -> str:
     """Sanitize lookup-table text before embedding it as a quoted PubMed phrase."""
-    text = str(value or "").strip()
+    if value is None:
+        text = ""
+    else:
+        try:
+            text = "" if pd.isna(value) else str(value).strip()
+        except (TypeError, ValueError):
+            text = str(value).strip()
     text = re.sub(r'["\[\]\r\n\t]', " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text

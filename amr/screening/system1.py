@@ -36,6 +36,18 @@ SYSTEM1_AMR_SUPPORT_QUESTION = (
 )
 
 
+def _nullable_text(value: object) -> str:
+    """Return empty text for null cache fields, including pandas.NA."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
 def _format_duration(seconds: float) -> str:
     total = max(0, int(seconds))
     hours, remainder = divmod(total, 3600)
@@ -197,7 +209,7 @@ def _load_abstract_cache(path: str | Path | None) -> dict[str, tuple[str, str]]:
     if not {"pmid", "title", "abstract"}.issubset(cache_df.columns):
         return {}
     return {
-        str(row.pmid): (str(row.title or ""), str(row.abstract or ""))
+        str(row.pmid): (_nullable_text(row.title), _nullable_text(row.abstract))
         for row in cache_df[["pmid", "title", "abstract"]].itertuples(index=False)
     }
 
