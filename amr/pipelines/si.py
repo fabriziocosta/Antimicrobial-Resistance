@@ -245,9 +245,9 @@ def build_antibiotic_group_mapping(
 
     mapping_df = lookup_df[["Antibiotic", group_col]].copy()
     mapping_df = mapping_df.rename(columns={"Antibiotic": "source_antibiotic", group_col: "analysis_antibiotic"})
-    mapping_df["source_antibiotic"] = mapping_df["source_antibiotic"].astype(str).str.strip()
-    mapping_df["analysis_antibiotic"] = mapping_df["analysis_antibiotic"].astype(str).str.strip()
-    mapping_df = mapping_df.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+    for column in ("source_antibiotic", "analysis_antibiotic"):
+        mapping_df[column] = mapping_df[column].fillna("").astype(str).str.strip()
+    mapping_df = mapping_df.replace("", pd.NA)
     mapping_df = mapping_df.dropna(subset=["source_antibiotic", "analysis_antibiotic"])
 
     duplicate_mapping_df = (
@@ -774,11 +774,21 @@ def _load_driver_category_coarsening(
     if missing:
         raise KeyError(f"category coarsening lookup missing required columns: {sorted(missing)}")
     lookup_df = lookup_df.copy()
-    lookup_df["amr_primary_category"] = lookup_df["amr_primary_category"].astype(str).str.strip()
-    lookup_df["amr_coarse_category"] = lookup_df["amr_coarse_category"].astype(str).str.strip()
+    for column in ("amr_primary_category", "amr_coarse_category"):
+        lookup_df[column] = lookup_df[column].fillna("").astype(str).str.strip()
     lookup_df = lookup_df.loc[
         lookup_df["amr_primary_category"].ne("") & lookup_df["amr_coarse_category"].ne("")
-    ].drop_duplicates(subset=["amr_primary_category"], keep="first")
+    ]
+    conflicting = lookup_df.groupby("amr_primary_category")["amr_coarse_category"].nunique()
+    conflicting = conflicting[conflicting > 1]
+    if not conflicting.empty:
+        preview = ", ".join(conflicting.index.astype(str).tolist()[:10])
+        extra = "" if len(conflicting) <= 10 else f" ... (+{len(conflicting) - 10} more)"
+        raise ValueError(
+            "Conflicting coarse categories found for "
+            f"{len(conflicting)} primary AMR categories: {preview}{extra}"
+        )
+    lookup_df = lookup_df.drop_duplicates(subset=["amr_primary_category"], keep="first")
     return lookup_df
 
 
