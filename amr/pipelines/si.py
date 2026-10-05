@@ -28,6 +28,7 @@ from amr.si.core import (
     summarize_si_change_drivers,
     _materialize_pair_counts,
 )
+from amr.validation import clean_background_counts
 
 DEFAULT_DRIVER_REQUIRED_COLUMNS = {
     "pathogen",
@@ -311,7 +312,8 @@ def prepare_antibiotic_analysis_level(
     )
     yearly_screened_model_df["count"] = yearly_screened_model_df["pmids"].apply(len)
 
-    antibiotic_bg_mapped_df = antibiotic_background_df.merge(
+    antibiotic_bg_source_df = clean_background_counts(antibiotic_background_df, key_col="antibiotic")
+    antibiotic_bg_mapped_df = antibiotic_bg_source_df.merge(
         mapping_df,
         left_on="antibiotic",
         right_on="source_antibiotic",
@@ -394,8 +396,12 @@ def build_yearly_si_dataset(
         raise KeyError(f"antibiotic_background_df missing required columns: {sorted(missing_ab)}")
 
     work = yearly_amr_df.copy()
-    path_bg = pathogen_background_df.rename(columns={"count": "bg_pathogen_n"}).copy()
-    ab_bg = antibiotic_background_df.rename(columns={"count": "bg_antibiotic_n"}).copy()
+    path_bg = clean_background_counts(pathogen_background_df, key_col="pathogen").rename(
+        columns={"count": "bg_pathogen_n"}
+    )
+    ab_bg = clean_background_counts(antibiotic_background_df, key_col="antibiotic").rename(
+        columns={"count": "bg_antibiotic_n"}
+    )
 
     work["year"] = pd.to_numeric(work["year"], errors="coerce").astype("Int64")
     path_bg["year"] = pd.to_numeric(path_bg["year"], errors="coerce").astype("Int64")
