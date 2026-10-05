@@ -253,7 +253,11 @@ def fetch_pubmed_abstract(
             resp = sess.get(PUBMED_EFETCH, params=params, timeout=30)
             resp.raise_for_status()
             root = ET.fromstring(resp.text)
-            article = root.find(".//Article")
+            pubmed_article = root.find(".//PubmedArticle")
+            returned_pmid = pubmed_article.find(".//MedlineCitation/PMID") if pubmed_article is not None else None
+            if returned_pmid is None or (returned_pmid.text or "").strip() != str(pmid).strip():
+                raise ValueError(f"PubMed response omitted requested PMID {pmid}.")
+            article = pubmed_article.find(".//Article")
             if article is None:
                 return "", "", "no_abstract"
             title_el = article.find("./ArticleTitle")
@@ -288,6 +292,7 @@ def fetch_pubmed_abstracts_batch(
         return {}
     sess = session or requests
     params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"}
+    requested_pmids = set(pmids)
     if email:
         params["email"] = email
     if EUTILS_API_KEY:
@@ -299,13 +304,13 @@ def fetch_pubmed_abstracts_batch(
             resp.raise_for_status()
             root = ET.fromstring(resp.text)
 
-            out = {pmid: ("", "", "no_abstract") for pmid in pmids}
+            out: dict[str, tuple[str, str, str]] = {}
             for article in root.findall(".//PubmedArticle"):
                 pmid_el = article.find(".//MedlineCitation/PMID")
                 if pmid_el is None or not pmid_el.text:
                     continue
                 pmid = str(pmid_el.text).strip()
-                if not pmid:
+                if not pmid or pmid not in requested_pmids:
                     continue
                 article_el = article.find(".//Article")
                 if article_el is None:
@@ -323,6 +328,13 @@ def fetch_pubmed_abstracts_batch(
                     out[pmid] = (title, abstract, "ok")
                 else:
                     out[pmid] = (title, "", "no_abstract")
+            missing_pmids = set(pmids) - set(out)
+            if missing_pmids:
+                if attempt + 1 < RETRIES:
+                    time.sleep(BACKOFF_FACTOR**attempt)
+                    continue
+                for pmid in missing_pmids:
+                    out[pmid] = ("", "", "network_error")
             return out
         except Exception as exc:
             if attempt == RETRIES - 1:

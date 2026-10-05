@@ -23,6 +23,11 @@ REQUIRED_INTERACTIVE_RANK_COLUMNS = {
     "curve_fit_end_year",
     "post_fit_validation_end_year",
     "si_loess_residual_variance_mean",
+    "loess_frac",
+    "loess_degree",
+    "tail_damping_years",
+    "min_amr_pair_publication_count",
+    "min_num_years_with_valid_counts",
 }
 
 GLASS_MATCH_COLUMNS = [
@@ -119,10 +124,13 @@ def load_or_build_interactive_rank(
             cache_is_stale = rank_output_path.stat().st_mtime < source_path.stat().st_mtime
 
     def _cached_value_matches(column: str, expected: int | float | None) -> bool:
-        if expected is None or rank_df.empty or column not in rank_df.columns:
-            return True
-        values = pd.to_numeric(rank_df[column], errors="coerce").dropna().unique()
-        return len(values) == 1 and float(values[0]) == float(expected)
+        if rank_df.empty or column not in rank_df.columns:
+            return False
+        values = rank_df[column]
+        if expected is None:
+            return bool(values.isna().all())
+        numeric_values = pd.to_numeric(values, errors="coerce").dropna().unique()
+        return len(numeric_values) == 1 and float(numeric_values[0]) == float(expected)
 
     metadata_mismatch = False
     if not rank_df.empty:
@@ -135,12 +143,25 @@ def load_or_build_interactive_rank(
             )
         else:
             expected_post_fit_validation_end_year = post_fit_validation_end_year
+        expected_minimum_valid_years = (
+            3 if min_num_years_with_valid_counts is None else min_num_years_with_valid_counts
+        )
+        expected_tail_damping_years = (
+            None if tail_damping_years is None else max(float(tail_damping_years), 1e-6)
+        )
         metadata_mismatch = not (
             _cached_value_matches("fit_start_year", fit_start_year)
             and _cached_value_matches("fit_end_year", fit_end_year)
             and _cached_value_matches("curve_fit_end_year", expected_curve_fit_end_year)
             and _cached_value_matches("post_fit_validation_end_year", expected_post_fit_validation_end_year)
             and _cached_value_matches("num_future_years", num_future_years)
+            and _cached_value_matches("loess_frac", loess_frac)
+            and _cached_value_matches("loess_degree", loess_degree)
+            and _cached_value_matches("tail_damping_years", expected_tail_damping_years)
+            and _cached_value_matches(
+                "min_amr_pair_publication_count", min_amr_pair_publication_count
+            )
+            and _cached_value_matches("min_num_years_with_valid_counts", expected_minimum_valid_years)
         )
 
     if rank_df.empty or missing_rank_columns or cache_is_stale or metadata_mismatch:

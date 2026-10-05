@@ -9,7 +9,12 @@ from typing import Sequence
 import pandas as pd
 
 from amr.io import atomic_write_parquet
-from amr.validation import clean_background_counts, clean_pair_pmid_df, clean_yearly_pair_counts
+from amr.validation import (
+    clean_background_counts,
+    clean_pair_pmid_df,
+    clean_yearly_pair_counts,
+    normalize_entity_key,
+)
 from amr.pubmed.intervals import (
     count_pmids_per_year_for_antibiotics_resumable,
     count_pmids_per_year_for_pathogens_resumable,
@@ -58,6 +63,42 @@ def _extract_new_pair_pmids(existing_pair_df: pd.DataFrame, current_pair_df: pd.
     if new_keys.empty:
         return current_pair_df.iloc[0:0].copy()
     return current_pair_df.merge(new_keys, on=["pathogen", "antibiotic", "pmid"], how="inner")
+
+
+def _pair_pmid_refresh_scope(
+    frame: pd.DataFrame,
+    *,
+    pair_keys: set[tuple[str | None, str | None]],
+    min_date: str,
+    max_date: str,
+    pmid_dates: dict[str, object] | None = None,
+) -> pd.Series:
+    """Identify pair-PMID rows covered by an explicit interval refresh."""
+    if frame.empty:
+        return pd.Series(False, index=frame.index, dtype=bool)
+    required = {"pathogen", "antibiotic", "start_date", "end_date"}
+    if not required.issubset(frame.columns):
+        return pd.Series(False, index=frame.index, dtype=bool)
+    row_keys = zip(
+        frame["pathogen"].map(normalize_entity_key),
+        frame["antibiotic"].map(normalize_entity_key),
+    )
+    pair_mask = pd.Series([key in pair_keys for key in row_keys], index=frame.index)
+    start_dates = pd.to_datetime(frame["start_date"], errors="coerce")
+    end_dates = pd.to_datetime(frame["end_date"], errors="coerce")
+    lower = pd.to_datetime(min_date, format="%Y/%m/%d")
+    upper = pd.to_datetime(max_date, format="%Y/%m/%d")
+    overlaps_window = start_dates.le(upper) & end_dates.ge(lower)
+    if pmid_dates is None or "pmid" not in frame.columns:
+        return pair_mask & overlaps_window.fillna(False)
+    publication_dates = pd.to_datetime(frame["pmid"].astype(str).map(pmid_dates), errors="coerce")
+    has_publication_date = publication_dates.notna()
+    within_window = publication_dates.ge(lower) & publication_dates.le(upper)
+    # Metadata-less legacy rows can only be scoped to the overlapping interval.
+    return pair_mask & (
+        within_window.fillna(False)
+        | (~has_publication_date & overlaps_window.fillna(False))
+    )
 
 
 def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.DataFrame) -> pd.DataFrame:
@@ -512,44 +553,127 @@ def collect_yearly_amr_dataset(
     else:
         existing_pair_pmid_df = pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid"])
 
-    new_pair_pmid_df = _extract_new_pair_pmids(existing_pair_pmid_df, pair_pmid_df_raw)
+    configured_pair_keys = {
+        (normalize_entity_key(pathogen), normalize_entity_key(antibiotic))
+        for pathogen in pathogens
+        for antibiotic in antibiotics
+    }
+    requested_refresh_keys = {
+        (normalize_entity_key(pathogen), normalize_entity_key(antibiotic))
+        for pathogen, antibiotic in (refresh_cached_pairs or [])
+    }
+    refreshed_pair_keys = (
+        configured_pair_keys & requested_refresh_keys
+        if requested_refresh_keys
+        else configured_pair_keys
+    )
+    if refresh_cached_intervals:
+        existing_refresh_scope = _pair_pmid_refresh_scope(
+            existing_pair_pmid_df,
+            pair_keys=refreshed_pair_keys,
+            min_date=min_date,
+            max_date=max_date,
+        )
+        current_refresh_scope = _pair_pmid_refresh_scope(
+            pair_pmid_df_raw,
+            pair_keys=refreshed_pair_keys,
+            min_date=min_date,
+            max_date=max_date,
+        )
+        existing_to_keep = existing_pair_pmid_df.loc[~existing_refresh_scope].copy()
+        refreshed_rows = pair_pmid_df_raw.loc[current_refresh_scope].copy()
+        outside_refresh_rows = pair_pmid_df_raw.loc[~current_refresh_scope]
+        outside_refresh_additions = _extract_new_pair_pmids(
+            existing_pair_pmid_df,
+            outside_refresh_rows,
+        )
+        new_pair_pmid_df = pd.concat(
+            [refreshed_rows, outside_refresh_additions],
+            ignore_index=True,
+            sort=False,
+        )
+    else:
+        existing_to_keep = existing_pair_pmid_df
+        new_pair_pmid_df = _extract_new_pair_pmids(existing_pair_pmid_df, pair_pmid_df_raw)
+
     if not new_pair_pmid_df.empty:
         new_pair_pmid_df = new_pair_pmid_df.copy()
         new_pair_pmid_df["collection_run_min_date"] = min_date
         new_pair_pmid_df["collection_run_max_date"] = max_date
-    pair_pmid_df = _merge_pair_pmid_frames(existing_pair_pmid_df, new_pair_pmid_df)
+    pair_pmid_df = _merge_pair_pmid_frames(existing_to_keep, new_pair_pmid_df)
     pair_pmid_df = pair_pmid_df.sort_values(
         ["pathogen", "antibiotic", "start_date", "end_date", "pmid"], kind="stable"
     ).reset_index(drop=True)
     Path(yearly_pair_pmid_output_path).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_parquet(pair_pmid_df, yearly_pair_pmid_output_path, index=False)
 
+    pmids_requiring_metadata = (
+        pair_pmid_df["pmid"].astype(str).tolist()
+        if refresh_cached_intervals
+        else new_pair_pmid_df["pmid"].astype(str).tolist() if not new_pair_pmid_df.empty else []
+    )
     metadata_df = refresh_pubmed_metadata_cache(
-        new_pair_pmid_df["pmid"].astype(str).tolist() if not new_pair_pmid_df.empty else [],
+        pmids_requiring_metadata,
         cache_path=metadata_cache_path,
         email=email,
         batch_size=metadata_batch_size,
         checkpoint_every_batches=metadata_checkpoint_every_batches,
     )
-    enriched_df = (
-        attach_pubmed_metadata(new_pair_pmid_df, metadata_df)
-        if not new_pair_pmid_df.empty
-        else pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"])
-    )
-    yearly_delta_df = (
-        aggregate_pair_counts_by_year(enriched_df)
-        if not enriched_df.empty
-        else pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
-    )
-    if not yearly_delta_df.empty:
-        yearly_delta_df = yearly_delta_df.copy()
-        yearly_delta_df["collection_run_min_date"] = min_date
-        yearly_delta_df["collection_run_max_date"] = max_date
-    if Path(output_path).exists():
-        existing_yearly_df = clean_yearly_pair_counts(pd.read_parquet(output_path))
+    if refresh_cached_intervals:
+        enriched_df = (
+            attach_pubmed_metadata(pair_pmid_df, metadata_df)
+            if not pair_pmid_df.empty
+            else pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"])
+        )
+        yearly_df = aggregate_pair_counts_by_year(enriched_df) if not enriched_df.empty else pd.DataFrame(
+            columns=["pathogen", "antibiotic", "year", "count", "pmids"]
+        )
+        provenance_columns = [
+            column
+            for column in ["collection_run_min_date", "collection_run_max_date"]
+            if column in enriched_df.columns
+        ]
+        if provenance_columns and not enriched_df.empty:
+            provenance = (
+                enriched_df.groupby(["pathogen", "antibiotic", "pub_year"], as_index=False)
+                .agg(
+                    **{
+                        column: (
+                            column,
+                            lambda values: ";".join(
+                                sorted({str(value) for value in values if pd.notna(value)})
+                            ),
+                        )
+                        for column in provenance_columns
+                    }
+                )
+                .rename(columns={"pub_year": "year"})
+            )
+            yearly_df = yearly_df.merge(
+                provenance,
+                on=["pathogen", "antibiotic", "year"],
+                how="left",
+            )
     else:
-        existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
-    yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
+        enriched_df = (
+            attach_pubmed_metadata(new_pair_pmid_df, metadata_df)
+            if not new_pair_pmid_df.empty
+            else pd.DataFrame(columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"])
+        )
+        yearly_delta_df = (
+            aggregate_pair_counts_by_year(enriched_df)
+            if not enriched_df.empty
+            else pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+        )
+        if not yearly_delta_df.empty:
+            yearly_delta_df = yearly_delta_df.copy()
+            yearly_delta_df["collection_run_min_date"] = min_date
+            yearly_delta_df["collection_run_max_date"] = max_date
+        if Path(output_path).exists():
+            existing_yearly_df = clean_yearly_pair_counts(pd.read_parquet(output_path))
+        else:
+            existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+        yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
     yearly_df = yearly_df.sort_values(["pathogen", "antibiotic", "year"], kind="stable").reset_index(drop=True)
     if not enriched_df.empty:
         enriched_df = enriched_df.sort_values(

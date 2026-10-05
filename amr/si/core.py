@@ -806,6 +806,9 @@ def rank_yearly_pairs_by_future_si_shift(
     reference_year = int(reference_year)
     fit_end_year = int(fit_end_year)
     curve_fit_end_year = int(curve_fit_end_year)
+    required_valid_years = int(
+        min_train_points if min_num_years_with_valid_counts is None else min_num_years_with_valid_counts
+    )
     observed_years = pd.to_numeric(si_df["year"], errors="coerce").dropna().astype(int)
     if post_fit_validation_end_year is None:
         complete_observed_years = observed_years.loc[observed_years < pd.Timestamp.today().year]
@@ -1001,6 +1004,8 @@ def rank_yearly_pairs_by_future_si_shift(
                     "fit_end_year": fit_end_year,
                     "curve_fit_end_year": curve_fit_end_year,
                     "post_fit_validation_end_year": post_fit_validation_end_year,
+                    "min_amr_pair_publication_count": float(min_amr_pair_publication_count),
+                    "min_num_years_with_valid_counts": required_valid_years,
                     "raw_latest_available_year": raw_latest_available_year,
                     "latest_available_year": latest_available_year,
                     "n_pair_years": int(pair_df["year"].nunique()),
@@ -1059,6 +1064,8 @@ def rank_yearly_pairs_by_future_si_shift(
                     "fit_end_year": fit_end_year,
                     "curve_fit_end_year": curve_fit_end_year,
                     "post_fit_validation_end_year": post_fit_validation_end_year,
+                    "min_amr_pair_publication_count": float(min_amr_pair_publication_count),
+                    "min_num_years_with_valid_counts": required_valid_years,
                     "raw_latest_available_year": np.nan,
                     "latest_available_year": np.nan,
                     "n_pair_years": np.nan,
@@ -1191,7 +1198,7 @@ def select_interesting_yearly_rank_cases(
     work["passes_post_fit_abs_error"] = post_fit_abs_error <= float(max_post_fit_si_abs_error_mean)
     work["passes_post_fit_abs_pct_error"] = post_fit_abs_pct_error <= float(max_post_fit_si_abs_pct_error_mean)
     if require_post_fit_validation:
-        work["passes_validation"] = (~work["has_post_fit_validation"]) | (
+        work["passes_validation"] = work["has_post_fit_validation"] & (
             work["passes_post_fit_years"] & work["passes_post_fit_abs_error"] & work["passes_post_fit_abs_pct_error"]
         )
     else:
@@ -1222,8 +1229,11 @@ def select_interesting_yearly_rank_cases(
 
     selected = work.loc[work["is_interesting_case"]].copy()
     if selected.empty and fallback_top_n > 0:
+        fallback_candidates = work.loc[work["passes_current_amr_count"]].copy()
+        if require_post_fit_validation:
+            fallback_candidates = fallback_candidates.loc[fallback_candidates["passes_validation"]]
         selected = (
-            work.loc[work["passes_current_amr_count"]]
+            fallback_candidates
             .sort_values(["interest_score", "future_predicted_SI"], ascending=[False, False])
             .head(int(fallback_top_n))
             .copy()
