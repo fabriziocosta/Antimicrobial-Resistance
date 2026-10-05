@@ -216,8 +216,8 @@ def summarize_metadata_coverage(enriched_df: pd.DataFrame) -> pd.DataFrame:
         {"metric": "rows_missing_pub_year", "value": int((~work["has_pub_year"]).sum())},
     ]
     if "pub_year_matches_interval" in work.columns:
-        matched = work["pub_year_matches_interval"] == True
-        mismatched = work["pub_year_matches_interval"] == False
+        matched = work["pub_year_matches_interval"].fillna(False).astype(bool)
+        mismatched = ~matched
         rows.extend(
             [
                 {"metric": "rows_pub_year_matches_interval", "value": int(matched.sum())},

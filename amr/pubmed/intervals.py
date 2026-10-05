@@ -156,8 +156,12 @@ def fetch_pmids_by_date_and_keywords(
     if count > 9999:
         start_dt = datetime.strptime(min_date, "%Y/%m/%d")
         end_dt = datetime.strptime(max_date, "%Y/%m/%d")
-        mid_year = (start_dt.year + end_dt.year) // 2
-        mid_dt = datetime(mid_year, 12, 31)
+        if start_dt >= end_dt:
+            raise RuntimeError(
+                f"PubMed returned {count} records for an unsplittable date window "
+                f"{min_date}..{max_date}."
+            )
+        mid_dt = start_dt + (end_dt - start_dt) // 2
 
         left_pmids = fetch_pmids_by_date_and_keywords(
             min_date=min_date,

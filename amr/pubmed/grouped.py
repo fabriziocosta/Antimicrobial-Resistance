@@ -11,6 +11,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Sequence
+from uuid import uuid4
 
 import pandas as pd
 
@@ -68,6 +69,13 @@ def _initialize_cache(path: Path) -> None:
                 abstract TEXT NOT NULL
             )"""
         )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS collection_runs (
+                scope_hash TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                status TEXT NOT NULL
+            )"""
+        )
         connection.commit()
     finally:
         connection.close()
@@ -77,8 +85,41 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _node_key(base_query: str, start: str, end: str) -> str:
-    return _hash_text(f"{base_query}\0{start}\0{end}")
+def _node_key(base_query: str, start: str, end: str, namespace: str) -> str:
+    return _hash_text(f"{namespace}\0{base_query}\0{start}\0{end}")
+
+
+def _start_collection_run(cache_path: Path, scope_hash: str, *, force_refresh: bool) -> str:
+    connection = _db_connect(cache_path)
+    try:
+        row = connection.execute(
+            "SELECT run_id, status FROM collection_runs WHERE scope_hash = ?", (scope_hash,)
+        ).fetchone()
+        if row and (row[1] == "active" or not force_refresh):
+            run_id = str(row[0])
+        else:
+            run_id = uuid4().hex
+        connection.execute(
+            """INSERT INTO collection_runs(scope_hash, run_id, status) VALUES (?, ?, 'active')
+               ON CONFLICT(scope_hash) DO UPDATE SET run_id=excluded.run_id, status='active'""",
+            (scope_hash, run_id),
+        )
+        connection.commit()
+        return run_id
+    finally:
+        connection.close()
+
+
+def _finish_collection_run(cache_path: Path, scope_hash: str, run_id: str) -> None:
+    connection = _db_connect(cache_path)
+    try:
+        connection.execute(
+            "UPDATE collection_runs SET status='complete' WHERE scope_hash=? AND run_id=?",
+            (scope_hash, run_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def _get_node(connection: sqlite3.Connection, key: str) -> tuple[str, str | None, list[str]] | None:
@@ -128,13 +169,14 @@ def _collect_query_tree(
     retrieve_batch_size: int,
     split_threshold: int,
     verbose: bool,
+    cache_namespace: str,
 ) -> list[str]:
     """Retrieve one query, recursively partitioning large date windows.
 
     Completed leaves and split markers are committed to SQLite as they finish, so
     restarting resumes from the saved query tree instead of repeating retrieval.
     """
-    key = _node_key(base_query, start, end)
+    key = _node_key(base_query, start, end, cache_namespace)
     cached = _get_node(connection, key)
     if cached and cached[0] == "complete":
         return cached[2]
@@ -147,12 +189,12 @@ def _collect_query_tree(
             _collect_query_tree(
                 connection, base_query, start, midpoint, email=email,
                 retrieve_batch_size=retrieve_batch_size, split_threshold=split_threshold,
-                verbose=verbose,
+                verbose=verbose, cache_namespace=cache_namespace,
             )
             + _collect_query_tree(
                 connection, base_query, right_start, end, email=email,
                 retrieve_batch_size=retrieve_batch_size, split_threshold=split_threshold,
-                verbose=verbose,
+                verbose=verbose, cache_namespace=cache_namespace,
             )
         )
 
@@ -186,12 +228,12 @@ def _collect_query_tree(
         _collect_query_tree(
             connection, base_query, start, midpoint, email=email,
             retrieve_batch_size=retrieve_batch_size, split_threshold=split_threshold,
-            verbose=verbose,
+            verbose=verbose, cache_namespace=cache_namespace,
         )
         + _collect_query_tree(
             connection, base_query, right_start, end, email=email,
             retrieve_batch_size=retrieve_batch_size, split_threshold=split_threshold,
-            verbose=verbose,
+            verbose=verbose, cache_namespace=cache_namespace,
         )
     )
 
@@ -353,11 +395,14 @@ def fetch_pmids_intervals_grouped(
         (normalize_entity_key(p), normalize_entity_key(a))
         for p, a in (refresh_cached_pairs or [])
     }
-    existing_ranges: dict[tuple[str, str], set[tuple[str, str]]] = {}
-    for row in existing_df[["pathogen", "antibiotic", "start_date", "end_date"]].itertuples(index=False):
-        existing_ranges.setdefault(
-            (normalize_entity_key(row.pathogen), normalize_entity_key(row.antibiotic)), set()
-        ).add((str(row.start_date), str(row.end_date)))
+    expected_ranges = {f"{start}\0{end}" for start, end, _, _ in intervals}
+    interval_labels = existing_df["start_date"].astype(str) + "\0" + existing_df["end_date"].astype(str)
+    in_scope = interval_labels.isin(expected_ranges)
+    coverage = existing_df.loc[in_scope, ["pathogen", "antibiotic"]].copy()
+    coverage["pathogen_key"] = coverage["pathogen"].map(normalize_entity_key)
+    coverage["antibiotic_key"] = coverage["antibiotic"].map(normalize_entity_key)
+    coverage_counts = coverage.groupby(["pathogen_key", "antibiotic_key"], sort=False).size()
+    complete_pairs = set(coverage_counts[coverage_counts.ge(len(intervals))].index.tolist())
 
     targets: dict[str, list[str]] = {}
     for pathogen in pathogens:
@@ -367,7 +412,7 @@ def fetch_pmids_intervals_grouped(
                 pair_key = (normalize_entity_key(pathogen), normalize_entity_key(antibiotic))
                 selected = not refresh_keys or pair_key in refresh_keys
                 refresh_pair = refresh_cached_intervals and selected
-                complete = all((start, end) in existing_ranges.get(pair_key, set()) for start, end, _, _ in intervals)
+                complete = pair_key in complete_pairs
                 if refresh_pair or not complete:
                     target_antibiotics.append(antibiotic)
         if target_antibiotics:
@@ -398,6 +443,22 @@ def fetch_pmids_intervals_grouped(
 
     cache_path = Path(group_search_cache_path)
     _initialize_cache(cache_path)
+    scope_hash = _hash_text(
+        json.dumps(
+            {
+                "min_date": min_date,
+                "max_date": max_date,
+                "queries": [
+                    [task["pathogen"], task["antibiotics"], task["query"]]
+                    for task in tasks
+                ],
+            },
+            sort_keys=True,
+        )
+    )
+    run_id = _start_collection_run(
+        cache_path, scope_hash, force_refresh=bool(refresh_cached_intervals)
+    )
 
     workers = max(1, int(max_workers))
     max_pending = max(workers, int(max_pending_futures or workers * 2))
@@ -423,6 +484,7 @@ def fetch_pmids_intervals_grouped(
                 retrieve_batch_size=retrieve_batch_size,
                 split_threshold=full_fetch_threshold,
                 verbose=verbose >= 2,
+                cache_namespace=run_id,
             )
         finally:
             connection.close()
@@ -530,9 +592,6 @@ def fetch_pmids_intervals_grouped(
                 )
     refreshed_df = pd.DataFrame(rows)
     combined = clean_interval_results(pd.concat([kept_df, refreshed_df], ignore_index=True))
-    combined = combined.sort_values(
-        ["pathogen", "antibiotic", "start_date", "end_date"], kind="stable"
-    ).reset_index(drop=True)
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_parquet(combined, parquet_path, index=False)
     if checkpoint_dir.exists():
@@ -542,6 +601,7 @@ def fetch_pmids_intervals_grouped(
             checkpoint_dir.rmdir()
         except OSError:
             pass
+    _finish_collection_run(cache_path, scope_hash, run_id)
     return combined
 
 

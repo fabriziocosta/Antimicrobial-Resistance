@@ -310,16 +310,24 @@ def retrieve_pmids(
     *,
     verbose: bool = False,
 ) -> List[str]:
-    """Retrieve PMIDs in batches for a given search."""
+    """Retrieve every PMID in batches or fail without returning partial results."""
     pmids: List[str] = []
-    if not query or not webenv or not query_key or count == 0:
+    if count == 0:
         return pmids
+    if count < 0 or batch_size <= 0:
+        raise ValueError("count must be non-negative and batch_size must be positive")
+    if not query or not webenv or not query_key:
+        raise ValueError("query, webenv, and query_key are required when count is positive")
 
     total_batches = (count + batch_size - 1) // batch_size
     for batch_idx, start in enumerate(range(0, count, batch_size), start=1):
+        expected_batch_count = min(batch_size, count - start)
         if verbose:
             print(f"[retrieve_pmids] batch {batch_idx}/{total_batches} (retstart={start})")
+        batch_pmids: List[str] | None = None
+        last_error: Exception | None = None
         for attempt in range(RETRIES):
+            handle = None
             try:
                 ENTREZ_RATE_LIMITER.wait()
                 handle = Entrez.esearch(
@@ -331,29 +339,42 @@ def retrieve_pmids(
                     retstart=start,
                     retmax=batch_size,
                 )
-                try:
-                    record = Entrez.read(handle)
-                except Exception as e:
-                    if attempt == RETRIES - 1:
-                        print(f"Failed to parse Entrez record after retries: {e}")
-                        record = {}
-                    else:
-                        delay = _retry_delay(e, attempt)
-                        print(f"Failed to parse Entrez record (attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s...")
+                record = Entrez.read(handle)
+                ids = normalize_pmids(record.get("IdList", []))
+                if len(ids) != expected_batch_count:
+                    raise ValueError(
+                        f"PubMed returned {len(ids)} PMIDs for batch {batch_idx}/{total_batches}; "
+                        f"expected {expected_batch_count}."
+                    )
+                batch_pmids = ids
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < RETRIES - 1:
+                    delay = _retry_delay(e, attempt) if isinstance(e, NETWORK_EXCEPTIONS) else BACKOFF_FACTOR * (2**attempt)
+                    print(
+                        f"PMID batch {batch_idx}/{total_batches} failed "
+                        f"(attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s..."
+                    )
+                    if isinstance(e, NETWORK_EXCEPTIONS):
                         _wait_before_retry(e, attempt)
-                        continue
-                handle.close()
+                    else:
+                        time.sleep(delay)
+            finally:
+                if handle is not None:
+                    handle.close()
+        if batch_pmids is None:
+            raise RuntimeError(
+                f"Failed to retrieve PMID batch {batch_idx}/{total_batches}; refusing to return "
+                "a partial result."
+            ) from last_error
+        pmids.extend(batch_pmids)
 
-                pmids.extend(record.get("IdList", []))
-                break
-            except NETWORK_EXCEPTIONS as e:
-                delay = _retry_delay(e, attempt)
-                print(f"Network error fetching PMIDs: {e}. Retrying in {delay}s...")
-                _wait_before_retry(e, attempt)
-            except Exception as e:  # pragma: no cover - defensive
-                print(f"Unexpected error retrieving PMIDs: {e}")
-                break
-
+    if len(pmids) != count or len(set(pmids)) != count:
+        raise RuntimeError(
+            f"PubMed PMID retrieval was incomplete or duplicated: expected {count}, received "
+            f"{len(pmids)} unique {len(set(pmids))}."
+        )
     return pmids
 
 
@@ -366,6 +387,8 @@ def fetch_pub_metadata(
 ):
     """Fetch publication dates and venues for a list of PMIDs."""
     _configure_entrez(email)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     pmids = normalize_pmids(pmids)
     date_map: Dict[str, datetime] = {}
     venue_map: Dict[str, str] = {}
@@ -395,31 +418,22 @@ def fetch_pub_metadata(
         batch_date_map: Dict[str, datetime] = {}
         batch_venue_map: Dict[str, str] = {}
         batch_completed = False
+        batch_result: tuple[Dict[str, datetime], Dict[str, str]] | None = None
+        last_error: Exception | None = None
         for attempt in range(RETRIES):
+            handle = None
             try:
                 ENTREZ_RATE_LIMITER.wait()
                 handle = Entrez.esummary(db="pubmed", id=",".join(batch))
-                try:
-                    records = Entrez.read(handle)
-                except Exception as e:
-                    if attempt == RETRIES - 1:
-                        print(f"Failed to parse Entrez summary after retries: {e}")
-                        records = {}
-                    else:
-                        delay = _retry_delay(e, attempt)
-                        print(
-                            f"Failed to parse Entrez summary (batch {batch_idx}/{total_batches}, "
-                            f"attempt {attempt + 1}/{RETRIES}): {e}. Retrying in {delay}s..."
-                        )
-                        _wait_before_retry(e, attempt)
-                        continue
-                handle.close()
+                records = Entrez.read(handle)
 
                 if isinstance(records, dict):
                     summaries = records.get("DocumentSummarySet", {}).get("DocumentSummary", [])
                 else:
                     summaries = records
 
+                this_date_map: Dict[str, datetime] = {}
+                this_venue_map: Dict[str, str] = {}
                 for summary in summaries:
                     pmid_value = summary.get("Id")
                     if pmid_value is None:
@@ -432,19 +446,36 @@ def fetch_pub_metadata(
                     if not parsed_date and epub:
                         parsed_date = parse_pubdate(epub)
                     if parsed_date:
-                        date_map[pmid] = parsed_date
-                        batch_date_map[pmid] = parsed_date
-                    venue_map[pmid] = venue
-                    batch_venue_map[pmid] = venue
+                        this_date_map[pmid] = parsed_date
+                    this_venue_map[pmid] = venue
+                missing_pmids = set(batch) - set(this_venue_map)
+                if missing_pmids:
+                    raise ValueError(
+                        f"PubMed metadata response omitted {len(missing_pmids)} requested PMID(s)."
+                    )
+                batch_result = (this_date_map, this_venue_map)
                 batch_completed = True
                 break
-            except NETWORK_EXCEPTIONS as e:
-                delay = _retry_delay(e, attempt)
-                print(f"HTTP/Network error in fetch_pub_metadata: {e}. Retrying in {delay}s...")
-                _wait_before_retry(e, attempt)
-            except Exception as e:  # pragma: no cover - defensive
-                print(f"Unexpected error in fetch_pub_metadata: {e}")
-                break
+            except Exception as e:
+                last_error = e
+                if attempt < RETRIES - 1:
+                    delay = _retry_delay(e, attempt) if isinstance(e, NETWORK_EXCEPTIONS) else BACKOFF_FACTOR * (2**attempt)
+                    print(f"Metadata batch {batch_idx}/{total_batches} failed: {e}. Retrying in {delay}s...")
+                    if isinstance(e, NETWORK_EXCEPTIONS):
+                        _wait_before_retry(e, attempt)
+                    else:
+                        time.sleep(delay)
+            finally:
+                if handle is not None:
+                    handle.close()
+        if not batch_completed or batch_result is None:
+            raise RuntimeError(
+                f"Failed to fetch metadata batch {batch_idx}/{total_batches}; refusing to cache "
+                "incomplete metadata."
+            ) from last_error
+        batch_date_map, batch_venue_map = batch_result
+        date_map.update(batch_date_map)
+        venue_map.update(batch_venue_map)
         if batch_completed and on_batch_complete is not None:
             on_batch_complete(batch_idx, total_batches, batch, batch_date_map, batch_venue_map)
 
@@ -462,8 +493,8 @@ def fetch_pubmed_abstracts_batch(
     normalized = normalize_pmids(pmids)
     if not normalized:
         return {}
-    title_abstracts: Dict[str, Tuple[str, str]] = {}
     for attempt in range(RETRIES):
+        title_abstracts: Dict[str, Tuple[str, str]] = {}
         try:
             ENTREZ_RATE_LIMITER.wait()
             handle = Entrez.efetch(db="pubmed", id=normalized, retmode="xml")
@@ -489,8 +520,11 @@ def fetch_pubmed_abstracts_batch(
                     if abstract_el is not None and " ".join(section.itertext()).strip()
                 ) if abstract_el is not None else ""
                 title_abstracts[pmid] = (title, abstract)
-            for pmid in normalized:
-                title_abstracts.setdefault(pmid, ("", ""))
+            missing_pmids = set(normalized) - set(title_abstracts)
+            if missing_pmids:
+                raise ValueError(
+                    f"PubMed abstract response omitted {len(missing_pmids)} requested PMID(s)."
+                )
             return title_abstracts
         except NETWORK_EXCEPTIONS as exc:
             delay = _wait_before_retry(exc, attempt)

@@ -237,7 +237,7 @@ class UnifiedFilteringTests(unittest.TestCase):
         self.assertEqual(out["decision"], "yes")
         self.assertEqual(llm.system_prompts, [UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT])
         prompt = str(llm.system_prompts[0])
-        self.assertIn("Do not include rationale", prompt)
+        self.assertIn("Do not output rationale", prompt)
         self.assertNotIn('"rationale"', prompt)
         self.assertNotIn('"evidence_phrases"', prompt)
 
