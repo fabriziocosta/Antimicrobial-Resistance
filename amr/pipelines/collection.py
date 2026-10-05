@@ -435,12 +435,17 @@ def collect_yearly_amr_dataset(
     max_workers: int = 4,
     max_pending_futures: int | None = None,
     partial_interval_max: int = 1,
+    refresh_cached_intervals: bool = False,
+    refresh_cached_pairs: Sequence[tuple[str, str]] | None = None,
     collection_verbose: int = 1,
     collection_progress_every: int = 200,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build the canonical yearly pair dataset from interval PMIDs and publication dates.
 
     Returns ``(yearly_df, pair_pmid_df, enriched_pair_pmid_df)``.
+    Set ``refresh_cached_intervals=True`` to discover new matches after a query change;
+    pass ``refresh_cached_pairs`` to limit the refresh. Already cached PMID metadata
+    and existing pair/year counts are reused.
     """
     interval_df = fetch_pmids_intervals(
         pathogens=pathogens,
@@ -461,6 +466,8 @@ def collect_yearly_amr_dataset(
         max_workers=max_workers,
         max_pending_futures=max_pending_futures,
         partial_interval_max=partial_interval_max,
+        refresh_cached_intervals=refresh_cached_intervals,
+        refresh_cached_pairs=refresh_cached_pairs,
         verbose=collection_verbose,
         progress_every=collection_progress_every,
     )

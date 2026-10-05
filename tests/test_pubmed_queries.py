@@ -39,11 +39,11 @@ class PubMedQueryTests(unittest.TestCase):
             max_date="2024/12/31",
         )
 
-        self.assertIn('"Escherichia coli"[Abstract]', query)
-        self.assertIn('"E. coli"[Abstract]', query)
-        self.assertIn('"Bacterium coli"[Abstract]', query)
-        self.assertIn('"Colistin"[Abstract]', query)
-        self.assertIn('"Polymyxin E"[Abstract]', query)
+        self.assertIn('"Escherichia coli"[Title/Abstract]', query)
+        self.assertIn('"E. coli"[Title/Abstract]', query)
+        self.assertIn('"Bacterium coli"[Title/Abstract]', query)
+        self.assertIn('"Colistin"[Title/Abstract]', query)
+        self.assertIn('"Polymyxin E"[Title/Abstract]', query)
         self.assertIn("resistance[Title/Abstract]", query)
         self.assertIn('"2020/01/01"[Date - Publication] : "2024/12/31"[Date - Publication]', query)
 
@@ -98,10 +98,10 @@ class PubMedQueryTests(unittest.TestCase):
             antibiotic_synonym_df=antibiotic_synonyms,
         )
 
-        self.assertIn('"Drug bad x"[Abstract]', query)
-        self.assertIn('"Other bad y"[Abstract]', query)
-        self.assertIn('"Bug bad x"[Abstract]', query)
-        self.assertIn('"Alias bad y"[Abstract]', query)
+        self.assertIn('"Drug bad x"[Title/Abstract]', query)
+        self.assertIn('"Other bad y"[Title/Abstract]', query)
+        self.assertIn('"Bug bad x"[Title/Abstract]', query)
+        self.assertIn('"Alias bad y"[Title/Abstract]', query)
         self.assertNotIn('"bad"[x]', query)
 
     def test_metadata_refresh_fetches_missing_pmids_as_one_total_job(self) -> None:

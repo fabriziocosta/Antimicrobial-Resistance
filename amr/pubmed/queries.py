@@ -143,8 +143,10 @@ def build_antibiotic_pathogen_query(
     elif pathogen not in pathogen_variants:
         pathogen_variants = [pathogen] + pathogen_variants
 
-    pathogen_clause = "(" + " OR ".join(_quote_pubmed_phrase(p, "Abstract") for p in pathogen_variants) + ")"
-    antibiotic_clause = build_antibiotic_query(antibiotic, antibiotic_synonym_df, field="Abstract")
+    # Pair identity is required in the title or abstract. Abstract-only matching
+    # drops relevant records whose pair terms appear in the title.
+    pathogen_clause = "(" + " OR ".join(_quote_pubmed_phrase(p, "Title/Abstract") for p in pathogen_variants) + ")"
+    antibiotic_clause = build_antibiotic_query(antibiotic, antibiotic_synonym_df, field="Title/Abstract")
 
     term_parts = [f"({antibiotic_clause} AND {pathogen_clause})"]
     if extra_clauses:

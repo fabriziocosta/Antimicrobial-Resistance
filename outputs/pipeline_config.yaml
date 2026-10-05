@@ -32,7 +32,16 @@ collection:
   num_antibiotics: null
   min_pathogenic_index: 0.0
   extra_amr_keywords:
-  - '"antimicrobial resistance"[Title/Abstract] OR "antibiotic resistance"[Title/Abstract]'
+  - >-
+    "Drug Resistance, Bacterial"[MeSH Terms] OR
+    "Drug Resistance, Microbial"[MeSH Terms] OR
+    "Microbial Sensitivity Tests"[MeSH Terms] OR
+    resistan*[Title/Abstract] OR
+    nonsusceptib*[Title/Abstract] OR
+    susceptib*[Title/Abstract] OR
+    "antibiotic sensitivity"[Title/Abstract] OR
+    "antimicrobial sensitivity"[Title/Abstract] OR
+    "drug sensitivity"[Title/Abstract]
   collection_verbose: 1
   collection_progress_every: 300
   save_every: 500
@@ -42,6 +51,8 @@ collection:
   max_workers: 4
   max_pending_futures: 8
   partial_interval_max: 1
+  refresh_cached_intervals: true
+  refresh_cached_pairs: []
   background_scope: observed_entities
   background_fetch_threshold: 9500
   background_metadata_batch_size: 1000

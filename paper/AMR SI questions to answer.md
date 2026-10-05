@@ -54,13 +54,21 @@ The current persisted decision table contains rationale and evidence columns eve
 
 ## 4 What broad AMR terms were used in the search?
 
-**Answer so far.** The active pair query adds exactly one broad AMR clause:
+**Answer so far.** The active pair query adds one AMR/susceptibility clause:
 
 ```text
-"antimicrobial resistance"[Title/Abstract] OR "antibiotic resistance"[Title/Abstract]
+"Drug Resistance, Bacterial"[MeSH Terms]
+OR "Drug Resistance, Microbial"[MeSH Terms]
+OR "Microbial Sensitivity Tests"[MeSH Terms]
+OR resistan*[Title/Abstract]
+OR nonsusceptib*[Title/Abstract]
+OR susceptib*[Title/Abstract]
+OR "antibiotic sensitivity"[Title/Abstract]
+OR "antimicrobial sensitivity"[Title/Abstract]
+OR "drug sensitivity"[Title/Abstract]
 ```
 
-The pathogen and antibiotic parts are separate synonym-aware clauses. Pathogen names and synonyms are queried in the abstract field. Antibiotic names use canonical names, synonym variants, and split hyphen/slash forms in the abstract field. The broad AMR clause is constrained to Title/Abstract, and publication dates are constrained to 2000/01/01–2026/12/31 for the active slice.
+The pathogen and antibiotic parts are separate synonym-aware clauses, both queried in Title/Abstract. Antibiotic names use canonical names, synonym variants, and split hyphen/slash forms. The AMR/susceptibility cues form a single OR clause, and publication dates are constrained to 2000/01/01–2026/12/31 for the active slice. Existing interval-cache rows were collected under the previous query and need to be refreshed before the saved dataset reflects this revised search.
 
 The query vocabulary currently contains 245 canonical antibiotics and 422 antibiotic synonym rows. The notebook output records 19,956 pathogen synonym rows, while the current `assets/bacteria_synonym_lookup.csv` contains 24,932 rows; this is another provenance discrepancy to resolve before reporting a final vocabulary size. The pathogen run list itself contains 915 canonical pathogen names.
 
@@ -109,7 +117,7 @@ The selected output records this residual spread as `si_loess_residual_std` and 
 
 ## 9 Are the phrases “irrespective of AMR” and “Needed?” necessary?
 
-**Answer so far.** The current query and LLM policy suggest that the broad retrieval should not be described as “irrespective of AMR”: the active PubMed query explicitly requires either “antimicrobial resistance” or “antibiotic resistance” in Title/Abstract. The LLM can then recognise broader AMR-relevant contexts such as susceptibility testing, treatment, mechanisms, surveillance, stewardship, and policy.
+**Answer so far.** The retrieval query requires pathogen and antibiotic terms plus a resistance, nonsusceptibility, susceptibility, or microbial-sensitivity cue. The LLM then screens whether the paper supports the requested pair and is AMR-relevant. This is a candidate-retrieval filter, not a claim that every retrieved paper discusses resistance to that exact antibiotic in that exact pathogen.
 
 The word “Needed?” is not represented by a separate analysis parameter in the notebooks. It should be removed or replaced with a concrete statement describing whether the relevant filter or field is retained.
 

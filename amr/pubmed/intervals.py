@@ -450,6 +450,8 @@ def fetch_pmids_intervals(
     max_workers: int = 4,
     max_pending_futures: int | None = None,
     partial_interval_max: int = 1,
+    refresh_cached_intervals: bool = False,
+    refresh_cached_pairs: Sequence[tuple[str, str]] | None = None,
     verbose: int = 1,
     progress_every: int = 200,
     search_recovery_attempts: int = 3,
@@ -460,6 +462,11 @@ def fetch_pmids_intervals(
     Pair retrieval is network-bound, so workers collect raw PMIDs independently.
     Metadata lookup and all Parquet writes remain in the caller thread, which avoids
     duplicate metadata requests and concurrent-file corruption.
+
+    Set ``refresh_cached_intervals=True`` after changing the query to revisit cached
+    pair/date windows. Optionally pass ``refresh_cached_pairs`` to limit the refresh
+    to selected pairs. Existing interval rows are replaced with complete current
+    results, while the PMID metadata cache prevents refetching metadata for known IDs.
     """
     pathogens = list(pathogens)
     antibiotics = list(antibiotics)
@@ -516,6 +523,10 @@ def fetch_pmids_intervals(
     max_workers = max(1, int(max_workers))
     max_pending = max_workers * 2 if max_pending_futures is None else max(max_workers, int(max_pending_futures))
     partial_interval_max = max(0, int(partial_interval_max))
+    refresh_pair_keys = {
+        (normalize_entity_key(pathogen), normalize_entity_key(antibiotic))
+        for pathogen, antibiotic in (refresh_cached_pairs or [])
+    }
     search_recovery_attempts = max(1, int(search_recovery_attempts))
     search_recovery_delay_seconds = max(0.0, float(search_recovery_delay_seconds))
     event_counter = 0
@@ -588,6 +599,10 @@ def fetch_pmids_intervals(
         task_counter = 0
         for pathogen_idx, pathogen in enumerate(pathogens, start=1):
             for antibiotic_idx, antibiotic in enumerate(antibiotics, start=1):
+                pair_key = (normalize_entity_key(pathogen), normalize_entity_key(antibiotic))
+                pair_refresh = refresh_cached_intervals and (
+                    not refresh_pair_keys or pair_key in refresh_pair_keys
+                )
                 if antibiotic_idx == 1 or (antibiotic_idx - 1) % antibiotic_status_every == 0:
                     if verbose >= 1:
                         completed_pathogens = pathogen_idx - 1
@@ -617,7 +632,7 @@ def fetch_pmids_intervals(
                     start_dt = datetime.strptime(interval_start, "%Y/%m/%d")
                     end_dt = datetime.strptime(interval_end, "%Y/%m/%d")
                     cache_key = (str(pathogen), str(antibiotic), interval_start, interval_end)
-                    if cache_key in cache_index:
+                    if cache_key in cache_index and not pair_refresh:
                         _log_event(
                             "cached",
                             f"[{task_counter:>3}/{total_tasks}] ({task_progress:5.1f}%) | "
@@ -640,7 +655,12 @@ def fetch_pmids_intervals(
                         "pathogen": str(pathogen),
                         "antibiotic": str(antibiotic),
                         "missing_entries": missing_entries,
-                        "all_intervals_missing": len(missing_entries) == len(intervals),
+                        # Refreshing cached intervals must use a full pair query so
+                        # each stored interval is replaced with the complete new
+                        # result set, including its existing PMIDs.
+                        "all_intervals_missing": (
+                            pair_refresh or len(missing_entries) == len(intervals)
+                        ),
                     }
 
     def _worker_kwargs(task: dict[str, object]) -> dict[str, object]:
