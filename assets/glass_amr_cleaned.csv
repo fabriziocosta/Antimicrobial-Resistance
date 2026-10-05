@@ -47,6 +47,11 @@ Neisseria gonorrhoeae,Ceftriaxone,Neisseria gonorrhoeae,Ceftriaxone,False,False,
 Neisseria gonorrhoeae,Ciprofloxacin,Neisseria gonorrhoeae,Ciprofloxacin,False,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Neisseria gonorrhoeae,Gentamicin,Neisseria gonorrhoeae,Gentamicin,False,False,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Neisseria gonorrhoeae,spectinomycin,Neisseria gonorrhoeae,Spectinomycin,False,True,Aminocyclitols,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Neisseria meningitidis,Penicillin G,Neisseria meningitidis,Benzylpenicillin,False,True,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Neisseria meningitidis,cefotaxime,Neisseria meningitidis,Cefotaxime,False,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Neisseria meningitidis,Ceftriaxone,Neisseria meningitidis,Ceftriaxone,False,False,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
+Neisseria meningitidis,Ciprofloxacin,Neisseria meningitidis,Ciprofloxacin,False,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Neisseria meningitidis,Rifampicin,Neisseria meningitidis,Rifampicin,False,False,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
 Pseudomonas aeruginosa,amikacin,Pseudomonas aeruginosa,Amikacin,False,True,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Pseudomonas aeruginosa,ceftazidime,Pseudomonas aeruginosa,Ceftazidime,False,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
 Pseudomonas aeruginosa,Colistin,Pseudomonas aeruginosa,Colistin,False,False,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
@@ -90,8 +95,3 @@ Streptococcus pneumoniae,Ceftriaxone,Streptococcus pneumoniae,Ceftriaxone,False,
 Streptococcus pneumoniae,Erythromycin,Streptococcus pneumoniae,Erythromycin,False,False,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Streptococcus pneumoniae,oxacilline,Streptococcus pneumoniae,Oxacillin,False,True,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Streptococcus pneumoniae,Co-trimoxazole,Streptococcus pneumoniae,Sulfamethoxazole/trimethoprim,False,True,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
-Neisseria meningitidis,Penicillin G,neisseria meningitidis,Benzylpenicillin,True,True,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
-Neisseria meningitidis,cefotaxime,neisseria meningitidis,Cefotaxime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
-Neisseria meningitidis,Ceftriaxone,neisseria meningitidis,Ceftriaxone,True,False,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
-Neisseria meningitidis,Ciprofloxacin,neisseria meningitidis,Ciprofloxacin,True,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
-Neisseria meningitidis,Rifampicin,neisseria meningitidis,Rifampicin,True,False,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
