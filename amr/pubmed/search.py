@@ -488,7 +488,14 @@ def fetch_pubmed_abstracts_batch(
     email: str,
     verbose: bool = False,
 ) -> Dict[str, Tuple[str, str]]:
-    """Fetch PubMed titles and abstracts for one bounded PMID batch."""
+    """Fetch PubMed titles and abstracts for one bounded PMID batch.
+
+    PubMed can omit a record from a multi-ID response. Retry omitted IDs in
+    smaller requests so one unavailable record does not discard the rest of a
+    large batch. An ID still omitted from its single-record response is returned
+    with blank text, allowing callers to continue while treating it as lacking
+    usable abstract evidence.
+    """
     _configure_entrez(email)
     normalized = normalize_pmids(pmids)
     if not normalized:
@@ -502,18 +509,17 @@ def fetch_pubmed_abstracts_batch(
                 root = ET.parse(handle).getroot()
             finally:
                 handle.close()
-            for article in root.findall(".//PubmedArticle"):
-                pmid_el = article.find(".//MedlineCitation/PMID")
+            records = root.findall(".//PubmedArticle") + root.findall(".//PubmedBookArticle")
+            for article in records:
+                pmid_el = article.find(".//PMID")
                 if pmid_el is None or not pmid_el.text:
                     continue
                 pmid = pmid_el.text.strip()
-                article_el = article.find(".//Article")
-                if article_el is None:
-                    title_abstracts[pmid] = ("", "")
-                    continue
-                title_el = article_el.find("./ArticleTitle")
+                title_el = article.find(".//ArticleTitle")
+                if title_el is None:
+                    title_el = article.find(".//BookTitle")
                 title = " ".join(title_el.itertext()).strip() if title_el is not None else ""
-                abstract_el = article_el.find("./Abstract")
+                abstract_el = article.find(".//Abstract")
                 abstract = "\n".join(
                     " ".join(section.itertext()).strip()
                     for section in abstract_el.findall("./AbstractText")
@@ -522,9 +528,26 @@ def fetch_pubmed_abstracts_batch(
                 title_abstracts[pmid] = (title, abstract)
             missing_pmids = set(normalized) - set(title_abstracts)
             if missing_pmids:
-                raise ValueError(
-                    f"PubMed abstract response omitted {len(missing_pmids)} requested PMID(s)."
-                )
+                if len(normalized) > 1:
+                    missing_ids = sorted(missing_pmids)
+                    retry_batch_size = max(1, len(missing_ids) // 2)
+                    for retry_start in range(0, len(missing_ids), retry_batch_size):
+                        missing_results = fetch_pubmed_abstracts_batch(
+                            missing_ids[retry_start : retry_start + retry_batch_size],
+                            email=email,
+                            verbose=verbose,
+                        )
+                        title_abstracts.update(missing_results)
+                elif attempt + 1 < RETRIES:
+                    time.sleep(BACKOFF_FACTOR**attempt)
+                    continue
+                else:
+                    missing_pmid = next(iter(missing_pmids))
+                    print(
+                        "Warning: PubMed EFetch omitted PMID "
+                        f"{missing_pmid} from its single-record response; continuing with blank title/abstract."
+                    )
+                    title_abstracts[missing_pmid] = ("", "")
             return title_abstracts
         except NETWORK_EXCEPTIONS as exc:
             delay = _wait_before_retry(exc, attempt)
