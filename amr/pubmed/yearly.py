@@ -94,6 +94,10 @@ def refresh_pubmed_metadata_cache(
     checkpoint_every_batches: int = 10,
 ) -> pd.DataFrame:
     """Fetch missing PubMed metadata for PMIDs and checkpoint to parquet."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive.")
+    if checkpoint_every_batches <= 0:
+        raise ValueError("checkpoint_every_batches must be positive.")
     if not email or email == "your_email@example.com":
         raise ValueError("A real PubMed email is required to fetch missing metadata.")
 

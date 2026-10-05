@@ -134,8 +134,12 @@ def _merge_yearly_counts_incremental(existing_df: pd.DataFrame, delta_df: pd.Dat
 
 
 def _build_interval_windows(min_date: str, max_date: str, interval_year_gap: int) -> list[tuple[str, str]]:
+    if int(interval_year_gap) < 1 or int(interval_year_gap) != interval_year_gap:
+        raise ValueError("interval_year_gap must be a positive integer.")
     overall_start_dt = pd.to_datetime(min_date, format="%Y/%m/%d")
     overall_end_dt = pd.to_datetime(max_date, format="%Y/%m/%d")
+    if overall_start_dt > overall_end_dt:
+        raise ValueError("min_date must be on or before max_date.")
 
     intervals: list[tuple[str, str]] = []
     current = overall_start_dt
@@ -567,18 +571,52 @@ def collect_yearly_amr_dataset(
         if requested_refresh_keys
         else configured_pair_keys
     )
+    metadata_df = None
     if refresh_cached_intervals:
+        preliminary_existing_scope = _pair_pmid_refresh_scope(
+            existing_pair_pmid_df,
+            pair_keys=refreshed_pair_keys,
+            min_date=min_date,
+            max_date=max_date,
+        )
+        preliminary_current_scope = _pair_pmid_refresh_scope(
+            pair_pmid_df_raw,
+            pair_keys=refreshed_pair_keys,
+            min_date=min_date,
+            max_date=max_date,
+        )
+        refresh_pmids = pd.concat(
+            [
+                existing_pair_pmid_df.loc[preliminary_existing_scope, "pmid"],
+                pair_pmid_df_raw.loc[preliminary_current_scope, "pmid"],
+            ],
+            ignore_index=True,
+        ).astype(str).drop_duplicates().tolist()
+        metadata_df = refresh_pubmed_metadata_cache(
+            refresh_pmids,
+            cache_path=metadata_cache_path,
+            email=email,
+            batch_size=metadata_batch_size,
+            checkpoint_every_batches=metadata_checkpoint_every_batches,
+        )
+        refresh_pmid_dates = (
+            dict(zip(metadata_df["pmid"].astype(str), metadata_df["pub_date"]))
+            if not metadata_df.empty and {"pmid", "pub_date"}.issubset(metadata_df.columns)
+            else None
+        )
         existing_refresh_scope = _pair_pmid_refresh_scope(
             existing_pair_pmid_df,
             pair_keys=refreshed_pair_keys,
             min_date=min_date,
             max_date=max_date,
+            pmid_dates=refresh_pmid_dates,
         )
         current_refresh_scope = _pair_pmid_refresh_scope(
             pair_pmid_df_raw,
             pair_keys=refreshed_pair_keys,
             min_date=min_date,
             max_date=max_date,
+            pmid_dates=refresh_pmid_dates,
         )
         existing_to_keep = existing_pair_pmid_df.loc[~existing_refresh_scope].copy()
         refreshed_rows = pair_pmid_df_raw.loc[current_refresh_scope].copy()

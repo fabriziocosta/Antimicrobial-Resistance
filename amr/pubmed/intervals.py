@@ -472,6 +472,10 @@ def fetch_pmids_intervals(
     to selected pairs. Existing interval rows are replaced with complete current
     results, while the PMID metadata cache prevents refetching metadata for known IDs.
     """
+    if int(year_gap) < 1:
+        raise ValueError("year_gap must be a positive integer.")
+    if int(year_gap) != year_gap:
+        raise ValueError("year_gap must be a positive integer.")
     pathogens = list(pathogens)
     antibiotics = list(antibiotics)
     parquet_path = Path(parquet_path)
@@ -509,6 +513,8 @@ def fetch_pmids_intervals(
     checkpoint_counter = len(checkpoint_paths)
     overall_start_dt = datetime.strptime(min_date, "%Y/%m/%d")
     overall_end_dt = datetime.strptime(max_date, "%Y/%m/%d")
+    if overall_start_dt > overall_end_dt:
+        raise ValueError("min_date must be on or before max_date.")
 
     intervals = []
     current = overall_start_dt

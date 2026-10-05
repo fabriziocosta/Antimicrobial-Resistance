@@ -364,6 +364,8 @@ def fetch_pmids_intervals_grouped(
     """Search antibiotics in groups, cache each search partition, then assign PMIDs locally."""
     if not email or email == "your_email@example.com":
         raise ValueError("A real PubMed email is required for grouped collection.")
+    if int(year_gap) < 1 or int(year_gap) != year_gap:
+        raise ValueError("year_gap must be a positive integer.")
     groups = split_antibiotic_groups(antibiotics, group_size)
     pathogens = sorted({str(value).strip() for value in pathogens if str(value).strip()}, key=str.casefold)
     parquet_path = Path(parquet_path)
@@ -382,6 +384,8 @@ def fetch_pmids_intervals_grouped(
 
     overall_start = datetime.strptime(min_date, "%Y/%m/%d")
     overall_end = datetime.strptime(max_date, "%Y/%m/%d")
+    if overall_start > overall_end:
+        raise ValueError("min_date must be on or before max_date.")
     intervals: list[tuple[str, str, datetime, datetime]] = []
     current = overall_start
     while current <= overall_end:
