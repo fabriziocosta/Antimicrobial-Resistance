@@ -18,6 +18,7 @@ import requests
 
 from amr.config import EUTILS_API_KEY
 from amr.io import atomic_write_parquet
+from amr.validation import coerce_pmid_list
 
 
 @contextmanager
@@ -1580,29 +1581,26 @@ def build_yearly_screened_pairs(
 
     if keep_keys.empty:
         out = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
-        if output_path:
-            atomic_write_parquet(out, output_path, index=False)
-        return out
-
-    filtered = work.merge(keep_keys, on=["pmid", "pathogen", "antibiotic", "year"], how="inner")
-    filtered = filtered.drop_duplicates(subset=["pmid", "pathogen", "antibiotic", "year"])
-    out = (
-        filtered.groupby(["pathogen", "antibiotic", "year"], as_index=False)
-        .agg(
-            count=("pmid", "nunique"),
-            pmids=("pmid", lambda values: sorted(pd.unique(values))),
+    else:
+        filtered = work.merge(keep_keys, on=["pmid", "pathogen", "antibiotic", "year"], how="inner")
+        filtered = filtered.drop_duplicates(subset=["pmid", "pathogen", "antibiotic", "year"])
+        out = (
+            filtered.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+            .agg(
+                count=("pmid", "nunique"),
+                pmids=("pmid", lambda values: sorted(pd.unique(values))),
+            )
+            .sort_values(["pathogen", "antibiotic", "year"])
+            .reset_index(drop=True)
         )
-        .sort_values(["pathogen", "antibiotic", "year"])
-        .reset_index(drop=True)
-    )
     if output_path and merge_with_existing_output and os.path.exists(output_path):
         existing_out = pd.read_parquet(output_path)
         existing_out = existing_out[["pathogen", "antibiotic", "year", "count", "pmids"]].copy()
         existing_out["year"] = pd.to_numeric(existing_out["year"], errors="coerce").astype("Int64")
         existing_out = existing_out.dropna(subset=["year"]).copy()
         existing_out["year"] = existing_out["year"].astype(int)
-        existing_out["pmids"] = existing_out["pmids"].apply(lambda v: v if isinstance(v, list) else [])
-        out["pmids"] = out["pmids"].apply(lambda v: v if isinstance(v, list) else [])
+        existing_out["pmids"] = existing_out["pmids"].apply(coerce_pmid_list)
+        out["pmids"] = out["pmids"].apply(coerce_pmid_list)
         combined = pd.concat([existing_out, out], ignore_index=True)
         out = (
             combined.groupby(["pathogen", "antibiotic", "year"], as_index=False)
