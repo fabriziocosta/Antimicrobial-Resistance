@@ -21,6 +21,7 @@ def build_si_concept_paths(project_root: str | Path) -> dict[str, Path]:
         "abstracts": base / "unique_abstracts.parquet",
         "catalog": base / "concept_catalog.json",
         "catalog_versions": base / "catalog_versions",
+        "automated_refinement": base / "automated_refinement",
         "scores": base / "concept_scores.parquet",
         "signals": base / "yearly_concept_signals.parquet",
         "forecasts": base / "development_forecasts.parquet",

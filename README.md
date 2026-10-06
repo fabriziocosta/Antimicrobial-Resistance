@@ -1,6 +1,6 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project uses a module-first workflow with eighteen active
+This project uses a module-first workflow with nineteen active
 notebooks:
 
 0. `notebooks/00_configure_pipeline.ipynb`
@@ -20,7 +20,8 @@ notebooks:
 14. `notebooks/10b_seed_and_refine_concepts.ipynb`
 15. `notebooks/10c_classify_abstract_concepts.ipynb`
 16. `notebooks/10d_evaluate_and_refine_concepts.ipynb`
-17. `notebooks/10e_confirm_si_concepts.ipynb`
+17. `notebooks/10f_automated_concept_refinement.ipynb`
+18. `notebooks/10e_confirm_si_concepts.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -123,9 +124,9 @@ Primary APIs:
 
 Explains the paper-category mix behind ranked pairs using LLM classification metadata. It writes driver summaries, category trend plots, and an all-years driver-composition pie-chart grid. Run it after notebook 05; it does not rebuild SI or rankings.
 
-### Notebooks 10a–10e: SI concept discovery
+### Notebooks 10a–10f: SI concept discovery
 
-Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The new suite builds a deterministic pair-level development/confirmation split, estimates labeling cost, manages a versioned concept catalog, classifies each unique abstract once per catalog version, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. LLM concept proposals and classification calls are disabled by default in their notebooks.
+Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The suite builds a deterministic pair-level development/confirmation split, manages a versioned concept catalog, classifies each unique abstract, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. Notebook 10f automates a configurable Pareto-guided development loop; its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` settings control the search. It uses development pairs for proposal and selection, and leaves held-out confirmation to notebook 10e.
 
 Artifacts are saved under `outputs/concept_search/`. Concepts are evaluated as temporal predictors; these analyses do not establish mechanistic causation.
 

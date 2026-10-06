@@ -4,7 +4,7 @@ This workflow extends the yearly scientific-interest (SI) analysis by testing wh
 
 For the research rationale and proposed analysis, see the [Scientific-Interest Concept Discovery research plan](si_concept_discovery_plan.md).
 
-The five notebooks use the existing screened pair-year data, cached PubMed abstracts, and SI outputs. They do not change how the canonical SI series or high-interest ranking is produced.
+The six notebooks use the existing screened pair-year data, cached PubMed abstracts, and SI outputs. They do not change how the canonical SI series or high-interest ranking is produced.
 
 ## Workflow
 
@@ -16,9 +16,10 @@ Run notebook 05 first so that `outputs/parquets/yearly_si.parquet` is current. T
 | `10b_seed_and_refine_concepts.ipynb` | Start from the seed catalog, request optional child-concept hypotheses from development-only examples, and save a reviewed, versioned catalog. |
 | `10c_classify_abstract_concepts.ipynb` | Classify unique abstracts against the current catalog and resume from the score cache. |
 | `10d_evaluate_and_refine_concepts.ipynb` | Build yearly signals and evaluate candidate, population, conditional, and parent-versus-children models on development pairs. |
+| `10f_automated_concept_refinement.ipynb` | Run a configurable Pareto-guided loop that expands selected parents, classifies new children, and evaluates them on development pairs. |
 | `10e_confirm_si_concepts.ipynb` | Evaluate the frozen catalog on confirmation pairs and save the final tables and plot. |
 
-Concept discovery is iterative. After classifying the seed catalog and reviewing development results, select a parent in notebook 10b, optionally ask the LLM for children, and manually review any proposal before changing the catalog. Run notebook 10c again for the revised catalog, then notebook 10d. Notebook 10d exposes `CURRENT_POPULATION`, `CANDIDATE_IDS`, and `PARENT_CHILD_REPLACEMENTS` so each round's comparisons are explicit. Repeat until the catalog is frozen. Notebook 10e is the final confirmation step. For the configured 10-pathogen run, it is enabled for the frozen nine-seed catalog and checks the expected catalog hash before proceeding.
+For an automated development search, run 10f after 10a and 10b. Its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` controls set the number of refinement rounds, the maximum Pareto-front parents expanded per round, and the requested children per parent. It evaluates the starting catalog first; each round selects up to `K_PARENTS` unexpanded concepts from the non-dominated frontier for average gain and 90th-percentile gain, prioritising average gain among the frontier. For the current Pareto survivor population, it reports leave-one-out conditional gains (with versus without each concept). For every expanded parent it also compares the Pareto survivor population with that parent replaced by its child set, and reports individual-child replacement estimates while keeping the other Pareto survivor concepts fixed. Generated children are classified and evaluated before they can be selected in the next round. All proposal examples, forecasts, and selection criteria use development data only. The earlier 10b–10d notebooks remain available for manual, single-round exploration. Run 10e only after the final catalog is frozen; update its expected hash to the final catalog version.
 
 ## Corpus and concept labeling
 
@@ -57,7 +58,7 @@ All concept-search artifacts are local under `outputs/concept_search/` and are i
 - `pair_year_abstract_corpus.parquet`: pair-year-PMID membership, observed SI, and split, without duplicated abstract text;
 - `unique_abstracts.parquet`: one title/abstract record per PMID.
 
-Later notebooks create the current concept catalog and immutable catalog snapshots, `concept_scores.parquet`, `yearly_concept_signals.parquet`, development and confirmation forecast tables and summaries, and figures under `figures/`. Child proposals are saved as `proposals_<parent-id>.json` for review.
+Later notebooks create the current concept catalog and immutable catalog snapshots, `concept_scores.parquet`, `yearly_concept_signals.parquet`, development and confirmation forecast tables and summaries, and figures under `figures/`. Notebook 10f stores run-specific proposals, Pareto frontiers, iteration history, and forecast summaries under `automated_refinement/`.
 
 The helper implementation is in `amr/si/concepts.py`; notebook-facing corpus paths and loading are in `amr/pipelines/concepts.py`. Synthetic tests are in `tests/test_si_concepts.py` and `tests/test_system1.py`.
 

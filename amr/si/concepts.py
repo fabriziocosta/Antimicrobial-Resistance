@@ -82,6 +82,48 @@ def concept_definition_hash(concept: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def pareto_concept_frontier(
+    population_summary: pd.DataFrame,
+    *,
+    horizon: int = 0,
+    excluded_concepts: Iterable[str] = (),
+) -> pd.DataFrame:
+    """Return non-dominated concepts on generality and specialist strength.
+
+    Larger average gain (generality) and larger 90th-percentile gain
+    (specialist strength) are both treated as better. ``horizon=0`` selects
+    the equal-weight aggregate across the evaluated forecast horizons.
+    Excluded concepts remain on the returned frontier, with their expansion
+    eligibility marked false; they can still dominate other concepts.
+    """
+    required = {"model", "horizon", "generality", "specialist_strength"}
+    if required - set(population_summary.columns):
+        raise KeyError(f"population_summary is missing columns: {sorted(required - set(population_summary.columns))}")
+    work = population_summary.loc[
+        pd.to_numeric(population_summary["horizon"], errors="coerce").eq(int(horizon))
+        & population_summary["model"].astype(str).str.startswith("concept:")
+    ].copy()
+    work["concept_id"] = work["model"].astype(str).str.removeprefix("concept:")
+    excluded = {str(value) for value in excluded_concepts}
+    for column in ("generality", "specialist_strength"):
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+    work = work.dropna(subset=["generality", "specialist_strength"]).drop_duplicates("concept_id")
+    if work.empty:
+        return work.assign(on_pareto_front=pd.Series(dtype=bool), eligible_for_expansion=pd.Series(dtype=bool))
+    points = work[["generality", "specialist_strength"]].to_numpy(dtype=float)
+    pareto = []
+    for index, point in enumerate(points):
+        dominates = (
+            (points[:, 0] >= point[0]) & (points[:, 1] >= point[1])
+            & ((points[:, 0] > point[0]) | (points[:, 1] > point[1]))
+        )
+        pareto.append(not bool(dominates.any()))
+    work["on_pareto_front"] = pareto
+    work["eligible_for_expansion"] = ~work["concept_id"].isin(excluded)
+    return work.sort_values(["on_pareto_front", "generality", "specialist_strength"],
+                            ascending=[False, False, False]).reset_index(drop=True)
+
+
 def make_pair_split(
     pairs: Iterable[tuple[object, object]], *, heldout_fraction: float = 0.2, seed: int = 42
 ) -> pd.DataFrame:
@@ -631,15 +673,22 @@ def propose_concept_children(
     *,
     llm: Any,
     model_name: str,
+    num_children: int | None = None,
 ) -> dict[str, Any]:
     """Ask an LLM for child hypotheses from abstracts only; caller reviews before adoption."""
+    if num_children is not None and int(num_children) < 1:
+        raise ValueError("num_children must be at least 1.")
+    child_count_instruction = (
+        f"Propose exactly {int(num_children)} recurrent, distinguishable child concepts. "
+        if num_children is not None else "Propose up to five recurrent, distinguishable child concepts. "
+    )
     prompt = {
         "parent": {key: parent.get(key) for key in (
             "concept_id", "name", "definition", "inclusion_criteria", "exclusion_criteria"
         )},
         "abstract_examples": list(abstracts),
         "task": (
-            "Propose up to five recurrent, distinguishable child concepts. Do not use or infer outcomes. "
+            f"{child_count_instruction}Do not use or infer outcomes. "
             "For each return name, definition, parent_id, scientific_rationale, inclusion_criteria, "
             "exclusion_criteria, representative_evidence, closest_competing_concept, difference, "
             "expected_temporal_relationship, testable_hypothesis, and rejection_conditions. "
@@ -918,7 +967,8 @@ def compare_parent_children(
 
 
 __all__ = [
-    "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash", "make_pair_split",
+    "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash",
+    "concept_definition_hash", "pareto_concept_frontier", "make_pair_split",
     "build_concept_corpus", "estimate_classification_cost", "build_classification_prompt",
     "classify_concept_abstracts", "classify_concept_abstracts_jev", "build_yearly_concept_signals", "propose_concept_children",
     "rolling_origin_concept_forecasts", "summarise_concept_forecasts", "compare_parent_children",
