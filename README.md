@@ -126,7 +126,7 @@ Explains the paper-category mix behind ranked pairs using LLM classification met
 
 ### Notebooks 10a–10f: SI concept discovery
 
-Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The suite builds a deterministic pair-level development/confirmation split, manages a versioned concept catalog, classifies each unique abstract, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. Notebook 10f automates a configurable Pareto-guided development loop; its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` settings control the search. It uses development pairs for proposal and selection, and leaves held-out confirmation to notebook 10e.
+Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The suite builds a deterministic pair-level development/confirmation split, manages a versioned concept catalog, classifies each unique abstract, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. Notebook 10f is stand-alone: it prepares the corpus and pair split itself, and exposes corpus, model, forecast, and refinement settings in its setup cell. Its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` settings control the Pareto-guided development search. The staged 10a–10e notebooks expose the same steps and shared helpers for inspection; 10f automates the corpus-to-development loop, while 10e remains the separate held-out confirmation step after freezing the catalog.
 
 Artifacts are saved under `outputs/concept_search/`. Concepts are evaluated as temporal predictors; these analyses do not establish mechanistic causation.
 
