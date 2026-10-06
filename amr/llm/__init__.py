@@ -110,6 +110,7 @@ class OpenAILanguageModel(LanguageModel):
         self.prompt_cache_usage: dict[str, int] = {
             "requests": 0,
             "prompt_tokens": 0,
+            "completion_tokens": 0,
             "cached_tokens": 0,
             "cache_write_tokens": 0,
         }
@@ -208,8 +209,13 @@ class OpenAILanguageModel(LanguageModel):
         with self._usage_lock:
             self.last_usage = usage
             self.prompt_cache_usage["requests"] += 1
-            for key in ("prompt_tokens", "cached_tokens", "cache_write_tokens"):
+            for key in ("prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens"):
                 self.prompt_cache_usage[key] += usage[key]
+
+    def usage_summary(self) -> dict[str, int]:
+        """Return a thread-safe snapshot of token usage accumulated by this client."""
+        with self._usage_lock:
+            return dict(self.prompt_cache_usage)
 
     def embed(
         self,
@@ -429,7 +435,7 @@ def _as_nonnegative_int(value: object) -> int:
 
 
 def _extract_usage(response: object) -> dict[str, int]:
-    """Extract prompt/cache counters from modern or legacy SDK response objects."""
+    """Extract input/output and prompt-cache counters from an SDK response."""
     usage = _field(response, "usage")
     if usage is None:
         return {}
@@ -437,7 +443,10 @@ def _extract_usage(response: object) -> dict[str, int]:
     if details is None:
         details = _field(usage, "input_tokens_details")
     return {
-        "prompt_tokens": _as_nonnegative_int(_field(usage, "prompt_tokens")),
+        "prompt_tokens": _as_nonnegative_int(_field(usage, "prompt_tokens") or _field(usage, "input_tokens")),
+        "completion_tokens": _as_nonnegative_int(
+            _field(usage, "completion_tokens") or _field(usage, "output_tokens")
+        ),
         "cached_tokens": _as_nonnegative_int(_field(details, "cached_tokens")),
         "cache_write_tokens": _as_nonnegative_int(_field(details, "cache_write_tokens")),
     }

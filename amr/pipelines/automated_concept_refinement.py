@@ -25,7 +25,7 @@ from amr.si.concept_causal import estimate_pair_concept_causal_rankings
 
 
 def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
-    """Render a compact-label refinement forest and save a full node index beside it."""
+    """Render a shorthand-labeled refinement forest and save its full-text key."""
     import matplotlib.pyplot as plt
 
     concepts = {str(concept["concept_id"]): concept for concept in catalog}
@@ -70,8 +70,9 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         max_depth = max(max_depth, depth)
         if not children[concept_id]:
             y = next_leaf_y
-            name_lines = max(1, len(textwrap.wrap(str(concepts[concept_id].get("name", concept_id)), width=28)))
-            next_leaf_y += max(1.25, name_lines * 0.62)
+            # Fixed row spacing works because only short node codes appear in
+            # the tree; long generated names and IDs live in the companion key.
+            next_leaf_y += 1.35
         else:
             child_ys = [place(child_id, depth + 1) for child_id in children[concept_id]]
             y = sum(child_ys) / len(child_ys)
@@ -86,8 +87,8 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         remaining = sorted(set(concepts) - visited)
         raise ValueError(f"Concept hierarchy contains a cycle or disconnected cycle: {remaining[:10]}.")
 
-    figure_height = max(6.0, 0.34 * max(next_leaf_y, 1) + 1.5)
-    figure_width = max(16.0, 4.7 * max_depth + 9.0)
+    figure_height = max(7.0, 0.29 * max(next_leaf_y, 1) + 2.0)
+    figure_width = max(11.0, 2.6 * max_depth + 5.5)
     fig, ax = plt.subplots(figsize=(figure_width, figure_height))
     for parent_id, child_ids in children.items():
         parent_x, parent_y = positions[parent_id]
@@ -108,20 +109,22 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         color = "#15803d" if is_survivor else "#2563eb" if is_path else "#dc6b19" if is_dead_end else "#64748b"
         size = 110 if is_survivor else 75 if is_path else 58
         ax.scatter([x], [y], s=size, color=color, edgecolor="white", linewidth=0.8, zorder=3)
-        name = str(concepts[concept_id].get("name", concept_id))
-        wrapped_name = "\n".join(textwrap.wrap(name, width=28) or [name])
         suffix = "  ★" if is_survivor else "  ×" if is_dead_end else ""
-        ax.annotate(f"{node_labels[concept_id]}  {wrapped_name}{suffix}", (x, y),
-                    xytext=(9, 0), textcoords="offset points", va="center",
-                    fontsize=8, linespacing=1.15, fontweight="bold" if is_survivor else "normal",
-                    color="#14532d" if is_survivor else "#1f2937", zorder=4)
+        ax.annotate(f"{node_labels[concept_id]}{suffix}", (x, y),
+                    xytext=(9, 7), textcoords="offset points", va="bottom",
+                    fontsize=10, fontweight="bold" if is_survivor else "normal",
+                    color="#14532d" if is_survivor else "#1f2937", zorder=4,
+                    bbox={"boxstyle": "round,pad=0.14", "facecolor": "white", "edgecolor": "none", "alpha": 0.94})
 
-    ax.set_title("Concept refinement phylogeny — blue paths lead to final Pareto survivors", loc="left", pad=16)
+    ax.set_title(
+        "Concept refinement phylogeny — node codes map to the key below; blue paths end at Pareto survivors",
+        loc="left", pad=16,
+    )
     ax.set_xlabel("Refinement depth from root")
     ax.set_xticks(range(max_depth + 1), ["Root" if depth == 0 else str(depth) for depth in range(max_depth + 1)])
     ax.set_ylim(next_leaf_y - 0.5, -0.5)
     ax.set_yticks([])
-    ax.set_xlim(-0.25, max_depth + 1.8)
+    ax.set_xlim(-0.25, max_depth + 0.8)
     ax.grid(axis="x", color="#e5e7eb", linewidth=0.8)
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
@@ -140,10 +143,12 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
             "name": str(concepts[concept_id].get("name", concept_id)),
             "definition": str(concepts[concept_id].get("definition", "")),
             "parent_id": parent_ids[concept_id],
+            "parent_label": node_labels.get(parent_ids[concept_id], ""),
             "depth": int(positions[concept_id][0]),
             "is_survivor": concept_id in survivor_ids,
             "on_path_to_survivor": concept_id in surviving_paths,
             "is_dead_end": not children[concept_id] and concept_id not in survivor_ids,
+            "tree_marker": "★ survivor" if concept_id in survivor_ids else "× dead end" if not children[concept_id] else "branch",
         }
         for concept_id in sorted(concepts, key=lambda item: node_labels[item])
     ])
@@ -179,6 +184,59 @@ def _save_top_pair_attribution_plot(ranking: pd.DataFrame, output_path: Path, *,
     fig.savefig(output_path, dpi=170, bbox_inches="tight")
     plt.close(fig)
     return output_path
+
+
+def restore_automated_result_artifacts(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Restore report tables from a completed run for display in notebook 10f.
+
+    This supports notebooks whose in-memory pipeline result predates the final
+    attribution keys while keeping artifact recovery out of notebook cells.
+    """
+    restored = dict(result)
+    if restored.get("status") == "disabled":
+        return restored
+    run_dir = Path(restored["run_directory"])
+    saved_attributions = {
+        "attribution_selected_pairs": ("attribution_selected_pairs_by_si.csv", pd.read_csv),
+        "attribution_ranking": ("exploratory_pair_attribution_rankings.parquet", pd.read_parquet),
+        "attribution_horizons": ("exploratory_pair_attribution_horizons.parquet", pd.read_parquet),
+    }
+    for key, (filename, reader) in saved_attributions.items():
+        if key not in restored:
+            artifact_path = run_dir / filename
+            if not artifact_path.exists():
+                raise RuntimeError(
+                    f"RESULT is missing {key!r}, and saved artifact {artifact_path} was not found. "
+                    "Run the 10f cycle to generate the final report."
+                )
+            restored[key] = reader(artifact_path)
+
+    restored.setdefault("attribution_selected_pairs_path", run_dir / "attribution_selected_pairs_by_si.csv")
+    restored.setdefault("attribution_ranking_path", run_dir / "exploratory_pair_attribution_rankings.parquet")
+    restored.setdefault("attribution_horizons_path", run_dir / "exploratory_pair_attribution_horizons.parquet")
+    plot_path = run_dir / "exploratory_pair_attribution_top_concepts.png"
+    restored.setdefault("attribution_plot_path", plot_path if plot_path.exists() else None)
+
+    phylogeny_path = restored.get("phylogeny_path")
+    if phylogeny_path is not None:
+        phylogeny_path = Path(phylogeny_path)
+        node_key_path = restored.get("phylogeny_nodes_path")
+        if node_key_path is None:
+            node_key_path = phylogeny_path.with_name(f"{phylogeny_path.stem}_nodes.csv")
+            restored["phylogeny_nodes_path"] = node_key_path
+        node_key_path = Path(node_key_path)
+        node_key = pd.read_csv(node_key_path)
+        if "parent_label" not in node_key:
+            labels_by_id = dict(zip(node_key["concept_id"].astype(str), node_key["node_label"].astype(str)))
+            node_key["parent_label"] = node_key["parent_id"].astype(str).map(labels_by_id).fillna("")
+        if "tree_marker" not in node_key:
+            node_key["tree_marker"] = [
+                "★ survivor" if survivor else "× dead end" if dead_end else "branch"
+                for survivor, dead_end in zip(node_key["is_survivor"], node_key["is_dead_end"])
+            ]
+        restored["phylogeny_node_key"] = node_key
+    return restored
+
 
 def run_automated_concept_refinement(
     project_root: str | Path,
@@ -425,6 +483,19 @@ def run_automated_concept_refinement(
 
         llm = OpenAILanguageModel(OpenAIConfig(model=CHILD_GENERATION_MODEL, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS))
         jev = OpenRouterJevClient(model=JEV_MODEL)
+
+        def report_openai_usage(iteration):
+            usage_method = getattr(llm, "usage_summary", None)
+            usage = usage_method() if callable(usage_method) else getattr(llm, "prompt_cache_usage", {})
+            progress(
+                f"Iteration {iteration}: OpenAI child-generation usage so far — "
+                f"{int(usage.get('requests', 0)):,} requests; "
+                f"{int(usage.get('prompt_tokens', 0)):,} input tokens "
+                f"({int(usage.get('cached_tokens', 0)):,} cached); "
+                f"{int(usage.get('completion_tokens', 0)):,} output tokens. "
+                "Remaining account credit is not exposed by the OpenAI model API; check the billing dashboard."
+            )
+
         fit_start = FIT_START_YEAR
         fit_end = FORECAST_ORIGIN_END_YEAR
         iteration_plot_paths = []
@@ -671,6 +742,7 @@ def run_automated_concept_refinement(
                     "status": "no_eligible_parents",
                 })
                 (RUN_DIR / "iteration_history.json").write_text(json.dumps(round_log, indent=2, ensure_ascii=False))
+                report_openai_usage(iteration)
                 break
             progress(f"Iteration {iteration}/{N_ITER}: selected {len(parent_ids)} parent(s) for expansion:")
             for rank, (_, row) in enumerate(selected_parents.iterrows(), start=1):
@@ -857,6 +929,7 @@ def run_automated_concept_refinement(
                 })
                 (RUN_DIR / "iteration_history.json").write_text(json.dumps(round_log, indent=2, ensure_ascii=False))
                 progress(f"Iteration {iteration}: no valid children were produced; continuing to the next Pareto parents if rounds remain.")
+                report_openai_usage(iteration)
                 continue
             catalog.extend(new_children)
             evaluated_concept_ids.extend(child["concept_id"] for child in new_children)
@@ -914,7 +987,9 @@ def run_automated_concept_refinement(
             progress(f"Iteration {iteration}/{N_ITER}: round status = {status}; history saved.")
             if status != "evaluated":
                 progress(f"Iteration {iteration}: child models were not evaluable; continuing to the next search round if available.")
+                report_openai_usage(iteration)
                 continue
+            report_openai_usage(iteration)
 
         progress(
             f"Final attribution: ranking development pairs by their latest observed SI up to "
