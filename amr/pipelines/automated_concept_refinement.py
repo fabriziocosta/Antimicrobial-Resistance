@@ -259,6 +259,7 @@ def run_automated_concept_refinement(
     RESET_CATALOG_TO_SEEDS = parameters["RESET_CATALOG_TO_SEEDS"]
     JEV_MODEL = parameters["JEV_MODEL"]
     MAX_WORKERS = parameters["MAX_WORKERS"]
+    FORECAST_MAX_WORKERS = parameters.get("FORECAST_MAX_WORKERS", 4)
     MAX_CLASSIFICATION_CALLS = parameters["MAX_CLASSIFICATION_CALLS"]
     CHILD_GENERATION_MODEL = parameters["CHILD_GENERATION_MODEL"]
     LLM_TEMPERATURE = parameters["LLM_TEMPERATURE"]
@@ -293,6 +294,9 @@ def run_automated_concept_refinement(
         raise ValueError(f"These parameters must be integers: {integer_parameters}")
     if any(value < 1 for value in integer_parameters.values()):
         raise ValueError(f"These parameters must be positive: {integer_parameters}")
+    if (not isinstance(FORECAST_MAX_WORKERS, int) or isinstance(FORECAST_MAX_WORKERS, bool)
+            or FORECAST_MAX_WORKERS == 0 or FORECAST_MAX_WORKERS < -1):
+        raise ValueError("FORECAST_MAX_WORKERS must be a positive integer or -1 for all available CPUs.")
     if not FORECAST_HORIZONS or any(not isinstance(h, int) or isinstance(h, bool) or h < 1 for h in FORECAST_HORIZONS):
         raise ValueError("FORECAST_HORIZONS must contain positive integers.")
     if len(set(FORECAST_HORIZONS)) != len(FORECAST_HORIZONS):
@@ -437,6 +441,7 @@ def run_automated_concept_refinement(
         "forecast_origin_end_year": FORECAST_ORIGIN_END_YEAR,
         "lag_length": LAG_LENGTH,
         "forecast_horizons": list(FORECAST_HORIZONS),
+        "forecast_max_workers": FORECAST_MAX_WORKERS,
         "min_prior_observations": MIN_PRIOR_OBSERVATIONS,
         "n_iter": N_ITER,
         "k_parents": K_PARENTS,
@@ -600,7 +605,7 @@ def run_automated_concept_refinement(
                 si_df, signals, concept_ids=model_concepts, model_sets=model_sets,
                 development_pairs=development_pairs, fit_start_year=fit_start, fit_end_year=fit_end,
                 lag_length=LAG_LENGTH, horizons=FORECAST_HORIZONS, min_prior_observations=MIN_PRIOR_OBSERVATIONS,
-                progress_every=FORECAST_PROGRESS_EVERY,
+                progress_every=FORECAST_PROGRESS_EVERY, max_workers=FORECAST_MAX_WORKERS,
             )
             if forecasts.empty:
                 return forecasts, pd.DataFrame(), pd.DataFrame()
@@ -1003,9 +1008,14 @@ def run_automated_concept_refinement(
         si_for_rank["year"] = pd.to_numeric(si_for_rank["year"], errors="coerce")
         si_for_rank["SI"] = pd.to_numeric(si_for_rank["SI"], errors="coerce")
         si_for_rank = si_for_rank.dropna(subset=["year", "SI"])
+        development_pair_mask = np.fromiter(
+            (pair in development_keys for pair in zip(si_for_rank["pathogen"], si_for_rank["antibiotic"])),
+            dtype=bool,
+            count=len(si_for_rank),
+        )
         si_for_rank = si_for_rank.loc[
             si_for_rank["year"].le(FORECAST_ORIGIN_END_YEAR)
-            & [pair in development_keys for pair in zip(si_for_rank["pathogen"], si_for_rank["antibiotic"])]
+            & development_pair_mask
         ].sort_values(["pathogen", "antibiotic", "year"])
         latest_si = si_for_rank.drop_duplicates(["pathogen", "antibiotic"], keep="last").copy()
         latest_si = latest_si.rename(columns={"year": "si_rank_year", "SI": "si_at_rank"})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -664,6 +665,20 @@ def classify_concept_abstracts_jev(
             session_successes += len(batch) - len(failed_pmids)
             refresh_credit()
             print("Jev concept classification: " + progress_line(len(failed_pmids)))
+            payment_errors = [
+                str(row.get("error", ""))
+                for row in batch_rows
+                if row.get("status") == "error"
+                and ("402" in str(row.get("error", "")) or "payment required" in str(row.get("error", "")).lower())
+            ]
+            if payment_errors:
+                raise RuntimeError(
+                    "OpenRouter rejected Jev classification with HTTP 402 Payment Required. "
+                    f"The failed batch is saved in the classification cache ({len(failed_pmids):,} abstracts; "
+                    f"{sum(row.get('status') == 'error' for row in batch_rows):,} concept labels). "
+                    "Resolve the OpenRouter billing or quota issue, then rerun 10f; successful cached labels "
+                    "will be reused and only missing labels will be retried."
+                )
     if not cached.empty:
         cached = cached.drop_duplicates(
             ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
@@ -820,6 +835,7 @@ def rolling_origin_concept_forecasts(
     horizons: Sequence[int] = (1, 2, 3),
     min_prior_observations: int = 10,
     progress_every: int = 0,
+    max_workers: int = 4,
 ) -> pd.DataFrame:
     """Generate direct, expanding-window, fixed-effect panel forecasts.
 
@@ -830,6 +846,9 @@ def rolling_origin_concept_forecasts(
     required_si = {"pathogen", "antibiotic", "year", "SI"}
     if required_si - set(si_df.columns):
         raise KeyError(f"si_df is missing columns: {sorted(required_si - set(si_df.columns))}")
+    if (not isinstance(max_workers, int) or isinstance(max_workers, bool)
+            or max_workers == 0 or max_workers < -1):
+        raise ValueError("max_workers must be a positive integer or -1 for all available CPUs.")
     si = si_df[list(required_si)].copy()
     si["year"] = pd.to_numeric(si["year"], errors="coerce")
     si["SI"] = pd.to_numeric(si["SI"], errors="coerce")
@@ -846,6 +865,7 @@ def rolling_origin_concept_forecasts(
     else:
         configured_models = {"baseline": (), **{name: tuple(ids) for name, ids in model_sets.items()}}
     progress_interval = max(0, int(progress_every))
+    progress_lock = threading.Lock()
     origins = range(fit_start_year, fit_end_year + 1)
     total_steps = len(horizons) * len(configured_models) * len(origins)
     completed_steps = 0
@@ -853,74 +873,91 @@ def rolling_origin_concept_forecasts(
 
     def report_progress(steps: int = 1) -> None:
         nonlocal completed_steps
-        completed_steps += steps
-        if not progress_interval or (completed_steps % progress_interval and completed_steps != total_steps):
-            return
-        elapsed = max(0.0, time.monotonic() - progress_started)
-        rate = completed_steps / elapsed if elapsed > 0 else 0.0
-        remaining = max(0, total_steps - completed_steps)
-        eta = remaining / rate if rate > 0 else 0.0
-        total_seconds = max(0, int(elapsed))
-        hours, rem = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(rem, 60)
-        elapsed_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
-        total_seconds = max(0, int(eta))
-        hours, rem = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(rem, 60)
-        eta_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
-        percent = 100.0 * completed_steps / total_steps if total_steps else 100.0
-        print(f"Forecast progress: {completed_steps:,}/{total_steps:,} model-origin steps ({percent:.1f}%) "
-              f"| elapsed {elapsed_text} | ETA {eta_text}")
+        with progress_lock:
+            completed_steps += steps
+            if not progress_interval or (completed_steps % progress_interval and completed_steps != total_steps):
+                return
+            elapsed = max(0.0, time.monotonic() - progress_started)
+            rate = completed_steps / elapsed if elapsed > 0 else 0.0
+            remaining = max(0, total_steps - completed_steps)
+            eta = remaining / rate if rate > 0 else 0.0
+            total_seconds = max(0, int(elapsed))
+            hours, rem = divmod(total_seconds, 3600)
+            minutes, seconds = divmod(rem, 60)
+            elapsed_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
+            total_seconds = max(0, int(eta))
+            hours, rem = divmod(total_seconds, 3600)
+            minutes, seconds = divmod(rem, 60)
+            eta_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
+            percent = 100.0 * completed_steps / total_steps if total_steps else 100.0
+            print(f"Forecast progress: {completed_steps:,}/{total_steps:,} model-origin steps ({percent:.1f}%) "
+                  f"| elapsed {elapsed_text} | ETA {eta_text}", flush=True)
 
     si_years_by_pair: dict[tuple[str, str], np.ndarray] = {}
     for (pathogen, antibiotic), pair_si in si.groupby(["pathogen", "antibiotic"], sort=False):
         si_years_by_pair[(str(pathogen), str(antibiotic))] = np.sort(pair_si["year"].to_numpy(dtype=int))
-    for horizon in horizons:
-        for model_name, selected_ids in configured_models.items():
-            rows = _make_training_rows(si, signals_df, lag_length=lag_length, horizon=int(horizon),
-                                       max_origin_year=fit_end_year, concept_ids=selected_ids)
-            if rows.empty:
-                report_progress(len(origins))
-                continue
-            rows_by_pair = {
-                (str(pathogen), str(antibiotic)): pair_rows
-                for (pathogen, antibiotic), pair_rows in rows.groupby(["pathogen", "antibiotic"], sort=False)
-            }
-            y_cols = [f"y_lag_{lag}" for lag in range(1, lag_length + 1)]
-            feature_cols = y_cols + [f"{c}_lag_{lag}" for c in selected_ids for lag in range(1, lag_length + 1)]
-            for origin in origins:
-                try:
-                    train = rows.loc[(rows["origin_year"] + int(horizon)) <= origin].copy()
-                    if dev_set is not None:
-                        train_pairs = list(zip(train["pathogen"].astype(str), train["antibiotic"].astype(str)))
-                        train = train.loc[[pair in dev_set for pair in train_pairs]]
-                    slopes = _fit_panel_slopes(train, feature_cols)
-                    if slopes is None:
+    def evaluate_model_horizon(task: tuple[int, str, Sequence[str]]) -> list[dict[str, Any]]:
+        horizon, model_name, selected_ids = task
+        rows = _make_training_rows(si, signals_df, lag_length=lag_length, horizon=int(horizon),
+                                   max_origin_year=fit_end_year, concept_ids=selected_ids)
+        task_result: list[dict[str, Any]] = []
+        if rows.empty:
+            report_progress(len(origins))
+            return task_result
+        rows_by_pair = {
+            (str(pathogen), str(antibiotic)): pair_rows
+            for (pathogen, antibiotic), pair_rows in rows.groupby(["pathogen", "antibiotic"], sort=False)
+        }
+        y_cols = [f"y_lag_{lag}" for lag in range(1, lag_length + 1)]
+        feature_cols = y_cols + [f"{c}_lag_{lag}" for c in selected_ids for lag in range(1, lag_length + 1)]
+        for origin in origins:
+            try:
+                train = rows.loc[(rows["origin_year"] + int(horizon)) <= origin].copy()
+                if dev_set is not None:
+                    train_pairs = list(zip(train["pathogen"].astype(str), train["antibiotic"].astype(str)))
+                    train = train.loc[[pair in dev_set for pair in train_pairs]]
+                slopes = _fit_panel_slopes(train, feature_cols)
+                if slopes is None:
+                    continue
+                candidate = rows.loc[rows["origin_year"].eq(origin)].copy()
+                for pair_values, pair_candidates in candidate.groupby(["pathogen", "antibiotic"], sort=False):
+                    pair = (str(pair_values[0]), str(pair_values[1]))
+                    observed_years = si_years_by_pair.get(pair, np.asarray([], dtype=int))
+                    prior_observation_count = int(np.searchsorted(observed_years, origin, side="right"))
+                    if prior_observation_count < min_prior_observations:
                         continue
-                    candidate = rows.loc[rows["origin_year"].eq(origin)].copy()
-                    for pair_values, pair_candidates in candidate.groupby(["pathogen", "antibiotic"], sort=False):
-                        pair = (str(pair_values[0]), str(pair_values[1]))
-                        observed_years = si_years_by_pair.get(pair, np.asarray([], dtype=int))
-                        prior_observation_count = int(np.searchsorted(observed_years, origin, side="right"))
-                        if prior_observation_count < min_prior_observations:
-                            continue
-                        pair_rows = rows_by_pair[pair]
-                        prior = pair_rows.loc[(pair_rows["origin_year"] + int(horizon)) <= origin]
-                        if prior.empty:
-                            continue
-                        xprior = prior[list(feature_cols)].to_numpy(dtype=float)
-                        yprior = prior["target"].to_numpy(dtype=float)
-                        alpha = float(np.mean(yprior - xprior @ slopes))
-                        xrows = pair_candidates[list(feature_cols)].to_numpy(dtype=float)
-                        predictions = alpha + xrows @ slopes
-                        for row, prediction in zip(pair_candidates.itertuples(index=False), predictions):
-                            result.append({"pathogen": pair[0], "antibiotic": pair[1], "model": model_name,
-                                           "horizon": int(horizon), "origin_year": int(origin),
-                                           "target_year": int(row.target_year), "observed": float(row.target),
-                                           "predicted": float(prediction),
-                                           "squared_error": (float(row.target) - float(prediction)) ** 2})
-                finally:
-                    report_progress()
+                    pair_rows = rows_by_pair[pair]
+                    prior = pair_rows.loc[(pair_rows["origin_year"] + int(horizon)) <= origin]
+                    if prior.empty:
+                        continue
+                    xprior = prior[list(feature_cols)].to_numpy(dtype=float)
+                    yprior = prior["target"].to_numpy(dtype=float)
+                    alpha = float(np.mean(yprior - xprior @ slopes))
+                    xrows = pair_candidates[list(feature_cols)].to_numpy(dtype=float)
+                    predictions = alpha + xrows @ slopes
+                    for row, prediction in zip(pair_candidates.itertuples(index=False), predictions):
+                        task_result.append({"pathogen": pair[0], "antibiotic": pair[1], "model": model_name,
+                                            "horizon": int(horizon), "origin_year": int(origin),
+                                            "target_year": int(row.target_year), "observed": float(row.target),
+                                            "predicted": float(prediction),
+                                            "squared_error": (float(row.target) - float(prediction)) ** 2})
+            finally:
+                report_progress()
+        return task_result
+
+    tasks = [
+        (int(horizon), str(model_name), tuple(map(str, selected_ids)))
+        for horizon in horizons
+        for model_name, selected_ids in configured_models.items()
+    ]
+    requested_workers = (os.cpu_count() or 1) if max_workers == -1 else max_workers
+    with ThreadPoolExecutor(max_workers=min(requested_workers, max(1, len(tasks)))) as pool:
+        futures = {pool.submit(evaluate_model_horizon, task): index for index, task in enumerate(tasks)}
+        task_results: dict[int, list[dict[str, Any]]] = {}
+        for future in as_completed(futures):
+            task_results[futures[future]] = future.result()
+        for index in range(len(tasks)):
+            result.extend(task_results[index])
     return pd.DataFrame(result)
 
 

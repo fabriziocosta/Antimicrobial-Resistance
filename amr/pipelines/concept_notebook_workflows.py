@@ -274,7 +274,8 @@ def evaluate_development_concepts(
     lag_length: int = 3,
     horizons: Sequence[int] = (1, 2, 3),
     min_prior_observations: int = 10,
-    progress_every: int = 10,
+    progress_every: int = 200,
+    max_workers: int = 4,
 ) -> dict[str, Any]:
     """Build yearly signals and rolling-origin development forecasts for notebook 10d."""
     root, config, paths = _project(project_root)
@@ -320,7 +321,7 @@ def evaluate_development_concepts(
         si_df, signals, concept_ids=concept_ids, model_sets=model_sets,
         development_pairs=development_pairs, fit_start_year=fit_start_year, fit_end_year=fit_end_year,
         lag_length=lag_length, horizons=horizons, min_prior_observations=min_prior_observations,
-        progress_every=progress_every,
+        progress_every=progress_every, max_workers=max_workers,
     )
     forecasts = forecasts.merge(split, on=["pathogen", "antibiotic"], how="left", validate="many_to_one")
     forecasts = forecasts.loc[forecasts["split"].eq("development")].drop(columns="split")
@@ -348,6 +349,7 @@ def confirm_frozen_concepts(
     horizons: Sequence[int] = (1, 2, 3),
     min_prior_observations: int = 10,
     min_attribution_origins: int = 5,
+    max_workers: int = 4,
 ) -> dict[str, Any]:
     """Evaluate a frozen catalog/population once on confirmation pairs."""
     import matplotlib.pyplot as plt
@@ -409,6 +411,7 @@ def confirm_frozen_concepts(
         si_df, signals, concept_ids=concept_ids, model_sets=model_sets,
         development_pairs=development_pairs, fit_start_year=fit_start_year, fit_end_year=fit_end_year,
         lag_length=lag_length, horizons=horizons, min_prior_observations=min_prior_observations,
+        max_workers=max_workers,
     )
     pairs = list(zip(forecasts["pathogen"].astype(str), forecasts["antibiotic"].astype(str)))
     forecasts = forecasts.loc[[pair in confirmation_pairs for pair in pairs]].copy()
