@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -53,6 +53,9 @@ CONCEPT_SYSTEM_PROMPT = (
 CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
     (CONCEPT_SYSTEM_PROMPT + "|score-json-v1|0=absent;1=explicit;fraction=ambiguous").encode("utf-8")
 ).hexdigest()[:16]
+JEV_CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
+    b"jev-noul-concept-presence-title-abstract-v1"
+).hexdigest()[:16]
 
 
 def _normalise_pmid(value: object) -> str | None:
@@ -97,6 +100,9 @@ def build_concept_corpus(
     *,
     heldout_fraction: float = 0.2,
     split_seed: int = 42,
+    pathogen_priority_df: pd.DataFrame | None = None,
+    num_pathogens: int | None = None,
+    min_pathogenic_index: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Join screened pair-year PMID membership to abstracts and observed SI.
 
@@ -116,7 +122,30 @@ def build_concept_corpus(
         if missing:
             raise KeyError(f"{name} is missing required columns: {sorted(missing)}")
 
+    if num_pathogens is not None and int(num_pathogens) < 1:
+        raise ValueError("num_pathogens must be a positive integer or None.")
     si = si_df[["pathogen", "antibiotic", "year", "SI"]].copy()
+    if num_pathogens is not None:
+        if pathogen_priority_df is None:
+            raise ValueError("pathogen_priority_df is required when num_pathogens is set.")
+        required_priority = {"CanonicalSpecies", "pathogenic_index"}
+        missing_priority = required_priority - set(pathogen_priority_df.columns)
+        if missing_priority:
+            raise KeyError(f"pathogen_priority_df is missing columns: {sorted(missing_priority)}")
+        priority = pathogen_priority_df[["CanonicalSpecies", "pathogenic_index"]].copy()
+        priority["CanonicalSpecies"] = priority["CanonicalSpecies"].astype(str).str.strip()
+        priority["pathogenic_index"] = pd.to_numeric(priority["pathogenic_index"], errors="coerce")
+        priority = priority.dropna(subset=["CanonicalSpecies", "pathogenic_index"])
+        if min_pathogenic_index is not None:
+            priority = priority.loc[priority["pathogenic_index"] > float(min_pathogenic_index)]
+        priority = priority.sort_values(["pathogenic_index", "CanonicalSpecies"], ascending=[False, True])
+        present = set(si["pathogen"].dropna().astype(str).str.strip())
+        if "pathogen" in screened_df:
+            present &= set(screened_df["pathogen"].dropna().astype(str).str.strip())
+        priority = priority.drop_duplicates("CanonicalSpecies")
+        selected = priority.loc[priority["CanonicalSpecies"].isin(present), "CanonicalSpecies"].head(int(num_pathogens))
+        si["pathogen"] = si["pathogen"].astype(str).str.strip()
+        si = si.loc[si["pathogen"].isin(set(selected))].copy()
     si["year"] = pd.to_numeric(si["year"], errors="coerce")
     si = si.dropna(subset=["pathogen", "antibiotic", "year", "SI"])
     si["year"] = si["year"].astype(int)
@@ -291,6 +320,104 @@ def classify_concept_abstracts(
     ].reset_index(drop=True)
 
 
+def classify_concept_abstracts_jev(
+    abstracts: pd.DataFrame,
+    catalog: Sequence[Mapping[str, Any]],
+    *,
+    jev_client: Any,
+    model_name: str,
+    cache_path: str | Path,
+    max_calls: int | None = None,
+) -> pd.DataFrame:
+    """Score concept presence with Jev's typed NOUL endpoint, resumably.
+
+    One request contains the abstract and one binary-confidence question per
+    concept. No pair identifiers or scientific-interest outcomes are passed.
+    """
+    required = {"pmid", "title", "abstract"}
+    if required - set(abstracts.columns):
+        raise KeyError(f"abstracts is missing columns: {sorted(required - set(abstracts.columns))}")
+    if not catalog:
+        raise ValueError("At least one concept is required.")
+    catalog_version = concept_catalog_hash(catalog)
+    concepts = {str(c["concept_id"]): c for c in catalog}
+    work = abstracts[["pmid", "title", "abstract"]].copy()
+    work["pmid"] = work["pmid"].map(_normalise_pmid)
+    work = work.dropna(subset=["pmid"]).drop_duplicates("pmid", keep="last")
+    work["title"] = work["title"].fillna("").astype(str)
+    work["abstract"] = work["abstract"].fillna("").astype(str)
+    work = work.loc[work["abstract"].str.strip().ne("")]
+    path = Path(cache_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = ["pmid", "concept_id", "probability", "catalog_version", "model_name",
+               "prompt_version", "status", "error"]
+    cached = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
+    if not set(columns).issubset(cached.columns):
+        cached = pd.DataFrame(columns=columns)
+    current = cached.loc[
+        cached["catalog_version"].astype(str).eq(catalog_version)
+        & cached["model_name"].astype(str).eq(model_name)
+        & cached["prompt_version"].astype(str).eq(JEV_CLASSIFICATION_PROMPT_VERSION)
+    ]
+    concept_ids = set(concepts)
+    complete = current.loc[current["status"].eq("ok")].groupby("pmid")["concept_id"].agg(set)
+    completed_pmids = {str(pmid) for pmid, ids in complete.items() if concept_ids.issubset(set(ids))}
+    pending = work.loc[~work["pmid"].isin(completed_pmids)]
+    if max_calls is not None:
+        pending = pending.head(max(0, int(max_calls)))
+    new_rows: list[dict[str, Any]] = []
+    for row in pending.itertuples(index=False):
+        state = f"Title: {row.title.strip()}\nAbstract: {row.abstract.strip()}"
+        questions = {
+            concept_id: (
+                "Based only on this title and abstract, how likely is it that the paper contains "
+                f"explicit evidence of this concept: {concept.get('definition', concept.get('name', concept_id))} "
+                f"Inclusion examples: {concept.get('inclusion_criteria', [])}. "
+                f"Exclude: {concept.get('exclusion_criteria', [])}. Score presence, not importance or future impact."
+            )
+            for concept_id, concept in concepts.items()
+        }
+        try:
+            response = jev_client.decide_many(state, questions=questions)
+            answers = response.get("answers", {})
+            rows = []
+            for concept_id in concepts:
+                answer = answers.get(concept_id, {}) if isinstance(answers, Mapping) else {}
+                probability = answer.get("noul") if isinstance(answer, Mapping) else None
+                if probability is None:
+                    raise ValueError(f"Jev response omitted a NOUL score for {concept_id}.")
+                score = float(probability)
+                if not np.isfinite(score) or not 0 <= score <= 1:
+                    raise ValueError(f"Jev returned an invalid NOUL score for {concept_id}: {probability}")
+                rows.append({"pmid": row.pmid, "concept_id": concept_id, "probability": score,
+                             "catalog_version": catalog_version, "model_name": model_name,
+                             "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+                             "status": "ok", "error": ""})
+            new_rows.extend(rows)
+        except Exception as exc:
+            new_rows.extend({"pmid": row.pmid, "concept_id": concept_id, "probability": np.nan,
+                             "catalog_version": catalog_version, "model_name": model_name,
+                             "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+                             "status": "error", "error": str(exc)} for concept_id in concepts)
+        if len(new_rows) >= 100:
+            cached = pd.concat([cached, pd.DataFrame(new_rows)], ignore_index=True)
+            atomic_write_parquet(cached.drop_duplicates(
+                ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last"),
+                path, index=False)
+            new_rows = []
+    if new_rows:
+        cached = pd.concat([cached, pd.DataFrame(new_rows)], ignore_index=True)
+    if not cached.empty:
+        cached = cached.drop_duplicates(
+            ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
+    atomic_write_parquet(cached, path, index=False)
+    return cached.loc[
+        cached["catalog_version"].astype(str).eq(catalog_version)
+        & cached["model_name"].astype(str).eq(model_name)
+        & cached["prompt_version"].astype(str).eq(JEV_CLASSIFICATION_PROMPT_VERSION)
+    ].reset_index(drop=True)
+
+
 def build_yearly_concept_signals(
     corpus: pd.DataFrame,
     scores: pd.DataFrame,
@@ -303,20 +430,12 @@ def build_yearly_concept_signals(
     required_scores = {"pmid", "concept_id", "probability", "catalog_version", "status"}
     if required_corpus - set(corpus.columns) or required_scores - set(scores.columns):
         raise KeyError("Corpus or score table is missing required concept-signal columns.")
-    valid_scores = scores.loc[
-        scores["catalog_version"].astype(str).eq(catalog_version) & scores["status"].eq("ok"),
-        ["pmid", "concept_id", "probability"],
-    ].copy()
+    mask = scores["catalog_version"].astype(str).eq(catalog_version) & scores["status"].eq("ok")
     if model_name is not None:
         if "model_name" not in scores:
             raise KeyError("model_name filtering was requested but scores have no model_name column.")
-        selected = scores.loc[
-            scores["catalog_version"].astype(str).eq(catalog_version)
-            & scores["status"].eq("ok")
-            & scores["model_name"].astype(str).eq(model_name),
-            ["pmid", "concept_id", "probability"],
-        ].copy()
-        valid_scores = selected
+        mask &= scores["model_name"].astype(str).eq(model_name)
+    valid_scores = scores.loc[mask, ["pmid", "concept_id", "probability"]].copy()
     valid_scores["pmid"] = valid_scores["pmid"].map(_normalise_pmid)
     valid_scores["probability"] = pd.to_numeric(valid_scores["probability"], errors="coerce").clip(0, 1)
     work = corpus.loc[corpus["abstract_available"].astype(bool)].copy()
@@ -512,21 +631,12 @@ def summarise_concept_forecasts(forecasts: pd.DataFrame) -> tuple[pd.DataFrame, 
     if forecasts.empty:
         empty = pd.DataFrame()
         return empty, empty
-    key = ["pathogen", "antibiotic", "horizon", "origin_year", "target_year"]
-    baseline = forecasts.loc[forecasts["model"].eq("baseline"), key + ["squared_error"]].rename(
-        columns={"squared_error": "baseline_mse"}
-    )
-    concept = forecasts.loc[~forecasts["model"].eq("baseline")].merge(baseline, on=key, how="inner")
-    concept["forecast_gain"] = concept["baseline_mse"] - concept["squared_error"]
-    pair_summary = concept.groupby(["model", "pathogen", "antibiotic", "horizon"], as_index=False).agg(
-        mse=("squared_error", "mean"), baseline_mse=("baseline_mse", "mean"),
-        forecast_gain=("forecast_gain", "mean"), forecasts=("forecast_gain", "size")
-    )
-    population = pair_summary.groupby("model", as_index=False).agg(
-        generality=("forecast_gain", "mean"), specialist_strength=("forecast_gain", lambda s: float(s.quantile(0.9))),
-        pairs=("forecast_gain", "count"),
-    )
-    return pair_summary, population
+    comparisons = {
+        str(model): "baseline"
+        for model in forecasts["model"].dropna().unique()
+        if str(model) != "baseline"
+    }
+    return summarise_incremental_forecast_gains(forecasts, comparisons)
 
 
 def summarise_incremental_forecast_gains(
@@ -604,7 +714,7 @@ def compare_parent_children(
 __all__ = [
     "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash", "make_pair_split",
     "build_concept_corpus", "estimate_classification_cost", "build_classification_prompt",
-    "classify_concept_abstracts", "build_yearly_concept_signals", "propose_concept_children",
+    "classify_concept_abstracts", "classify_concept_abstracts_jev", "build_yearly_concept_signals", "propose_concept_children",
     "rolling_origin_concept_forecasts", "summarise_concept_forecasts", "compare_parent_children",
     "summarise_incremental_forecast_gains",
 ]

@@ -143,6 +143,15 @@ class TestSystem1Predictions(unittest.TestCase):
         self.assertEqual(kwargs["json"]["questions"]["amr_pair_supported"]["type"], "noul")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
 
+    def test_openrouter_client_posts_multiple_typed_questions(self):
+        session = Mock()
+        session.post.return_value = _FakeResponse({"answers": {}})
+        client = OpenRouterJevClient(api_key="test-key", session=session, retries=1)
+        client.decide_many("abstract state", questions={"surveillance": "Is monitoring present?", "diagnostics": "Is a diagnostic present?"})
+        payload = session.post.call_args.kwargs["json"]
+        self.assertEqual(set(payload["questions"]), {"surveillance", "diagnostics"})
+        self.assertTrue(all(q["type"] == "noul" for q in payload["questions"].values()))
+
     @patch("amr.screening.system1.fetch_pubmed_abstracts_batch")
     def test_system1_runs_requests_concurrently_when_configured(self, fetch):
         candidates = pd.DataFrame(

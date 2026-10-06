@@ -31,6 +31,8 @@ Detailed project documents live in `docs/`:
 - [Data collection and filtering process](docs/data_collection_and_filtering.md)
 - [Scientific interest modeling notes](docs/scientific_interest.md)
 - [SI driver classification analysis](docs/si_driver_classification_analysis.md)
+- [Scientific-interest concept discovery](docs/si_concept_discovery.md)
+- [Scientific-interest concept discovery research plan](docs/si_concept_discovery_plan.md)
 - [Collaborator communications log](collaborator_communications/communications.md)
 
 ## Repository Layout

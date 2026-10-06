@@ -7,6 +7,7 @@ from amr.si.concepts import (
     build_concept_corpus,
     build_yearly_concept_signals,
     classify_concept_abstracts,
+    classify_concept_abstracts_jev,
     compare_parent_children,
     concept_catalog_hash,
     make_pair_split,
@@ -23,6 +24,15 @@ class FakeLLM:
         self.calls += 1
         assert "scientific interest" not in prompt.lower()
         return json.dumps({"scores": {"surveillance": 0.75}})
+
+
+class FakeJev:
+    def __init__(self):
+        self.calls = []
+
+    def decide_many(self, state, *, questions):
+        self.calls.append((state, questions))
+        return {"answers": {key: {"noul": 0.6} for key in questions}}
 
 
 def test_pair_split_is_reproducible_and_pair_disjoint():
@@ -54,6 +64,20 @@ def test_corpus_joins_once_per_pair_year_pmid_and_preserves_shared_paper():
     assert len(split) == 2
 
 
+def test_corpus_can_limit_pathogens_by_priority_and_keeps_all_antibiotics():
+    screened = pd.DataFrame([
+        {"pathogen": p, "antibiotic": drug, "year": 2000, "pmids": [f"{p}-{drug}"]}
+        for p in ["P1", "P2", "P3"] for drug in ["A", "B"]
+    ])
+    abstracts = pd.DataFrame([{"pmid": row["pmids"][0], "title": "t", "abstract": "text"} for row in screened.to_dict("records")])
+    si = screened[["pathogen", "antibiotic", "year"]].copy()
+    si["SI"] = 0.1
+    priority = pd.DataFrame({"CanonicalSpecies": ["P2", "P1", "P3"], "pathogenic_index": [3, 2, 1]})
+    corpus, _ = build_concept_corpus(screened, abstracts, si, pathogen_priority_df=priority, num_pathogens=2)
+    assert set(corpus["pathogen"]) == {"P1", "P2"}
+    assert set(corpus["antibiotic"]) == {"A", "B"}
+
+
 def test_classification_cache_resumes_and_bounds_probabilities(tmp_path):
     abstracts = pd.DataFrame([
         {"pmid": "10", "title": "title", "abstract": "text"},
@@ -75,6 +99,21 @@ def test_classification_cache_resumes_and_bounds_probabilities(tmp_path):
     assert llm.calls == 2
     cached = pd.read_parquet(path)
     assert set(cached["catalog_version"]) == {concept_catalog_hash(catalog), concept_catalog_hash(revised_catalog)}
+
+
+def test_jev_classification_is_abstract_only_and_resumes(tmp_path):
+    abstracts = pd.DataFrame([{"pmid": "10", "title": "Title", "abstract": "Abstract text"}])
+    catalog = [{"concept_id": "surveillance", "name": "Surveillance", "definition": "monitoring"}]
+    jev = FakeJev()
+    path = tmp_path / "jev_scores.parquet"
+    first = classify_concept_abstracts_jev(abstracts, catalog, jev_client=jev, model_name="typesafe/jev-1.13", cache_path=path)
+    second = classify_concept_abstracts_jev(abstracts, catalog, jev_client=jev, model_name="typesafe/jev-1.13", cache_path=path)
+    assert len(jev.calls) == 1
+    assert first.loc[0, "probability"] == 0.6
+    assert "Abstract text" in jev.calls[0][0]
+    assert "scientific interest" not in jev.calls[0][0].lower()
+    assert "10" not in jev.calls[0][0]
+    assert len(second.loc[second["status"].eq("ok")]) == 1
 
 
 def test_yearly_signal_uses_classifiable_unique_articles_as_denominator():

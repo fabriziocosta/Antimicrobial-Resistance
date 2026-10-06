@@ -1,4 +1,6 @@
-# Causal Explanations of Scientific Interest
+# Research Plan: Discovering Precursors of Scientific Interest
+
+This document describes the research rationale and proposed analysis. For the implemented notebook workflow, see [Scientific-Interest Concept Discovery](si_concept_discovery.md).
 
 ## Project extension
 

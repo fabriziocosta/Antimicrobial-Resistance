@@ -135,14 +135,21 @@ class OpenRouterJevClient:
         )
 
     def decide(self, state: str, *, question: str) -> dict[str, Any]:
+        return self.decide_many(state, questions={"amr_pair_supported": question})
+
+    def decide_many(self, state: str, *, questions: dict[str, str]) -> dict[str, Any]:
+        """Ask multiple typed yes/no/uncertain questions about one state."""
+        if not questions:
+            raise ValueError("At least one question is required.")
         payload = {
             "model": self.model,
             "state": state,
             "questions": {
-                "amr_pair_supported": {
+                question_id: {
                     "type": "noul",
-                    "instructions": question,
+                    "instructions": instructions,
                 }
+                for question_id, instructions in questions.items()
             },
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -183,10 +190,10 @@ def build_system1_state(
     )
 
 
-def _extract_probability(response: dict[str, Any]) -> float:
+def _extract_probability(response: dict[str, Any], answer_id: str = "amr_pair_supported") -> float:
     """Validate the probability from the single configured Jev noul answer."""
     answers = response.get("answers")
-    answer = answers.get("amr_pair_supported") if isinstance(answers, dict) else None
+    answer = answers.get(answer_id) if isinstance(answers, dict) else None
     if not isinstance(answer, dict) or answer.get("type") != "noul":
         raise ValueError("OpenRouter response is missing the AMR noul answer.")
     # The Decisions API returns a noul answer as {"type": "noul", "noul": p_true}.

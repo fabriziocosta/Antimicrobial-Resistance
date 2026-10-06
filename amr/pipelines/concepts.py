@@ -36,14 +36,23 @@ def build_si_concept_paths(project_root: str | Path) -> dict[str, Path]:
 def load_concept_corpus(
     *, screened_path: str | Path, abstracts_path: str | Path, si_path: str | Path,
     heldout_fraction: float = 0.2, split_seed: int = 42,
+    pathogen_priority_path: str | Path | None = None, num_pathogens: int | None = None,
+    min_pathogenic_index: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load canonical SI artifacts and assemble the concept corpus."""
     for path in (screened_path, abstracts_path, si_path):
         if not Path(path).exists():
             raise FileNotFoundError(path)
+    priority = None
+    if num_pathogens is not None:
+        if pathogen_priority_path is None or not Path(pathogen_priority_path).exists():
+            raise FileNotFoundError(pathogen_priority_path or "pathogen_priority_path required for restricted runs")
+        priority = pd.read_csv(pathogen_priority_path)
     return build_concept_corpus(
         pd.read_parquet(screened_path), pd.read_parquet(abstracts_path), pd.read_parquet(si_path),
         heldout_fraction=heldout_fraction, split_seed=split_seed,
+        pathogen_priority_df=priority, num_pathogens=num_pathogens,
+        min_pathogenic_index=min_pathogenic_index,
     )
 
 
