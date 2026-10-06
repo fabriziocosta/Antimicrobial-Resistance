@@ -305,9 +305,8 @@ Hierarchical refinement therefore requires a different test.
 ## 8. Testing a specialisation
 
 Suppose concept $P$ is a surviving parent concept and the LLM proposes children
-
 $$
-C_1,\dots,C_m.
+C_1, \ldots, C_m.
 $$
 
 Do not test the children simply by adding them on top of $P$.
@@ -501,7 +500,7 @@ Split a broad concept into more specific child concepts.
 $$
 P
 \rightarrow
-\{C_1,\dots,C_m\}.
+\{C_1,\ldots,C_m\}.
 $$
 
 ### Merge

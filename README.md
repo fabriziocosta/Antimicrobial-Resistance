@@ -1,6 +1,6 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
-This project uses a module-first workflow with thirteen active
+This project uses a module-first workflow with eighteen active
 notebooks:
 
 0. `notebooks/00_configure_pipeline.ipynb`
@@ -16,6 +16,11 @@ notebooks:
 10. `notebooks/06_glass_interactive_si_shift.ipynb`
 11. `notebooks/07_glass_dedicated_pair_plots.ipynb`
 12. `notebooks/08_inspect_pair_pmids.ipynb`
+13. `notebooks/10a_prepare_si_concept_corpus.ipynb`
+14. `notebooks/10b_seed_and_refine_concepts.ipynb`
+15. `notebooks/10c_classify_abstract_concepts.ipynb`
+16. `notebooks/10d_evaluate_and_refine_concepts.ipynb`
+17. `notebooks/10e_confirm_si_concepts.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -115,6 +120,12 @@ Primary APIs:
 ### Notebook 05a: `notebooks/05a_analyze_si_drivers.ipynb`
 
 Explains the paper-category mix behind ranked pairs using LLM classification metadata. It writes driver summaries, category trend plots, and an all-years driver-composition pie-chart grid. Run it after notebook 05; it does not rebuild SI or rankings.
+
+### Notebooks 10a–10e: SI concept discovery
+
+Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The new suite builds a deterministic pair-level development/confirmation split, estimates labeling cost, manages a versioned concept catalog, classifies each unique abstract once per catalog version, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. LLM concept proposals and classification calls are disabled by default in their notebooks.
+
+Artifacts are saved under `outputs/concept_search/`. Concepts are evaluated as temporal predictors; these analyses do not establish mechanistic causation.
 
 ### Notebook 06: `notebooks/06_glass_interactive_si_shift.ipynb`
 

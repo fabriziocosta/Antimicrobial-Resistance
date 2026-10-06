@@ -1,0 +1,610 @@
+"""Concept discovery data and forecasting helpers for scientific interest."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+import numpy as np
+import pandas as pd
+
+from amr.io import atomic_write_parquet
+
+
+SEED_CONCEPTS: list[dict[str, Any]] = [
+    {"concept_id": "surveillance", "name": "Surveillance", "parent_id": None,
+     "definition": "Systematic monitoring or measurement of antimicrobial resistance burden, prevalence, incidence, or trends.",
+     "inclusion_criteria": ["resistance-rate monitoring", "antibiograms", "population-level susceptibility trends"],
+     "exclusion_criteria": ["single-patient case reports without monitoring"], "version": 1},
+    {"concept_id": "outbreak_evidence", "name": "Outbreak evidence", "parent_id": None,
+     "definition": "Evidence describing a cluster, outbreak, or spread event involving antimicrobial-resistant organisms.",
+     "inclusion_criteria": ["outbreak investigations", "transmission clusters"], "exclusion_criteria": ["routine surveillance without a cluster"], "version": 1},
+    {"concept_id": "treatment_failure", "name": "Treatment failure", "parent_id": None,
+     "definition": "Clinical evidence that infection treatment is ineffective, complicated, or fails in a way connected to resistance.",
+     "inclusion_criteria": ["failure or relapse during antimicrobial therapy", "resistance-associated poor outcomes"], "exclusion_criteria": ["in vitro resistance without treatment outcomes"], "version": 1},
+    {"concept_id": "mechanism_discovery", "name": "Mechanism discovery", "parent_id": None,
+     "definition": "Evidence identifying or characterising a biological mechanism that causes or contributes to antimicrobial resistance.",
+     "inclusion_criteria": ["resistance mechanisms", "gene transfer", "mutations or expression mechanisms"], "exclusion_criteria": ["resistance prevalence without mechanistic analysis"], "version": 1},
+    {"concept_id": "genomic_evidence", "name": "Genomic evidence", "parent_id": None,
+     "definition": "Use of genome sequencing or genomic analysis to detect, track, or explain antimicrobial resistance.",
+     "inclusion_criteria": ["whole-genome sequencing", "genomic epidemiology", "resistome analysis"], "exclusion_criteria": ["non-genomic molecular tests alone"], "version": 1},
+    {"concept_id": "diagnostics", "name": "Diagnostics", "parent_id": None,
+     "definition": "Development or evaluation of methods that detect resistance or guide susceptibility testing.",
+     "inclusion_criteria": ["diagnostic accuracy", "rapid susceptibility testing", "resistance detection assays"], "exclusion_criteria": ["routine susceptibility results without diagnostic evaluation"], "version": 1},
+    {"concept_id": "hospital_transmission", "name": "Hospital transmission", "parent_id": None,
+     "definition": "Evidence about transmission or spread of resistant organisms in healthcare settings.",
+     "inclusion_criteria": ["nosocomial transmission", "hospital contact or infection-control spread"], "exclusion_criteria": ["hospital prevalence without transmission evidence"], "version": 1},
+    {"concept_id": "agricultural_use", "name": "Agricultural use", "parent_id": None,
+     "definition": "Antimicrobial use or resistance in livestock, aquaculture, food production, or agricultural environments.",
+     "inclusion_criteria": ["veterinary antimicrobial use", "farm or food-chain resistance"], "exclusion_criteria": ["human clinical use without an agricultural link"], "version": 1},
+    {"concept_id": "policy_guideline_change", "name": "Policy or guideline change", "parent_id": None,
+     "definition": "Changes to formal policy, clinical guidelines, stewardship recommendations, or prescribing rules related to resistance.",
+     "inclusion_criteria": ["guideline revisions", "policy actions", "stewardship recommendations"], "exclusion_criteria": ["discussion of policy without a change or recommendation"], "version": 1},
+]
+
+CONCEPT_SYSTEM_PROMPT = (
+    "You classify scientific abstracts for a reproducible antimicrobial-resistance study. "
+    "Use only evidence in the supplied title and abstract. Return valid JSON. "
+    "Do not infer a concept from the pathogen, antibiotic, year, or any outcome."
+)
+CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
+    (CONCEPT_SYSTEM_PROMPT + "|score-json-v1|0=absent;1=explicit;fraction=ambiguous").encode("utf-8")
+).hexdigest()[:16]
+
+
+def _normalise_pmid(value: object) -> str | None:
+    if pd.isna(value):
+        return None
+    text = str(value).strip()
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    return text or None
+
+
+def concept_catalog_hash(catalog: Sequence[Mapping[str, Any]]) -> str:
+    """Return a stable short hash for a concept catalog and its definitions."""
+    payload = json.dumps(list(catalog), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def make_pair_split(
+    pairs: Iterable[tuple[object, object]], *, heldout_fraction: float = 0.2, seed: int = 42
+) -> pd.DataFrame:
+    """Create a deterministic pair-level development/confirmation split."""
+    if not 0 < heldout_fraction < 1:
+        raise ValueError("heldout_fraction must be between 0 and 1.")
+    unique = sorted({(str(pathogen), str(antibiotic)) for pathogen, antibiotic in pairs})
+    if len(unique) < 2:
+        raise ValueError("At least two unique pathogen-antibiotic pairs are required to split.")
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(unique))
+    heldout_n = min(len(unique) - 1, max(1, int(round(len(unique) * heldout_fraction))))
+    heldout = set(order[:heldout_n].tolist())
+    return pd.DataFrame([
+        {"pathogen": pair[0], "antibiotic": pair[1],
+         "split": "confirmation" if index in heldout else "development"}
+        for index, pair in enumerate(unique)
+    ])
+
+
+def build_concept_corpus(
+    screened_df: pd.DataFrame,
+    abstract_df: pd.DataFrame,
+    si_df: pd.DataFrame,
+    *,
+    heldout_fraction: float = 0.2,
+    split_seed: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Join screened pair-year PMID membership to abstracts and observed SI.
+
+    The returned corpus has one row per pair-year-PMID association. Articles are
+    classified once by PMID; a PMID associated with several pairs contributes to
+    each pair's yearly prevalence signal.
+    """
+    required_screen = {"pathogen", "antibiotic", "year", "pmids"}
+    required_abstract = {"pmid", "title", "abstract"}
+    required_si = {"pathogen", "antibiotic", "year", "SI"}
+    for frame, required, name in (
+        (screened_df, required_screen, "screened_df"),
+        (abstract_df, required_abstract, "abstract_df"),
+        (si_df, required_si, "si_df"),
+    ):
+        missing = required - set(frame.columns)
+        if missing:
+            raise KeyError(f"{name} is missing required columns: {sorted(missing)}")
+
+    si = si_df[["pathogen", "antibiotic", "year", "SI"]].copy()
+    si["year"] = pd.to_numeric(si["year"], errors="coerce")
+    si = si.dropna(subset=["pathogen", "antibiotic", "year", "SI"])
+    si["year"] = si["year"].astype(int)
+    si = si.drop_duplicates(["pathogen", "antibiotic", "year"], keep="last")
+
+    member = screened_df[["pathogen", "antibiotic", "year", "pmids"]].copy()
+    member["year"] = pd.to_numeric(member["year"], errors="coerce")
+    member = member.dropna(subset=["pathogen", "antibiotic", "year"])
+    member["year"] = member["year"].astype(int)
+    member = member.merge(si, on=["pathogen", "antibiotic", "year"], how="inner", validate="many_to_one")
+    member = member.explode("pmids").rename(columns={"pmids": "pmid"})
+    member["pmid"] = member["pmid"].map(_normalise_pmid)
+    member = member.dropna(subset=["pmid"])
+    member = member.drop_duplicates(["pathogen", "antibiotic", "year", "pmid"])
+
+    abstracts = abstract_df[["pmid", "title", "abstract"]].copy()
+    abstracts["pmid"] = abstracts["pmid"].map(_normalise_pmid)
+    abstracts = abstracts.dropna(subset=["pmid"]).drop_duplicates("pmid", keep="last")
+    abstracts["title"] = abstracts["title"].fillna("").astype(str)
+    abstracts["abstract"] = abstracts["abstract"].fillna("").astype(str)
+    abstracts["abstract_available"] = abstracts["abstract"].str.strip().ne("")
+    corpus = member.merge(abstracts, on="pmid", how="left", validate="many_to_one")
+    corpus["title"] = corpus["title"].fillna("")
+    corpus["abstract"] = corpus["abstract"].fillna("")
+    corpus["abstract_available"] = corpus["abstract_available"].fillna(False).astype(bool)
+    split = make_pair_split(
+        corpus[["pathogen", "antibiotic"]].drop_duplicates().itertuples(index=False, name=None),
+        heldout_fraction=heldout_fraction,
+        seed=split_seed,
+    )
+    corpus = corpus.merge(split, on=["pathogen", "antibiotic"], how="left", validate="many_to_one")
+    return corpus.sort_values(["pathogen", "antibiotic", "year", "pmid"]).reset_index(drop=True), split
+
+
+def estimate_classification_cost(
+    abstract_count: int,
+    *,
+    estimated_input_tokens_per_call: int,
+    estimated_output_tokens_per_call: int,
+    input_usd_per_million_tokens: float,
+    output_usd_per_million_tokens: float,
+) -> dict[str, float | int]:
+    """Estimate one multi-label LLM request per unique abstract."""
+    calls = max(0, int(abstract_count))
+    input_tokens = calls * max(0, int(estimated_input_tokens_per_call))
+    output_tokens = calls * max(0, int(estimated_output_tokens_per_call))
+    estimated_usd = (
+        input_tokens * float(input_usd_per_million_tokens)
+        + output_tokens * float(output_usd_per_million_tokens)
+    ) / 1_000_000
+    return {"abstracts": calls, "estimated_calls": calls, "input_tokens": input_tokens,
+            "output_tokens": output_tokens, "estimated_usd": estimated_usd}
+
+
+def _extract_json_object(raw: str) -> dict[str, Any]:
+    text = raw.strip()
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            raise ValueError("Model response did not contain a JSON object.")
+        result = json.loads(match.group(0))
+    if not isinstance(result, dict):
+        raise ValueError("Model response must be a JSON object.")
+    return result
+
+
+def build_classification_prompt(title: str, abstract: str, catalog: Sequence[Mapping[str, Any]]) -> str:
+    concepts = [{key: concept.get(key) for key in (
+        "concept_id", "name", "definition", "inclusion_criteria", "exclusion_criteria"
+    )} for concept in catalog]
+    payload = {"title": title, "abstract": abstract, "concepts": concepts}
+    return (
+        "For each concept, estimate whether the abstract contains evidence for it. "
+        "Return JSON with a `scores` object mapping every concept_id to a number from 0 to 1. "
+        "Use 0 when evidence is absent, 1 when explicit, and intermediate values only for genuine ambiguity.\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+
+def _normalise_score_response(data: Mapping[str, Any], concept_ids: Sequence[str]) -> dict[str, float]:
+    raw_scores = data.get("scores", data)
+    if not isinstance(raw_scores, Mapping):
+        raise ValueError("Classifier response must contain a mapping named 'scores'.")
+    result: dict[str, float] = {}
+    for concept_id in concept_ids:
+        value = raw_scores.get(concept_id, 0.0)
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            score = 0.0
+        if not np.isfinite(score):
+            score = 0.0
+        result[concept_id] = min(1.0, max(0.0, score))
+    return result
+
+
+def classify_concept_abstracts(
+    abstracts: pd.DataFrame,
+    catalog: Sequence[Mapping[str, Any]],
+    *,
+    llm: Any,
+    model_name: str,
+    cache_path: str | Path,
+    max_calls: int | None = None,
+) -> pd.DataFrame:
+    """Classify unique abstracts once per catalog version, resuming from parquet."""
+    required = {"pmid", "title", "abstract"}
+    if required - set(abstracts.columns):
+        raise KeyError(f"abstracts is missing columns: {sorted(required - set(abstracts.columns))}")
+    if not catalog:
+        raise ValueError("At least one concept is required.")
+    catalog_version = concept_catalog_hash(catalog)
+    concept_ids = [str(c["concept_id"]) for c in catalog]
+    work = abstracts[["pmid", "title", "abstract"]].copy()
+    work["pmid"] = work["pmid"].map(_normalise_pmid)
+    work = work.dropna(subset=["pmid"]).drop_duplicates("pmid", keep="last")
+    work["title"] = work["title"].fillna("").astype(str)
+    work["abstract"] = work["abstract"].fillna("").astype(str)
+    work = work.loc[work["abstract"].str.strip().ne("")]
+
+    path = Path(cache_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = ["pmid", "concept_id", "probability", "catalog_version", "model_name",
+               "prompt_version", "status", "error"]
+    all_cached = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
+    if not set(columns).issubset(all_cached.columns):
+        all_cached = pd.DataFrame(columns=columns)
+    cached_current = all_cached.loc[
+        all_cached["catalog_version"].astype(str).eq(catalog_version)
+        & all_cached["model_name"].astype(str).eq(model_name)
+        & all_cached["prompt_version"].astype(str).eq(CLASSIFICATION_PROMPT_VERSION)
+    ]
+    completed = set(cached_current.loc[cached_current["status"].eq("ok"), "pmid"].astype(str))
+    pending = work.loc[~work["pmid"].isin(completed)]
+    if max_calls is not None:
+        pending = pending.head(max(0, int(max_calls)))
+    new_rows: list[dict[str, Any]] = []
+    for row in pending.itertuples(index=False):
+        try:
+            raw = llm.complete(
+                build_classification_prompt(row.title, row.abstract, catalog),
+                system_prompt=CONCEPT_SYSTEM_PROMPT,
+                model=model_name,
+            )
+            scores = _normalise_score_response(_extract_json_object(raw), concept_ids)
+            new_rows.extend({"pmid": row.pmid, "concept_id": concept_id, "probability": score,
+                             "catalog_version": catalog_version, "model_name": model_name,
+                             "prompt_version": CLASSIFICATION_PROMPT_VERSION,
+                             "status": "ok", "error": ""}
+                            for concept_id, score in scores.items())
+        except Exception as exc:
+            new_rows.extend({"pmid": row.pmid, "concept_id": concept_id, "probability": np.nan,
+                             "catalog_version": catalog_version, "model_name": model_name,
+                             "prompt_version": CLASSIFICATION_PROMPT_VERSION,
+                             "status": "error", "error": str(exc)}
+                            for concept_id in concept_ids)
+        if new_rows and len(new_rows) % 100 == 0:
+            combined = pd.concat([all_cached, pd.DataFrame(new_rows)], ignore_index=True)
+            atomic_write_parquet(combined, path, index=False)
+    combined = pd.concat([all_cached, pd.DataFrame(new_rows)], ignore_index=True)
+    if not combined.empty:
+        combined = combined.drop_duplicates(
+            ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last"
+        )
+    atomic_write_parquet(combined, path, index=False)
+    return combined.loc[
+        combined["catalog_version"].astype(str).eq(catalog_version)
+        & combined["model_name"].astype(str).eq(model_name)
+        & combined["prompt_version"].astype(str).eq(CLASSIFICATION_PROMPT_VERSION)
+    ].reset_index(drop=True)
+
+
+def build_yearly_concept_signals(
+    corpus: pd.DataFrame,
+    scores: pd.DataFrame,
+    *,
+    catalog_version: str,
+    model_name: str | None = None,
+) -> pd.DataFrame:
+    """Aggregate abstract scores into pair-year concept prevalence signals."""
+    required_corpus = {"pathogen", "antibiotic", "year", "pmid", "abstract_available"}
+    required_scores = {"pmid", "concept_id", "probability", "catalog_version", "status"}
+    if required_corpus - set(corpus.columns) or required_scores - set(scores.columns):
+        raise KeyError("Corpus or score table is missing required concept-signal columns.")
+    valid_scores = scores.loc[
+        scores["catalog_version"].astype(str).eq(catalog_version) & scores["status"].eq("ok"),
+        ["pmid", "concept_id", "probability"],
+    ].copy()
+    if model_name is not None:
+        if "model_name" not in scores:
+            raise KeyError("model_name filtering was requested but scores have no model_name column.")
+        selected = scores.loc[
+            scores["catalog_version"].astype(str).eq(catalog_version)
+            & scores["status"].eq("ok")
+            & scores["model_name"].astype(str).eq(model_name),
+            ["pmid", "concept_id", "probability"],
+        ].copy()
+        valid_scores = selected
+    valid_scores["pmid"] = valid_scores["pmid"].map(_normalise_pmid)
+    valid_scores["probability"] = pd.to_numeric(valid_scores["probability"], errors="coerce").clip(0, 1)
+    work = corpus.loc[corpus["abstract_available"].astype(bool)].copy()
+    work["pmid"] = work["pmid"].map(_normalise_pmid)
+    joined = work.merge(valid_scores, on="pmid", how="inner", validate="many_to_many")
+    grouped = joined.groupby(["pathogen", "antibiotic", "year", "concept_id"], dropna=False)
+    out = grouped.agg(score_sum=("probability", "sum"), classified_articles=("pmid", "nunique")).reset_index()
+    denominator = (work.groupby(["pathogen", "antibiotic", "year"])["pmid"].nunique()
+                   .rename("abstract_articles").reset_index())
+    out = out.merge(denominator, on=["pathogen", "antibiotic", "year"], how="left", validate="many_to_one")
+    out["concept_prevalence"] = out["score_sum"] / out["abstract_articles"].replace(0, np.nan)
+    out["classification_coverage"] = out["classified_articles"] / out["abstract_articles"].replace(0, np.nan)
+    return out
+
+
+def propose_concept_children(
+    parent: Mapping[str, Any],
+    abstracts: Sequence[Mapping[str, str]],
+    *,
+    llm: Any,
+    model_name: str,
+) -> dict[str, Any]:
+    """Ask an LLM for child hypotheses from abstracts only; caller reviews before adoption."""
+    prompt = {
+        "parent": {key: parent.get(key) for key in (
+            "concept_id", "name", "definition", "inclusion_criteria", "exclusion_criteria"
+        )},
+        "abstract_examples": list(abstracts),
+        "task": (
+            "Propose up to five recurrent, distinguishable child concepts. Do not use or infer outcomes. "
+            "For each return name, definition, parent_id, scientific_rationale, inclusion_criteria, "
+            "exclusion_criteria, representative_evidence, closest_competing_concept, difference, "
+            "expected_temporal_relationship, testable_hypothesis, and rejection_conditions. "
+            "Return JSON as {children: [...]} ."
+        ),
+    }
+    raw = llm.complete(json.dumps(prompt, ensure_ascii=False), system_prompt=CONCEPT_SYSTEM_PROMPT,
+                       model=model_name)
+    result = _extract_json_object(raw)
+    if not isinstance(result.get("children", []), list):
+        raise ValueError("Child-concept response must contain a list named 'children'.")
+    return result
+
+
+def _make_training_rows(
+    si: pd.DataFrame,
+    signals: pd.DataFrame,
+    *,
+    lag_length: int,
+    horizon: int,
+    max_origin_year: int,
+    concept_ids: Sequence[str],
+) -> pd.DataFrame:
+    y_lookup = {(str(r.pathogen), str(r.antibiotic), int(r.year)): float(r.SI)
+                for r in si.itertuples(index=False) if pd.notna(r.SI)}
+    x_lookup = {(str(r.pathogen), str(r.antibiotic), int(r.year), str(r.concept_id)):
+                float(r.concept_prevalence) if pd.notna(r.concept_prevalence) else 0.0
+                for r in signals.itertuples(index=False)}
+    pairs = sorted({(p, a) for p, a, _ in y_lookup})
+    rows: list[dict[str, Any]] = []
+    for pathogen, antibiotic in pairs:
+        years = sorted(y for p, a, y in y_lookup if p == pathogen and a == antibiotic)
+        for origin in years:
+            target_year = origin + horizon
+            if target_year > max_origin_year + horizon or (pathogen, antibiotic, target_year) not in y_lookup:
+                continue
+            features: dict[str, float] = {}
+            valid = True
+            for lag in range(1, lag_length + 1):
+                y_value = y_lookup.get((pathogen, antibiotic, origin - lag))
+                if y_value is None:
+                    valid = False
+                    break
+                features[f"y_lag_{lag}"] = y_value
+                for concept_id in concept_ids:
+                    features[f"{concept_id}_lag_{lag}"] = x_lookup.get(
+                        (pathogen, antibiotic, origin - lag, concept_id), 0.0
+                    )
+            if not valid:
+                continue
+            rows.append({"pathogen": pathogen, "antibiotic": antibiotic, "origin_year": origin,
+                         "target_year": target_year, "target": y_lookup[(pathogen, antibiotic, target_year)],
+                         **features})
+    return pd.DataFrame(rows)
+
+
+def _fit_panel_slopes(train: pd.DataFrame, feature_cols: Sequence[str]) -> np.ndarray | None:
+    if len(train) <= len(feature_cols) or train.empty:
+        return None
+    train = train.reset_index(drop=True)
+    x = train[list(feature_cols)].to_numpy(dtype=float)
+    y = train["target"].to_numpy(dtype=float)
+    groups = train["pathogen"].astype(str) + "\x1f" + train["antibiotic"].astype(str)
+    xw = x.copy()
+    yw = y.copy()
+    group_frame = pd.DataFrame({"group": groups})
+    for indices in group_frame.groupby("group", sort=False).indices.values():
+        idx = np.asarray(indices, dtype=int)
+        xw[idx] -= x[idx].mean(axis=0)
+        yw[idx] -= y[idx].mean()
+    if not np.isfinite(xw).all() or not np.isfinite(yw).all():
+        return None
+    return np.linalg.lstsq(xw, yw, rcond=None)[0]
+
+
+def rolling_origin_concept_forecasts(
+    si_df: pd.DataFrame,
+    signals_df: pd.DataFrame,
+    *,
+    concept_ids: Sequence[str] = (),
+    model_sets: Mapping[str, Sequence[str]] | None = None,
+    development_pairs: set[tuple[str, str]] | None = None,
+    fit_start_year: int = 2000,
+    fit_end_year: int = 2023,
+    lag_length: int = 3,
+    horizons: Sequence[int] = (1, 2, 3),
+    min_prior_observations: int = 10,
+) -> pd.DataFrame:
+    """Generate direct, expanding-window, fixed-effect panel forecasts.
+
+    Common lag slopes are learned on development pairs. A pair intercept is
+    estimated from that pair's observations available at each forecast origin.
+    Models with or without concepts use the same target rows.
+    """
+    required_si = {"pathogen", "antibiotic", "year", "SI"}
+    if required_si - set(si_df.columns):
+        raise KeyError(f"si_df is missing columns: {sorted(required_si - set(si_df.columns))}")
+    si = si_df[list(required_si)].copy()
+    si["year"] = pd.to_numeric(si["year"], errors="coerce")
+    si["SI"] = pd.to_numeric(si["SI"], errors="coerce")
+    si = si.dropna(subset=["pathogen", "antibiotic", "year", "SI"])
+    si["year"] = si["year"].astype(int)
+    si = si.drop_duplicates(["pathogen", "antibiotic", "year"], keep="last")
+    dev_set = None if development_pairs is None else {(str(p), str(a)) for p, a in development_pairs}
+    result: list[dict[str, Any]] = []
+    if model_sets is None:
+        configured_models: dict[str, Sequence[str]] = {
+            "baseline": (),
+            **{f"concept:{concept_id}": (concept_id,) for concept_id in concept_ids},
+        }
+    else:
+        configured_models = {"baseline": (), **{name: tuple(ids) for name, ids in model_sets.items()}}
+    si_years_by_pair: dict[tuple[str, str], np.ndarray] = {}
+    for (pathogen, antibiotic), pair_si in si.groupby(["pathogen", "antibiotic"], sort=False):
+        si_years_by_pair[(str(pathogen), str(antibiotic))] = np.sort(pair_si["year"].to_numpy(dtype=int))
+    for horizon in horizons:
+        for model_name, selected_ids in configured_models.items():
+            rows = _make_training_rows(si, signals_df, lag_length=lag_length, horizon=int(horizon),
+                                       max_origin_year=fit_end_year, concept_ids=selected_ids)
+            if rows.empty:
+                continue
+            rows_by_pair = {
+                (str(pathogen), str(antibiotic)): pair_rows
+                for (pathogen, antibiotic), pair_rows in rows.groupby(["pathogen", "antibiotic"], sort=False)
+            }
+            y_cols = [f"y_lag_{lag}" for lag in range(1, lag_length + 1)]
+            feature_cols = y_cols + [f"{c}_lag_{lag}" for c in selected_ids for lag in range(1, lag_length + 1)]
+            for origin in range(fit_start_year, fit_end_year + 1):
+                train = rows.loc[(rows["origin_year"] + int(horizon)) <= origin].copy()
+                if dev_set is not None:
+                    train_pairs = list(zip(train["pathogen"].astype(str), train["antibiotic"].astype(str)))
+                    train = train.loc[[pair in dev_set for pair in train_pairs]]
+                slopes = _fit_panel_slopes(train, feature_cols)
+                if slopes is None:
+                    continue
+                candidate = rows.loc[rows["origin_year"].eq(origin)].copy()
+                for pair_values, pair_candidates in candidate.groupby(["pathogen", "antibiotic"], sort=False):
+                    pair = (str(pair_values[0]), str(pair_values[1]))
+                    observed_years = si_years_by_pair.get(pair, np.asarray([], dtype=int))
+                    prior_observation_count = int(np.searchsorted(observed_years, origin, side="right"))
+                    if prior_observation_count < min_prior_observations:
+                        continue
+                    pair_rows = rows_by_pair[pair]
+                    prior = pair_rows.loc[(pair_rows["origin_year"] + int(horizon)) <= origin]
+                    if prior.empty:
+                        continue
+                    xprior = prior[list(feature_cols)].to_numpy(dtype=float)
+                    yprior = prior["target"].to_numpy(dtype=float)
+                    alpha = float(np.mean(yprior - xprior @ slopes))
+                    xrows = pair_candidates[list(feature_cols)].to_numpy(dtype=float)
+                    predictions = alpha + xrows @ slopes
+                    for row, prediction in zip(pair_candidates.itertuples(index=False), predictions):
+                        result.append({"pathogen": pair[0], "antibiotic": pair[1], "model": model_name,
+                                       "horizon": int(horizon), "origin_year": int(origin),
+                                       "target_year": int(row.target_year), "observed": float(row.target),
+                                       "predicted": float(prediction),
+                                       "squared_error": (float(row.target) - float(prediction)) ** 2})
+    return pd.DataFrame(result)
+
+
+def summarise_concept_forecasts(forecasts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return per-pair and population summaries of baseline-relative MSE gains."""
+    if forecasts.empty:
+        empty = pd.DataFrame()
+        return empty, empty
+    key = ["pathogen", "antibiotic", "horizon", "origin_year", "target_year"]
+    baseline = forecasts.loc[forecasts["model"].eq("baseline"), key + ["squared_error"]].rename(
+        columns={"squared_error": "baseline_mse"}
+    )
+    concept = forecasts.loc[~forecasts["model"].eq("baseline")].merge(baseline, on=key, how="inner")
+    concept["forecast_gain"] = concept["baseline_mse"] - concept["squared_error"]
+    pair_summary = concept.groupby(["model", "pathogen", "antibiotic", "horizon"], as_index=False).agg(
+        mse=("squared_error", "mean"), baseline_mse=("baseline_mse", "mean"),
+        forecast_gain=("forecast_gain", "mean"), forecasts=("forecast_gain", "size")
+    )
+    population = pair_summary.groupby("model", as_index=False).agg(
+        generality=("forecast_gain", "mean"), specialist_strength=("forecast_gain", lambda s: float(s.quantile(0.9))),
+        pairs=("forecast_gain", "count"),
+    )
+    return pair_summary, population
+
+
+def summarise_incremental_forecast_gains(
+    forecasts: pd.DataFrame,
+    comparisons: Mapping[str, str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compare each named model with its reference on matched forecast origins.
+
+    ``comparisons`` maps an evaluated model name to its reference model, enabling
+    conditional gains and parent-versus-children replacement comparisons.
+    """
+    keys = ["pathogen", "antibiotic", "horizon", "origin_year", "target_year"]
+    pair_results: list[pd.DataFrame] = []
+    for candidate, reference in comparisons.items():
+        left = forecasts.loc[forecasts["model"].eq(candidate), keys + ["squared_error"]]
+        right = forecasts.loc[forecasts["model"].eq(reference), keys + ["squared_error"]]
+        merged = left.merge(right, on=keys, how="inner", suffixes=("_candidate", "_reference"))
+        if merged.empty:
+            continue
+        merged["model"] = candidate
+        merged["reference_model"] = reference
+        merged["forecast_gain"] = merged["squared_error_reference"] - merged["squared_error_candidate"]
+        pair_results.append(merged)
+    if not pair_results:
+        empty = pd.DataFrame()
+        return empty, empty
+    paired = pd.concat(pair_results, ignore_index=True)
+    pair_summary = paired.groupby(["model", "reference_model", "pathogen", "antibiotic", "horizon"],
+                                  as_index=False).agg(
+        candidate_mse=("squared_error_candidate", "mean"),
+        reference_mse=("squared_error_reference", "mean"),
+        forecast_gain=("forecast_gain", "mean"),
+        forecasts=("forecast_gain", "size"),
+    )
+    by_horizon = pair_summary.groupby(["model", "reference_model", "horizon"], as_index=False).agg(
+        generality=("forecast_gain", "mean"),
+        specialist_strength=("forecast_gain", lambda values: float(values.quantile(0.9))),
+        pairs=("forecast_gain", "count"),
+    )
+    pair_overall = pair_summary.groupby(
+        ["model", "reference_model", "pathogen", "antibiotic"], as_index=False
+    )["forecast_gain"].mean()
+    overall = pair_overall.groupby(["model", "reference_model"], as_index=False).agg(
+        generality=("forecast_gain", "mean"),
+        specialist_strength=("forecast_gain", lambda values: float(values.quantile(0.9))),
+        pairs=("forecast_gain", "count"),
+    )
+    overall["horizon"] = 0  # 0 denotes the equal-weight mean over horizons 1, 2, and 3.
+    population = pd.concat([by_horizon, overall[by_horizon.columns]], ignore_index=True)
+    return pair_summary, population
+
+
+def compare_parent_children(
+    parent_forecasts: pd.DataFrame,
+    children_forecasts: pd.DataFrame,
+    *,
+    parent_id: str,
+) -> pd.DataFrame:
+    """Compare parent-only and child-replacement forecasts on matched origins."""
+    keys = ["pathogen", "antibiotic", "horizon", "origin_year", "target_year"]
+    parent_mask = parent_forecasts["model"].isin({f"concept:{parent_id}", f"parent:{parent_id}"})
+    parent = parent_forecasts.loc[parent_mask, keys + ["squared_error"]]
+    children = children_forecasts.loc[
+        children_forecasts["model"].astype(str).str.startswith("children:"), keys + ["squared_error"]
+    ]
+    if parent.empty or children.empty:
+        return pd.DataFrame(columns=keys + ["parent_mse", "children_mse", "split_gain"])
+    child_mean = children.groupby(keys, as_index=False)["squared_error"].mean()
+    merged = parent.merge(child_mean, on=keys, how="inner", suffixes=("_parent", "_children"))
+    merged = merged.rename(columns={"squared_error_parent": "parent_mse", "squared_error_children": "children_mse"})
+    merged["split_gain"] = merged["parent_mse"] - merged["children_mse"]
+    return merged
+
+
+__all__ = [
+    "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash", "make_pair_split",
+    "build_concept_corpus", "estimate_classification_cost", "build_classification_prompt",
+    "classify_concept_abstracts", "build_yearly_concept_signals", "propose_concept_children",
+    "rolling_origin_concept_forecasts", "summarise_concept_forecasts", "compare_parent_children",
+    "summarise_incremental_forecast_gains",
+]
