@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -72,6 +73,12 @@ def _normalise_pmid(value: object) -> str | None:
 def concept_catalog_hash(catalog: Sequence[Mapping[str, Any]]) -> str:
     """Return a stable short hash for a concept catalog and its definitions."""
     payload = json.dumps(list(catalog), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def concept_definition_hash(concept: Mapping[str, Any]) -> str:
+    """Hash one concept independently so catalog additions do not invalidate it."""
+    payload = json.dumps(dict(concept), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -345,6 +352,10 @@ def classify_concept_abstracts_jev(
         raise ValueError("At least one concept is required.")
     catalog_version = concept_catalog_hash(catalog)
     concepts = {str(c["concept_id"]): c for c in catalog}
+    if len(concepts) != len(catalog):
+        raise ValueError("Concept catalog contains duplicate concept_id values.")
+    concept_versions = {concept_id: concept_definition_hash(concept)
+                        for concept_id, concept in concepts.items()}
     work = abstracts[["pmid", "title", "abstract"]].copy()
     work["pmid"] = work["pmid"].map(_normalise_pmid)
     work = work.dropna(subset=["pmid"]).drop_duplicates("pmid", keep="last")
@@ -353,30 +364,83 @@ def classify_concept_abstracts_jev(
     work = work.loc[work["abstract"].str.strip().ne("")]
     path = Path(cache_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    columns = ["pmid", "concept_id", "probability", "catalog_version", "model_name",
-               "prompt_version", "status", "error"]
+    columns = ["pmid", "concept_id", "concept_version", "probability", "catalog_version",
+               "model_name", "prompt_version", "status", "error"]
+    legacy_columns = [column for column in columns if column != "concept_version"]
     cached = pd.read_parquet(path) if path.exists() else pd.DataFrame(columns=columns)
-    if not set(columns).issubset(cached.columns):
+    if not set(legacy_columns).issubset(cached.columns):
         cached = pd.DataFrame(columns=columns)
-    current = cached.loc[
-        cached["catalog_version"].astype(str).eq(catalog_version)
-        & cached["model_name"].astype(str).eq(model_name)
+    if "concept_version" not in cached.columns:
+        cached["concept_version"] = ""
+
+    # Backfill pre-concept-version cache entries when their catalog snapshot is
+    # available. Unknown legacy versions remain usable only through their exact
+    # catalog version and are never mistaken for a revised definition.
+    catalog_versions: dict[tuple[str, str], str] = {}
+    catalog_files = list((path.parent / "catalog_versions").glob("concept_catalog_*.json"))
+    current_catalog_file = path.parent / "concept_catalog.json"
+    if current_catalog_file.exists():
+        catalog_files.append(current_catalog_file)
+    for catalog_file in catalog_files:
+        try:
+            saved_catalog = json.loads(catalog_file.read_text())
+            saved_version = concept_catalog_hash(saved_catalog)
+            catalog_versions.update({
+                (saved_version, str(saved_concept["concept_id"])): concept_definition_hash(saved_concept)
+                for saved_concept in saved_catalog
+            })
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    cached["concept_version"] = cached["concept_version"].fillna("").astype(str)
+    needs_version = cached["concept_version"].eq("")
+    if needs_version.any():
+        cached.loc[needs_version, "concept_version"] = [
+            catalog_versions.get((str(row.catalog_version), str(row.concept_id)), "")
+            for row in cached.loc[needs_version, ["catalog_version", "concept_id"]].itertuples(index=False)
+        ]
+
+    prompt_mask = (
+        cached["model_name"].astype(str).eq(model_name)
         & cached["prompt_version"].astype(str).eq(JEV_CLASSIFICATION_PROMPT_VERSION)
-    ]
-    concept_ids = set(concepts)
-    complete = current.loc[current["status"].eq("ok")].groupby("pmid")["concept_id"].agg(set)
-    completed_pmids = {str(pmid) for pmid, ids in complete.items() if concept_ids.issubset(set(ids))}
-    pending = work.loc[~work["pmid"].isin(completed_pmids)]
+        & cached["status"].eq("ok")
+    )
+    successful_cache = cached.loc[prompt_mask]
+    cache_lookup: dict[tuple[str, str, str], pd.Series] = {}
+    for cache_row in successful_cache.itertuples(index=False):
+        version = str(cache_row.concept_version)
+        if version:
+            cache_lookup[(str(cache_row.pmid), str(cache_row.concept_id), version)] = pd.Series(cache_row._asdict())
+
+    current_successes = set(zip(
+        cached.loc[prompt_mask & cached["catalog_version"].astype(str).eq(catalog_version), "pmid"].astype(str),
+        cached.loc[prompt_mask & cached["catalog_version"].astype(str).eq(catalog_version), "concept_id"].astype(str),
+        cached.loc[prompt_mask & cached["catalog_version"].astype(str).eq(catalog_version), "concept_version"].astype(str),
+    ))
+    pending_rows: list[tuple[Any, list[str]]] = []
+    reused_rows: list[dict[str, Any]] = []
+    for row in work.itertuples(index=False):
+        missing_concepts: list[str] = []
+        for concept_id, concept_version in concept_versions.items():
+            key = (str(row.pmid), concept_id, concept_version)
+            cached_row = cache_lookup.get(key)
+            if cached_row is None:
+                missing_concepts.append(concept_id)
+            elif key not in current_successes:
+                record = cached_row.to_dict()
+                record["catalog_version"] = catalog_version
+                reused_rows.append(record)
+                current_successes.add(key)
+        if missing_concepts:
+            pending_rows.append((row, missing_concepts))
     if max_calls is not None:
-        pending = pending.head(max(0, int(max_calls)))
+        pending_rows = pending_rows[:max(0, int(max_calls))]
     if max_workers < 1:
         raise ValueError("max_workers must be at least 1.")
     if checkpoint_abstracts < 1:
         raise ValueError("checkpoint_abstracts must be at least 1.")
-    concepts_list = list(concepts.items())
     worker_local = threading.local()
 
-    def score_one(row: Any) -> list[dict[str, Any]]:
+    def score_one(row: Any, missing_concepts: list[str]) -> list[dict[str, Any]]:
         state = f"Title: {row.title.strip()}\nAbstract: {row.abstract.strip()}"
         questions = {
             concept_id: (
@@ -385,7 +449,8 @@ def classify_concept_abstracts_jev(
                 f"Inclusion examples: {concept.get('inclusion_criteria', [])}. "
                 f"Exclude: {concept.get('exclusion_criteria', [])}. Score presence, not importance or future impact."
             )
-            for concept_id, concept in concepts.items()
+            for concept_id in missing_concepts
+            for concept in [concepts[concept_id]]
         }
         try:
             if not hasattr(worker_local, "client"):
@@ -394,33 +459,115 @@ def classify_concept_abstracts_jev(
             response = worker_local.client.decide_many(state, questions=questions)
             answers = response.get("answers", {})
             rows = []
-            for concept_id, _concept in concepts_list:
+            for concept_id in missing_concepts:
                 answer = answers.get(concept_id, {}) if isinstance(answers, Mapping) else {}
                 probability = answer.get("noul") if isinstance(answer, Mapping) else None
                 if probability is None:
-                    raise ValueError(f"Jev response omitted a NOUL score for {concept_id}.")
-                score = float(probability)
-                if not np.isfinite(score) or not 0 <= score <= 1:
-                    raise ValueError(f"Jev returned an invalid NOUL score for {concept_id}: {probability}")
-                rows.append({"pmid": row.pmid, "concept_id": concept_id, "probability": score,
-                             "catalog_version": catalog_version, "model_name": model_name,
-                             "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
-                             "status": "ok", "error": ""})
+                    rows.append({"pmid": row.pmid, "concept_id": concept_id,
+                                 "concept_version": concept_versions[concept_id], "probability": np.nan,
+                                 "catalog_version": catalog_version, "model_name": model_name,
+                                 "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+                                 "status": "error", "error": f"Jev response omitted a NOUL score for {concept_id}."})
+                    continue
+                try:
+                    score = float(probability)
+                    if not np.isfinite(score) or not 0 <= score <= 1:
+                        raise ValueError(f"Invalid NOUL score: {probability}")
+                    rows.append({"pmid": row.pmid, "concept_id": concept_id,
+                                 "concept_version": concept_versions[concept_id], "probability": score,
+                                 "catalog_version": catalog_version, "model_name": model_name,
+                                 "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+                                 "status": "ok", "error": ""})
+                except (TypeError, ValueError) as exc:
+                    rows.append({"pmid": row.pmid, "concept_id": concept_id,
+                                 "concept_version": concept_versions[concept_id], "probability": np.nan,
+                                 "catalog_version": catalog_version, "model_name": model_name,
+                                 "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+                                 "status": "error", "error": str(exc)})
             return rows
         except Exception as exc:
-            return [{"pmid": row.pmid, "concept_id": concept_id, "probability": np.nan,
+            return [{"pmid": row.pmid, "concept_id": concept_id,
+                             "concept_version": concept_versions[concept_id], "probability": np.nan,
                              "catalog_version": catalog_version, "model_name": model_name,
                              "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
-                             "status": "error", "error": str(exc)} for concept_id, _concept in concepts_list]
+                             "status": "error", "error": str(exc)} for concept_id in missing_concepts]
 
-    pending_rows = list(pending.itertuples(index=False))
+    if reused_rows:
+        cached = pd.concat([cached, pd.DataFrame(reused_rows)], ignore_index=True)
+        cached = cached.drop_duplicates(
+            ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
+        atomic_write_parquet(cached, path, index=False)
     batches = (pending_rows[i:i + checkpoint_abstracts]
                for i in range(0, len(pending_rows), checkpoint_abstracts))
-    completed_count = len(completed_pmids)
+    completed_count = len(work) - len(pending_rows)
+    session_started = time.monotonic()
+    session_attempts = 0
+    session_successes = 0
+    session_failures = 0
+    get_credit_status = getattr(jev_client, "credit_status", None)
+
+    def read_credit() -> tuple[str, float | None]:
+        if not callable(get_credit_status):
+            return "remaining credit unavailable (client has no balance lookup)", None
+        try:
+            label, amount = get_credit_status()
+            return str(label), float(amount) if amount is not None else None
+        except Exception as exc:
+            return f"remaining credit unavailable ({type(exc).__name__})", None
+
+    latest_credit_status, latest_credit_amount = read_credit()
+    starting_credit_amount = latest_credit_amount
+    last_credit_amount = latest_credit_amount
+    observed_cost_per_call: float | None = None
+
+    def refresh_credit() -> None:
+        nonlocal latest_credit_status, latest_credit_amount, last_credit_amount
+        nonlocal observed_cost_per_call
+        latest_credit_status, latest_credit_amount = read_credit()
+        if (
+            latest_credit_amount is not None and last_credit_amount is not None
+            and starting_credit_amount is not None
+            and latest_credit_amount < last_credit_amount and session_attempts > 0
+        ):
+            total_observed_spend = max(0.0, starting_credit_amount - latest_credit_amount)
+            if total_observed_spend > 0:
+                observed_cost_per_call = total_observed_spend / session_attempts
+        if latest_credit_amount is not None:
+            last_credit_amount = latest_credit_amount
+
+    def format_duration(seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m {seconds:02d}s"
+        return f"{minutes}m {seconds:02d}s"
+
+    def progress_line(latest_batch_errors: int) -> str:
+        elapsed = max(0.0, time.monotonic() - session_started)
+        rate = session_attempts / elapsed if elapsed > 0 else 0.0
+        remaining_this_session = max(0, len(pending_rows) - completed_count)
+        eta = remaining_this_session / rate if rate > 0 else 0.0
+        unresolved = max(0, len(pending_rows) - session_successes)
+        if latest_credit_amount is not None and observed_cost_per_call is not None:
+            estimated_end_amount = max(0.0, latest_credit_amount - observed_cost_per_call * unresolved)
+            estimate_text = f"estimated balance after {unresolved:,} unresolved requests ${estimated_end_amount:.4f}"
+        else:
+            estimate_text = "end balance estimate waiting for OpenRouter to report spend"
+        percent = 100.0 * completed_count / len(work) if len(work) else 100.0
+        return (
+            f"{completed_count:,}/{len(work):,} abstracts ({percent:.1f}%) "
+            f"| requests this session {session_attempts:,}/{len(pending_rows):,} "
+            f"({session_successes:,} succeeded, {session_failures:,} failed) "
+            f"| {latest_batch_errors:,} errors in latest checkpoint "
+            f"| elapsed {format_duration(elapsed)} | ETA this session {format_duration(eta)} "
+            f"| {latest_credit_status} | {estimate_text}"
+        )
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for batch in batches:
             batch_rows: list[dict[str, Any]] = []
-            futures = [pool.submit(score_one, row) for row in batch]
+            futures = [pool.submit(score_one, row, missing) for row, missing in batch]
             for future in as_completed(futures):
                 batch_rows.extend(future.result())
             cached = pd.concat([cached, pd.DataFrame(batch_rows)], ignore_index=True)
@@ -428,9 +575,12 @@ def classify_concept_abstracts_jev(
                 ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
             atomic_write_parquet(cached, path, index=False)
             completed_count += len(batch)
-            error_count = sum(row["status"] == "error" for row in batch_rows)
-            print(f"Jev concept classification: {completed_count:,}/{len(work):,} abstracts processed; "
-                  f"{error_count:,} errors in latest checkpoint.")
+            failed_pmids = {str(row["pmid"]) for row in batch_rows if row["status"] == "error"}
+            session_attempts += len(batch)
+            session_failures += len(failed_pmids)
+            session_successes += len(batch) - len(failed_pmids)
+            refresh_credit()
+            print("Jev concept classification: " + progress_line(len(failed_pmids)))
     if not cached.empty:
         cached = cached.drop_duplicates(
             ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
@@ -577,6 +727,7 @@ def rolling_origin_concept_forecasts(
     lag_length: int = 3,
     horizons: Sequence[int] = (1, 2, 3),
     min_prior_observations: int = 10,
+    progress_every: int = 0,
 ) -> pd.DataFrame:
     """Generate direct, expanding-window, fixed-effect panel forecasts.
 
@@ -602,6 +753,33 @@ def rolling_origin_concept_forecasts(
         }
     else:
         configured_models = {"baseline": (), **{name: tuple(ids) for name, ids in model_sets.items()}}
+    progress_interval = max(0, int(progress_every))
+    origins = range(fit_start_year, fit_end_year + 1)
+    total_steps = len(horizons) * len(configured_models) * len(origins)
+    completed_steps = 0
+    progress_started = time.monotonic()
+
+    def report_progress(steps: int = 1) -> None:
+        nonlocal completed_steps
+        completed_steps += steps
+        if not progress_interval or (completed_steps % progress_interval and completed_steps != total_steps):
+            return
+        elapsed = max(0.0, time.monotonic() - progress_started)
+        rate = completed_steps / elapsed if elapsed > 0 else 0.0
+        remaining = max(0, total_steps - completed_steps)
+        eta = remaining / rate if rate > 0 else 0.0
+        total_seconds = max(0, int(elapsed))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        elapsed_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
+        total_seconds = max(0, int(eta))
+        hours, rem = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(rem, 60)
+        eta_text = f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else f"{minutes}m {seconds:02d}s"
+        percent = 100.0 * completed_steps / total_steps if total_steps else 100.0
+        print(f"Forecast progress: {completed_steps:,}/{total_steps:,} model-origin steps ({percent:.1f}%) "
+              f"| elapsed {elapsed_text} | ETA {eta_text}")
+
     si_years_by_pair: dict[tuple[str, str], np.ndarray] = {}
     for (pathogen, antibiotic), pair_si in si.groupby(["pathogen", "antibiotic"], sort=False):
         si_years_by_pair[(str(pathogen), str(antibiotic))] = np.sort(pair_si["year"].to_numpy(dtype=int))
@@ -610,6 +788,7 @@ def rolling_origin_concept_forecasts(
             rows = _make_training_rows(si, signals_df, lag_length=lag_length, horizon=int(horizon),
                                        max_origin_year=fit_end_year, concept_ids=selected_ids)
             if rows.empty:
+                report_progress(len(origins))
                 continue
             rows_by_pair = {
                 (str(pathogen), str(antibiotic)): pair_rows
@@ -617,36 +796,39 @@ def rolling_origin_concept_forecasts(
             }
             y_cols = [f"y_lag_{lag}" for lag in range(1, lag_length + 1)]
             feature_cols = y_cols + [f"{c}_lag_{lag}" for c in selected_ids for lag in range(1, lag_length + 1)]
-            for origin in range(fit_start_year, fit_end_year + 1):
-                train = rows.loc[(rows["origin_year"] + int(horizon)) <= origin].copy()
-                if dev_set is not None:
-                    train_pairs = list(zip(train["pathogen"].astype(str), train["antibiotic"].astype(str)))
-                    train = train.loc[[pair in dev_set for pair in train_pairs]]
-                slopes = _fit_panel_slopes(train, feature_cols)
-                if slopes is None:
-                    continue
-                candidate = rows.loc[rows["origin_year"].eq(origin)].copy()
-                for pair_values, pair_candidates in candidate.groupby(["pathogen", "antibiotic"], sort=False):
-                    pair = (str(pair_values[0]), str(pair_values[1]))
-                    observed_years = si_years_by_pair.get(pair, np.asarray([], dtype=int))
-                    prior_observation_count = int(np.searchsorted(observed_years, origin, side="right"))
-                    if prior_observation_count < min_prior_observations:
+            for origin in origins:
+                try:
+                    train = rows.loc[(rows["origin_year"] + int(horizon)) <= origin].copy()
+                    if dev_set is not None:
+                        train_pairs = list(zip(train["pathogen"].astype(str), train["antibiotic"].astype(str)))
+                        train = train.loc[[pair in dev_set for pair in train_pairs]]
+                    slopes = _fit_panel_slopes(train, feature_cols)
+                    if slopes is None:
                         continue
-                    pair_rows = rows_by_pair[pair]
-                    prior = pair_rows.loc[(pair_rows["origin_year"] + int(horizon)) <= origin]
-                    if prior.empty:
-                        continue
-                    xprior = prior[list(feature_cols)].to_numpy(dtype=float)
-                    yprior = prior["target"].to_numpy(dtype=float)
-                    alpha = float(np.mean(yprior - xprior @ slopes))
-                    xrows = pair_candidates[list(feature_cols)].to_numpy(dtype=float)
-                    predictions = alpha + xrows @ slopes
-                    for row, prediction in zip(pair_candidates.itertuples(index=False), predictions):
-                        result.append({"pathogen": pair[0], "antibiotic": pair[1], "model": model_name,
-                                       "horizon": int(horizon), "origin_year": int(origin),
-                                       "target_year": int(row.target_year), "observed": float(row.target),
-                                       "predicted": float(prediction),
-                                       "squared_error": (float(row.target) - float(prediction)) ** 2})
+                    candidate = rows.loc[rows["origin_year"].eq(origin)].copy()
+                    for pair_values, pair_candidates in candidate.groupby(["pathogen", "antibiotic"], sort=False):
+                        pair = (str(pair_values[0]), str(pair_values[1]))
+                        observed_years = si_years_by_pair.get(pair, np.asarray([], dtype=int))
+                        prior_observation_count = int(np.searchsorted(observed_years, origin, side="right"))
+                        if prior_observation_count < min_prior_observations:
+                            continue
+                        pair_rows = rows_by_pair[pair]
+                        prior = pair_rows.loc[(pair_rows["origin_year"] + int(horizon)) <= origin]
+                        if prior.empty:
+                            continue
+                        xprior = prior[list(feature_cols)].to_numpy(dtype=float)
+                        yprior = prior["target"].to_numpy(dtype=float)
+                        alpha = float(np.mean(yprior - xprior @ slopes))
+                        xrows = pair_candidates[list(feature_cols)].to_numpy(dtype=float)
+                        predictions = alpha + xrows @ slopes
+                        for row, prediction in zip(pair_candidates.itertuples(index=False), predictions):
+                            result.append({"pathogen": pair[0], "antibiotic": pair[1], "model": model_name,
+                                           "horizon": int(horizon), "origin_year": int(origin),
+                                           "target_year": int(row.target_year), "observed": float(row.target),
+                                           "predicted": float(prediction),
+                                           "squared_error": (float(row.target) - float(prediction)) ** 2})
+                finally:
+                    report_progress()
     return pd.DataFrame(result)
 
 

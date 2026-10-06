@@ -1,4 +1,6 @@
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 
 import numpy as np
 import pandas as pd
@@ -27,12 +29,17 @@ class FakeLLM:
 
 
 class FakeJev:
-    def __init__(self):
+    def __init__(self, balances=None):
         self.calls = []
+        self.balances = iter(balances or [])
 
     def decide_many(self, state, *, questions):
         self.calls.append((state, questions))
         return {"answers": {key: {"noul": 0.6} for key in questions}}
+
+    def credit_status(self):
+        balance = next(self.balances)
+        return f"account credits remaining ${balance:.4f}", balance
 
 
 def test_pair_split_is_reproducible_and_pair_disjoint():
@@ -116,6 +123,54 @@ def test_jev_classification_is_abstract_only_and_resumes(tmp_path):
     assert len(second.loc[second["status"].eq("ok")]) == 1
 
 
+def test_jev_cache_reuses_unchanged_concepts_when_catalog_grows(tmp_path):
+    abstracts = pd.DataFrame([{"pmid": "10", "title": "Title", "abstract": "Abstract text"}])
+    surveillance = {"concept_id": "surveillance", "name": "Surveillance", "definition": "monitoring"}
+    jev = FakeJev()
+    path = tmp_path / "jev_scores.parquet"
+
+    classify_concept_abstracts_jev(
+        abstracts, [surveillance], jev_client=jev, model_name="jev", cache_path=path,
+    )
+    child = {"concept_id": "child", "name": "Child", "definition": "a narrower kind of monitoring"}
+    grown = classify_concept_abstracts_jev(
+        abstracts, [surveillance, child], jev_client=jev, model_name="jev", cache_path=path,
+    )
+
+    assert len(jev.calls) == 2
+    assert set(jev.calls[0][1]) == {"surveillance"}
+    assert set(jev.calls[1][1]) == {"child"}
+    assert set(grown.loc[grown["status"].eq("ok"), "concept_id"]) == {"surveillance", "child"}
+    assert grown.loc[grown["concept_id"].eq("surveillance"), "probability"].item() == 0.6
+
+    revised_surveillance = {**surveillance, "definition": "revised monitoring definition"}
+    revised = classify_concept_abstracts_jev(
+        abstracts, [revised_surveillance], jev_client=jev, model_name="jev", cache_path=path,
+    )
+    assert len(jev.calls) == 3
+    assert set(jev.calls[2][1]) == {"surveillance"}
+    assert revised.loc[revised["status"].eq("ok"), "concept_version"].nunique() == 1
+
+
+def test_jev_classifier_reports_eta_and_remaining_credit_estimate(tmp_path):
+    abstracts = pd.DataFrame([
+        {"pmid": "10", "title": "T1", "abstract": "A1"},
+        {"pmid": "11", "title": "T2", "abstract": "A2"},
+    ])
+    catalog = [{"concept_id": "c", "name": "C", "definition": "concept"}]
+    jev = FakeJev(balances=[10.0, 10.0, 9.9])
+    output = StringIO()
+    with redirect_stdout(output):
+        classify_concept_abstracts_jev(
+            abstracts, catalog, jev_client=jev, model_name="jev", cache_path=tmp_path / "scores.parquet",
+            checkpoint_abstracts=1, max_workers=2,
+        )
+    lines = output.getvalue()
+    assert "ETA this session" in lines
+    assert "end balance estimate waiting for OpenRouter to report spend" in lines
+    assert "estimated balance after 0 unresolved requests $9.9000" in lines
+
+
 def test_yearly_signal_uses_classifiable_unique_articles_as_denominator():
     corpus = pd.DataFrame([
         {"pathogen": "P", "antibiotic": "A", "year": 2000, "pmid": "1", "abstract_available": True},
@@ -147,11 +202,14 @@ def test_rolling_origin_forecasts_compare_direct_horizons_and_conditional_models
     dev_pairs = {(f"P{index}", "Drug") for index in range(4)}
     models = {"population": ["c"], "population_plus:c": ["c"]}
     # Distinct model names allow the same signal to be wired as candidate/refinement in notebooks.
-    forecasts = rolling_origin_concept_forecasts(
-        si, signals, concept_ids=["c"], model_sets=models, development_pairs=dev_pairs,
-        fit_start_year=2012, fit_end_year=2017, lag_length=3, horizons=(1, 2, 3),
-        min_prior_observations=10,
-    )
+    progress = StringIO()
+    with redirect_stdout(progress):
+        forecasts = rolling_origin_concept_forecasts(
+            si, signals, concept_ids=["c"], model_sets=models, development_pairs=dev_pairs,
+            fit_start_year=2012, fit_end_year=2017, lag_length=3, horizons=(1, 2, 3),
+            min_prior_observations=10, progress_every=10,
+        )
+    assert "ETA" in progress.getvalue()
     assert set(forecasts["horizon"]) == {1, 2, 3}
     assert (forecasts["target_year"] == forecasts["origin_year"] + forecasts["horizon"]).all()
     assert forecasts["model"].nunique() == 3  # baseline plus both configured concept models
