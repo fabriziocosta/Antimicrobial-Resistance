@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import numpy as np
 import pandas as pd
 
 from amr.pipeline_config import cfg, cfg_path, load_pipeline_config
@@ -165,7 +166,9 @@ def _save_top_pair_attribution_plot(ranking: pd.DataFrame, output_path: Path, *,
             & supported["antibiotic"].astype(str).eq(str(antibiotic))
         ].sort_values("causal_rank").head(top_concepts).sort_values("historical_contribution")
         colors = ["#2563eb" if value >= 0 else "#d97706" for value in group["historical_contribution"]]
-        ax.barh(group["concept_name"], group["historical_contribution"], color=colors)
+        labels = [textwrap.fill(str(name), width=30) for name in group["concept_name"]]
+        ax.barh(labels, group["historical_contribution"], color=colors)
+        ax.tick_params(axis="y", labelsize=8)
         ax.axvline(0, color="#111827", linewidth=0.8)
         ax.set_title(f"{pathogen} × {antibiotic}", loc="left", fontsize=10)
         ax.set_xlabel("Modelled SI contribution (equal-weight mean across horizons)")
@@ -212,7 +215,7 @@ def run_automated_concept_refinement(
     MIN_PRIOR_OBSERVATIONS = parameters["MIN_PRIOR_OBSERVATIONS"]
     FORECAST_PROGRESS_EVERY = parameters["FORECAST_PROGRESS_EVERY"]
     FRONTIER_DISPLAY_ROWS = parameters["FRONTIER_DISPLAY_ROWS"]
-    ATTRIBUTION_NUM_PAIRS = parameters["ATTRIBUTION_NUM_PAIRS"]
+    ATTRIBUTION_NUM_PAIRS = parameters.get("ATTRIBUTION_NUM_PAIRS", 3)
     N_ITER = parameters["N_ITER"]
     K_PARENTS = parameters["K_PARENTS"]
     NUM_CHILDREN = parameters["NUM_CHILDREN"]
@@ -721,8 +724,23 @@ def run_automated_concept_refinement(
                     progress(f"Iteration {iteration}: proposal saved for {parent_id}.")
                 proposed_count = len(proposal.get("children", [])) if isinstance(proposal.get("children", []), list) else 0
                 progress(f"Iteration {iteration}: proposal for {parent_id} contains {proposed_count} child candidate(s).")
+                proposed_children = proposal.get("children") if isinstance(proposal, Mapping) else None
+                if not isinstance(proposed_children, list):
+                    error_path = RUN_DIR / f"iteration_{iteration:02d}_proposal_{parent_id}.error.json"
+                    error_path.write_text(json.dumps({
+                        "parent_id": parent_id,
+                        "model": CHILD_GENERATION_MODEL,
+                        "error": "Saved proposal must be a JSON object with a list field named 'children'.",
+                    }, indent=2, ensure_ascii=False))
+                    progress(f"Iteration {iteration}: invalid proposal for {parent_id}; see {error_path.name}.")
+                    expanded_parent_ids.add(parent_id)
+                    parent_results.append({"parent_id": parent_id, "children": [], "status": "invalid_proposal"})
+                    continue
                 accepted_ids = []
-                for child in proposal.get("children", [])[:NUM_CHILDREN]:
+                for child in proposed_children[:NUM_CHILDREN]:
+                    if not isinstance(child, Mapping):
+                        progress(f"Iteration {iteration}: ignored a non-object child proposal for {parent_id}.")
+                        continue
                     name = str(child.get("name", "")).strip()
                     definition = str(child.get("definition", "")).strip()
                     if not name or not definition:
@@ -760,11 +778,13 @@ def run_automated_concept_refinement(
                         "generation_model": CHILD_GENERATION_MODEL,
                         "refinement_iteration": iteration,
                     }
+                    for field in review_fields:
+                        child_record[field] = child.get(field, [] if field.endswith(("criteria", "conditions")) else "")
                     new_children.append(child_record)
                     accepted_ids.append(child_id)
                     print(f"\nIteration {iteration} — accepted child {child_id}")
                     for field in ("name", "definition", "parent_id", *review_fields):
-                        value = child_record.get(field) if field in {"name", "definition", "parent_id"} else child.get(field)
+                        value = child_record.get(field)
                         if value is None or value == "":
                             value = "(not provided by the proposal)"
                         print(f"{field}: {json.dumps(value, ensure_ascii=False, indent=2)}")
@@ -849,6 +869,98 @@ def run_automated_concept_refinement(
                 progress(f"Iteration {iteration}: child models were not evaluable; continuing to the next search round if available.")
                 continue
 
+        progress(
+            f"Final attribution: ranking development pairs by their latest observed SI up to "
+            f"{FORECAST_ORIGIN_END_YEAR}; reporting up to {ATTRIBUTION_NUM_PAIRS} pairs."
+        )
+        development_split = split.loc[split["split"].eq("development")].copy()
+        development_keys = set(map(tuple, development_split[["pathogen", "antibiotic"]].astype(str).to_numpy()))
+        si_for_rank = si_df.copy()
+        si_for_rank["pathogen"] = si_for_rank["pathogen"].astype(str)
+        si_for_rank["antibiotic"] = si_for_rank["antibiotic"].astype(str)
+        si_for_rank["year"] = pd.to_numeric(si_for_rank["year"], errors="coerce")
+        si_for_rank["SI"] = pd.to_numeric(si_for_rank["SI"], errors="coerce")
+        si_for_rank = si_for_rank.dropna(subset=["year", "SI"])
+        si_for_rank = si_for_rank.loc[
+            si_for_rank["year"].le(FORECAST_ORIGIN_END_YEAR)
+            & [pair in development_keys for pair in zip(si_for_rank["pathogen"], si_for_rank["antibiotic"])]
+        ].sort_values(["pathogen", "antibiotic", "year"])
+        latest_si = si_for_rank.drop_duplicates(["pathogen", "antibiotic"], keep="last").copy()
+        latest_si = latest_si.rename(columns={"year": "si_rank_year", "SI": "si_at_rank"})
+        selected_pairs = latest_si.sort_values(
+            ["si_at_rank", "pathogen", "antibiotic"], ascending=[False, True, True], kind="stable"
+        ).head(ATTRIBUTION_NUM_PAIRS).reset_index(drop=True)
+        selected_pairs["si_rank"] = np.arange(1, len(selected_pairs) + 1)
+        attribution_horizons = pd.DataFrame(columns=[
+            "pathogen", "antibiotic", "concept_id", "concept_name", "horizon",
+            "historical_contribution", "n_pair_origins", "n_positive_exposure_origins",
+            "status", "si_rank", "si_rank_year", "si_at_rank",
+        ])
+        attribution_ranking = pd.DataFrame(columns=[
+            "pathogen", "antibiotic", "concept_id", "concept_name", "horizon",
+            "historical_contribution", "effect_per_10_percentage_points", "n_pair_origins",
+            "n_positive_exposure_origins", "status", "causal_rank", "effect_direction",
+            "si_rank", "si_rank_year", "si_at_rank",
+        ])
+        attribution_plot_path = None
+        selected_pairs_path = RUN_DIR / "attribution_selected_pairs_by_si.csv"
+        attribution_horizons_path = RUN_DIR / "exploratory_pair_attribution_horizons.parquet"
+        attribution_ranking_path = RUN_DIR / "exploratory_pair_attribution_rankings.parquet"
+        attribution_plot_path = RUN_DIR / "exploratory_pair_attribution_top_concepts.png"
+        selected_pairs.to_csv(selected_pairs_path, index=False)
+        if selected_pairs.empty:
+            progress("Final attribution: no development pairs have an SI observation in the configured fit window.")
+            attribution_plot_path = None
+            attribution_horizons.to_parquet(attribution_horizons_path, index=False)
+            attribution_ranking.to_parquet(attribution_ranking_path, index=False)
+        else:
+            attribution_pair_keys = set(map(tuple, selected_pairs[["pathogen", "antibiotic"]].astype(str).to_numpy()))
+            development_corpus = corpus.loc[corpus["split"].eq("development")].copy()
+            development_signals = signals.loc[
+                [pair in development_keys for pair in zip(signals["pathogen"].astype(str), signals["antibiotic"].astype(str))]
+            ].copy()
+            development_si = si_df.copy()
+            development_si["pathogen"] = development_si["pathogen"].astype(str)
+            development_si["antibiotic"] = development_si["antibiotic"].astype(str)
+            development_si = development_si.loc[
+                [pair in development_keys for pair in zip(development_si["pathogen"], development_si["antibiotic"])]
+            ].copy()
+            attribution_horizons, attribution_ranking = estimate_pair_concept_causal_rankings(
+                development_si, development_signals, development_corpus, catalog, development_split,
+                fit_start_year=FIT_START_YEAR, fit_end_year=FORECAST_ORIGIN_END_YEAR,
+                horizons=FORECAST_HORIZONS, lag_length=LAG_LENGTH,
+                min_prior_observations=MIN_PRIOR_OBSERVATIONS,
+            )
+            attribution_horizons = attribution_horizons.loc[
+                [pair in attribution_pair_keys for pair in zip(
+                    attribution_horizons["pathogen"].astype(str), attribution_horizons["antibiotic"].astype(str)
+                )]
+            ].merge(
+                selected_pairs[["pathogen", "antibiotic", "si_rank", "si_rank_year", "si_at_rank"]],
+                on=["pathogen", "antibiotic"], how="left", validate="many_to_one",
+            )
+            attribution_ranking = attribution_ranking.loc[
+                [pair in attribution_pair_keys for pair in zip(
+                    attribution_ranking["pathogen"].astype(str), attribution_ranking["antibiotic"].astype(str)
+                )]
+            ].merge(
+                selected_pairs[["pathogen", "antibiotic", "si_rank", "si_rank_year", "si_at_rank"]],
+                on=["pathogen", "antibiotic"], how="left", validate="many_to_one",
+            ).sort_values(["si_rank", "causal_rank", "concept_id"], na_position="last")
+            attribution_horizons.to_parquet(attribution_horizons_path, index=False)
+            attribution_ranking.to_parquet(attribution_ranking_path, index=False)
+            attribution_plot_path = _save_top_pair_attribution_plot(
+                attribution_ranking, attribution_plot_path,
+            )
+            print("Pairs selected by latest observed development SI:")
+            print(selected_pairs[["si_rank", "pathogen", "antibiotic", "si_rank_year", "si_at_rank"]].to_string(index=False))
+            print("Exploratory pair-concept rankings (horizon 0 is equal-weight horizons 1–3):")
+            print(attribution_ranking.to_string(index=False))
+            progress(
+                f"Final attribution complete for {len(selected_pairs)} selected pair(s); "
+                f"tables saved under {RUN_DIR}."
+            )
+
         if all_population_summaries:
             population_results = pd.concat(all_population_summaries, ignore_index=True)
             pair_results = pd.concat(all_pair_summaries, ignore_index=True)
@@ -889,6 +1001,13 @@ def run_automated_concept_refinement(
             "iteration_plot_paths": iteration_plot_paths,
             "phylogeny_path": phylogeny_path,
             "phylogeny_nodes_path": phylogeny_path.with_name(f"{phylogeny_path.stem}_nodes.csv") if phylogeny_path else None,
+            "attribution_selected_pairs": selected_pairs,
+            "attribution_selected_pairs_path": selected_pairs_path,
+            "attribution_horizons": attribution_horizons,
+            "attribution_horizons_path": attribution_horizons_path,
+            "attribution_ranking": attribution_ranking,
+            "attribution_ranking_path": attribution_ranking_path,
+            "attribution_plot_path": attribution_plot_path,
             "surviving_concept_ids": sorted(surviving_concept_ids),
             "preflight": preflight,
         }
