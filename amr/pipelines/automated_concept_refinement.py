@@ -19,6 +19,7 @@ from amr.si.concepts import (
     pareto_concept_frontier, classify_concept_abstracts_jev, build_yearly_concept_signals,
     rolling_origin_concept_forecasts, summarise_incremental_forecast_gains, propose_concept_children,
 )
+from amr.si.concept_causal import estimate_pair_concept_causal_rankings
 
 
 
@@ -148,6 +149,34 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
     node_index.to_csv(output_path.with_name(f"{output_path.stem}_nodes.csv"), index=False)
     return output_path
 
+
+def _save_top_pair_attribution_plot(ranking: pd.DataFrame, output_path: Path, *, top_concepts: int = 10) -> Path | None:
+    """Plot the strongest supported concept attributions for each selected pair."""
+    supported = ranking.loc[ranking["status"].eq("assumption_dependent")].copy()
+    if supported.empty:
+        return None
+    import matplotlib.pyplot as plt
+
+    pairs = list(supported[["pathogen", "antibiotic"]].drop_duplicates().itertuples(index=False, name=None))
+    fig, axes = plt.subplots(len(pairs), 1, figsize=(12, max(4.0, 3.4 * len(pairs))), squeeze=False)
+    for ax, (pathogen, antibiotic) in zip(axes[:, 0], pairs):
+        group = supported.loc[
+            supported["pathogen"].astype(str).eq(str(pathogen))
+            & supported["antibiotic"].astype(str).eq(str(antibiotic))
+        ].sort_values("causal_rank").head(top_concepts).sort_values("historical_contribution")
+        colors = ["#2563eb" if value >= 0 else "#d97706" for value in group["historical_contribution"]]
+        ax.barh(group["concept_name"], group["historical_contribution"], color=colors)
+        ax.axvline(0, color="#111827", linewidth=0.8)
+        ax.set_title(f"{pathogen} × {antibiotic}", loc="left", fontsize=10)
+        ax.set_xlabel("Modelled SI contribution (equal-weight mean across horizons)")
+        ax.grid(axis="x", color="#e5e7eb", linewidth=0.7)
+    fig.suptitle("Exploratory concept attribution for development pairs ranked highest by SI", x=0.01, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=170, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
 def run_automated_concept_refinement(
     project_root: str | Path,
     parameters: Mapping[str, Any],
@@ -183,6 +212,7 @@ def run_automated_concept_refinement(
     MIN_PRIOR_OBSERVATIONS = parameters["MIN_PRIOR_OBSERVATIONS"]
     FORECAST_PROGRESS_EVERY = parameters["FORECAST_PROGRESS_EVERY"]
     FRONTIER_DISPLAY_ROWS = parameters["FRONTIER_DISPLAY_ROWS"]
+    ATTRIBUTION_NUM_PAIRS = parameters["ATTRIBUTION_NUM_PAIRS"]
     N_ITER = parameters["N_ITER"]
     K_PARENTS = parameters["K_PARENTS"]
     NUM_CHILDREN = parameters["NUM_CHILDREN"]
@@ -194,6 +224,7 @@ def run_automated_concept_refinement(
         raise ValueError("NUM_PATHOGENS must be a positive integer or None.")
     integer_parameters = {
         "N_ITER": N_ITER, "K_PARENTS": K_PARENTS, "NUM_CHILDREN": NUM_CHILDREN,
+        "ATTRIBUTION_NUM_PAIRS": ATTRIBUTION_NUM_PAIRS,
         "LAG_LENGTH": LAG_LENGTH, "MIN_PRIOR_OBSERVATIONS": MIN_PRIOR_OBSERVATIONS,
         "MAX_EXAMPLES_PER_PARENT": MAX_EXAMPLES_PER_PARENT, "MAX_WORKERS": MAX_WORKERS,
     }
@@ -326,6 +357,7 @@ def run_automated_concept_refinement(
         "n_iter": N_ITER,
         "k_parents": K_PARENTS,
         "num_children": NUM_CHILDREN,
+        "attribution_num_pairs": ATTRIBUTION_NUM_PAIRS,
     }
     RUN_KEY = hashlib.sha256(json.dumps(run_configuration, sort_keys=True).encode("utf-8")).hexdigest()[:8]
     RUN_DIR = CONCEPT_PATHS["automated_refinement"] / (

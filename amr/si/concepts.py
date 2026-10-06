@@ -56,8 +56,18 @@ CONCEPT_SYSTEM_PROMPT = (
 CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
     (CONCEPT_SYSTEM_PROMPT + "|score-json-v1|0=absent;1=explicit;fraction=ambiguous").encode("utf-8")
 ).hexdigest()[:16]
+JEV_CONCEPT_CLASSIFICATION_RUBRIC = """Classify presence of a scientific concept in an article abstract for an antimicrobial-resistance study.
+
+Judge only the supplied title and abstract against the concept record. The article must contain substantive scientific evidence, analysis, methods, or synthesis that fits the concept; a passing keyword, an unexplained mention, background-only context, or a speculative future-work suggestion is not enough. Require the concept's stated connection to antimicrobial resistance. Apply its inclusion and exclusion criteria, and use its distinction from the closest competing concept to avoid broad or duplicate matches. Concepts may overlap when the abstract independently supports each one.
+
+If a concept has a parent, treat the concept as a narrower subtype: evidence for the parent alone does not establish the child. Require evidence specific to the child definition.
+
+Treat the scientific rationale, representative evidence, expected temporal relationship, and testable hypothesis as interpretive context for what the concept is intended to capture, never as evidence about this particular paper. Do not infer the hypothesis, a future increase in scientific interest, or a causal relationship from a matching topic. Do not use pathogen, antibiotic, year, pair identity, SI values, or hidden outcomes; these are not supplied. If the abstract does not provide enough evidence to meet the definition, judge that the concept is not established by the abstract.
+
+Answer the NOUL proposition as a binary scientific-content judgment: whether the article contains evidence for this concept under the operational definition. The returned NOUL value represents Jev's confidence in that proposition, not a calibrated probability of future interest or causal effect."""
+JEV_CLASSIFICATION_TEMPLATE_VERSION = "jev-question-template-v2-full-concept-metadata"
 JEV_CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
-    b"jev-noul-concept-presence-title-abstract-v1"
+    f"{JEV_CLASSIFICATION_TEMPLATE_VERSION}|{JEV_CONCEPT_CLASSIFICATION_RUBRIC}".encode("utf-8")
 ).hexdigest()[:16]
 
 
@@ -288,6 +298,32 @@ def build_classification_prompt(title: str, abstract: str, catalog: Sequence[Map
     )
 
 
+def build_jev_concept_question(concept: Mapping[str, Any]) -> str:
+    """Build Jev's per-concept NOUL instructions from the full reviewed definition."""
+    description_fields = (
+        "concept_id", "name", "definition", "parent_id", "scientific_rationale",
+        "inclusion_criteria", "exclusion_criteria", "representative_evidence",
+        "closest_competing_concept", "difference", "expected_temporal_relationship",
+        "testable_hypothesis", "rejection_conditions",
+    )
+    description = {
+        field: concept.get(field)
+        for field in description_fields
+        if concept.get(field) not in (None, "", [], {})
+    }
+    concept_name = str(concept.get("name") or concept.get("concept_id") or "unnamed concept")
+    return (
+        JEV_CONCEPT_CLASSIFICATION_RUBRIC
+        + "\n\nArticle-specific question: Is the proposition true: this article contains substantive evidence for the concept "
+        f"{concept_name!r}, as operationally defined in the concept record below? "
+        "Evaluate the supplied title and abstract. "
+        "The inclusion and exclusion criteria are decision rules; the difference field helps "
+        "distinguish nearby concepts. Other metadata describes the intended construct but is "
+        "not article evidence.\nConcept record (JSON):\n"
+        + json.dumps(description, ensure_ascii=False, sort_keys=True)
+    )
+
+
 def _normalise_score_response(data: Mapping[str, Any], concept_ids: Sequence[str]) -> dict[str, float]:
     raw_scores = data.get("scores", data)
     if not isinstance(raw_scores, Mapping):
@@ -496,14 +532,8 @@ def classify_concept_abstracts_jev(
     def score_one(row: Any, missing_concepts: list[str]) -> list[dict[str, Any]]:
         state = f"Title: {row.title.strip()}\nAbstract: {row.abstract.strip()}"
         questions = {
-            concept_id: (
-                "Based only on this title and abstract, how likely is it that the paper contains "
-                f"explicit evidence of this concept: {concept.get('definition', concept.get('name', concept_id))} "
-                f"Inclusion examples: {concept.get('inclusion_criteria', [])}. "
-                f"Exclude: {concept.get('exclusion_criteria', [])}. Score presence, not importance or future impact."
-            )
+            concept_id: build_jev_concept_question(concepts[concept_id])
             for concept_id in missing_concepts
-            for concept in [concepts[concept_id]]
         }
         try:
             if not hasattr(worker_local, "client"):
@@ -983,6 +1013,7 @@ __all__ = [
     "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash",
     "concept_definition_hash", "pareto_concept_frontier", "make_pair_split",
     "build_concept_corpus", "estimate_classification_cost", "build_classification_prompt",
+    "build_jev_concept_question", "JEV_CONCEPT_CLASSIFICATION_RUBRIC",
     "classify_concept_abstracts", "classify_concept_abstracts_jev", "build_yearly_concept_signals", "propose_concept_children",
     "rolling_origin_concept_forecasts", "summarise_concept_forecasts", "compare_parent_children",
     "summarise_incremental_forecast_gains",

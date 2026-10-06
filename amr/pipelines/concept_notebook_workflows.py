@@ -21,6 +21,8 @@ from amr.pipelines.concepts import (
 from amr.si.concepts import (
     SEED_CONCEPTS,
     JEV_CLASSIFICATION_PROMPT_VERSION,
+    JEV_CONCEPT_CLASSIFICATION_RUBRIC,
+    build_jev_concept_question,
     concept_catalog_hash,
     build_yearly_concept_signals,
     classify_concept_abstracts_jev,
@@ -205,7 +207,24 @@ def load_classification_context(project_root: str | Path) -> dict[str, Any]:
         abstract_table["abstract_available"].astype(bool), ["pmid", "title", "abstract"]
     ].drop_duplicates("pmid")
     abstracts = abstracts.loc[abstracts["abstract"].fillna("").astype(str).str.strip().ne("")]
-    return {**context, "abstracts": abstracts}
+    preview = abstracts.iloc[0].to_dict() if len(abstracts) else None
+    preview_fields = (
+        "scientific_rationale", "inclusion_criteria", "exclusion_criteria",
+        "representative_evidence", "closest_competing_concept", "difference",
+        "expected_temporal_relationship", "testable_hypothesis", "rejection_conditions",
+    )
+    preview_concept = max(
+        context["catalog"],
+        key=lambda concept: sum(concept.get(field) not in (None, "", [], {}) for field in preview_fields),
+        default=None,
+    )
+    preview_question = build_jev_concept_question(preview_concept) if preview_concept else None
+    return {
+        **context, "abstracts": abstracts, "preview": preview,
+        "preview_question": preview_question,
+        "classification_rubric": JEV_CONCEPT_CLASSIFICATION_RUBRIC,
+        "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
+    }
 
 
 def run_cached_concept_classification(

@@ -171,11 +171,13 @@ def estimate_pair_concept_causal_rankings(
         )
         design = design_frame.to_numpy(dtype=float)
         target = train["target"].to_numpy(dtype=float)
-        if len(train) <= design.shape[1] or np.linalg.matrix_rank(design) < design.shape[1]:
+        if (len(train) <= design.shape[1] or train["pair_key"].nunique() < 2
+                or np.linalg.matrix_rank(design) < design.shape[1]):
             for (pathogen, antibiotic), pair_rows in panel.groupby(["pathogen", "antibiotic"], sort=False):
                 for concept_id in concept_ids:
                     estimate_rows.append({
                         "pathogen": str(pathogen), "antibiotic": str(antibiotic), "concept_id": concept_id,
+                        "split": split_lookup.get((str(pathogen), str(antibiotic)), "unassigned"),
                         "concept_name": concept_names[concept_id], "horizon": horizon,
                         "status": "development_model_not_identified", "n_pair_origins": len(pair_rows),
                         "causal_interpretation": _CAUSAL_INTERPRETATION,
@@ -245,6 +247,31 @@ def estimate_pair_concept_causal_rankings(
                 })
 
     horizons_df = pd.DataFrame(estimate_rows)
+    # Keep a row for every split pair and catalog concept, including pairs that
+    # never reach the minimum-history threshold or have no usable target origins.
+    existing = set()
+    if not horizons_df.empty:
+        existing = set(zip(
+            horizons_df["pathogen"].astype(str), horizons_df["antibiotic"].astype(str),
+            horizons_df["concept_id"].astype(str), horizons_df["horizon"].astype(int),
+        ))
+    missing_rows = []
+    for (pathogen, antibiotic), split_name in split_lookup.items():
+        years = pair_years.get((pathogen, antibiotic), np.asarray([], dtype=int))
+        for concept_id in concept_ids:
+            for horizon in map(int, horizons):
+                key = (pathogen, antibiotic, concept_id, horizon)
+                if key in existing:
+                    continue
+                missing_rows.append({
+                    "pathogen": pathogen, "antibiotic": antibiotic, "split": split_name,
+                    "concept_id": concept_id, "concept_name": concept_names[concept_id],
+                    "horizon": horizon, "n_pair_origins": 0,
+                    "status": "insufficient_pair_history" if len(years) < min_prior_observations else "no_usable_forecast_origins",
+                    "causal_interpretation": _CAUSAL_INTERPRETATION,
+                })
+    if missing_rows:
+        horizons_df = pd.concat([horizons_df, pd.DataFrame(missing_rows)], ignore_index=True)
     if horizons_df.empty:
         return horizons_df, horizons_df.copy()
     valid_horizons = list(map(int, horizons))
