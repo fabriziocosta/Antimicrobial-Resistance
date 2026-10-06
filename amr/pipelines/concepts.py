@@ -29,6 +29,8 @@ def build_si_concept_paths(project_root: str | Path) -> dict[str, Path]:
         "population_summary": base / "population_forecast_summary.parquet",
         "confirmation_forecasts": base / "confirmation_forecasts.parquet",
         "confirmation_summary": base / "confirmation_summary.parquet",
+        "pair_concept_causal_horizons": base / "pair_concept_assumption_dependent_horizons.parquet",
+        "pair_concept_causal_ranking": base / "pair_concept_assumption_dependent_ranking.parquet",
         "refinement_proposals": base / "refinement_proposals",
         "figures": base / "figures",
     }

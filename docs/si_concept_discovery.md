@@ -50,6 +50,14 @@ Forecast loss is mean squared error. A positive gain means the candidate model h
 
 Horizon-specific summaries are retained. The aggregate uses equal weights across horizons 1–3 and averages each pair's gains across available horizons before computing population scores. Concept survival and catalog edits are deliberate review decisions in notebook 10d; confirmation-pair results must not be used to make those decisions.
 
+## Pair-specific exploratory attribution
+
+Notebook 10e also saves a per-pair concept ranking after the catalog is frozen. For each forecast horizon, a pooled linear panel model is fitted on development pairs with pair and origin-year intercepts, three lagged SI values, lagged publication volume, and the lagged prevalence signals for the complete frozen concept catalog. The model's shared coefficients are applied to each pair's concept history. The reported historical contribution contrasts that history with zero signal; a second contrast raises all three lagged yearly signals by 10 percentage points. The horizon-zero row averages the contributions across horizons 1, 2, and 3 and ranks concepts by absolute contribution. This is a model-based ranking, not a discovery of biological causation.
+
+These estimates are labelled **assumption-dependent**: a causal interpretation requires a well-defined intervention on abstract prevalence, adequate support/positivity, and no unmeasured time-varying confounding. Available inputs do not capture all potential drivers such as AMR burden, policy changes, or surveillance intensity. The model adjusts for the other included concepts but that adjustment does not guarantee causal identification. Rank-deficient development fits, insufficient pair histories, and pairs without within-pair concept variation are retained with an explanatory status and left unranked as appropriate. Cluster-based intervals quantify coefficient uncertainty under the fitted model; they do not include classifier or concept-definition uncertainty. Keep these tables separate from rolling forecast gains, which answer a predictive question.
+
+The concept-refinement phylogeny in notebook 10f uses short wrapped node labels so generated names do not collide. Every label maps to the companion `final_concept_phylogeny_nodes.csv` file in the automated run directory, which records the full concept ID, name, definition, parent, depth, and survivor/dead-end status.
+
 ## Outputs
 
 All concept-search artifacts are local under `outputs/concept_search/` and are ignored by Git. Notebook 10a creates:
@@ -58,7 +66,7 @@ All concept-search artifacts are local under `outputs/concept_search/` and are i
 - `pair_year_abstract_corpus.parquet`: pair-year-PMID membership, observed SI, and split, without duplicated abstract text;
 - `unique_abstracts.parquet`: one title/abstract record per PMID.
 
-Later notebooks create the current concept catalog and immutable catalog snapshots, `concept_scores.parquet`, `yearly_concept_signals.parquet`, development and confirmation forecast tables and summaries, and figures under `figures/`. Notebook 10f stores run-specific proposals, Pareto frontiers, iteration history, and forecast summaries under `automated_refinement/`.
+Later notebooks create the current concept catalog and immutable catalog snapshots, `concept_scores.parquet`, `yearly_concept_signals.parquet`, development and confirmation forecast tables and summaries, per-pair assumption-dependent attribution tables (`pair_concept_assumption_dependent_horizons.parquet` and `pair_concept_assumption_dependent_ranking.parquet`), and figures under `figures/`. Notebook 10f stores run-specific proposals, Pareto frontiers, iteration history, forecast summaries, a readable phylogeny image, and its full node index under `automated_refinement/`.
 
 The helper implementation is in `amr/si/concepts.py`; notebook-facing corpus paths and loading are in `amr/pipelines/concepts.py`. Synthetic tests are in `tests/test_si_concepts.py` and `tests/test_system1.py`.
 

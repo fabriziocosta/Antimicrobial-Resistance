@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import textwrap
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -22,7 +23,7 @@ from amr.si.concepts import (
 
 
 def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
-    """Render the refinement forest and emphasize ancestry ending in final survivors."""
+    """Render a compact-label refinement forest and save a full node index beside it."""
     import matplotlib.pyplot as plt
 
     concepts = {str(concept["concept_id"]): concept for concept in catalog}
@@ -51,6 +52,7 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
             surviving_paths.add(parent_id)
             parent_id = concepts[parent_id].get("parent_id")
 
+    node_labels = {concept_id: f"C{index:03d}" for index, concept_id in enumerate(sorted(concepts), start=1)}
     positions = {}
     next_leaf_y = 0
     max_depth = 0
@@ -66,7 +68,8 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         max_depth = max(max_depth, depth)
         if not children[concept_id]:
             y = next_leaf_y
-            next_leaf_y += 1
+            name_lines = max(1, len(textwrap.wrap(str(concepts[concept_id].get("name", concept_id)), width=28)))
+            next_leaf_y += max(1.25, name_lines * 0.62)
         else:
             child_ys = [place(child_id, depth + 1) for child_id in children[concept_id]]
             y = sum(child_ys) / len(child_ys)
@@ -81,8 +84,9 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         remaining = sorted(set(concepts) - visited)
         raise ValueError(f"Concept hierarchy contains a cycle or disconnected cycle: {remaining[:10]}.")
 
-    figure_height = max(6.0, min(36.0, 0.27 * max(next_leaf_y, 1) + 1.5))
-    fig, ax = plt.subplots(figsize=(15, figure_height))
+    figure_height = max(6.0, 0.34 * max(next_leaf_y, 1) + 1.5)
+    figure_width = max(16.0, 4.7 * max_depth + 9.0)
+    fig, ax = plt.subplots(figsize=(figure_width, figure_height))
     for parent_id, child_ids in children.items():
         parent_x, parent_y = positions[parent_id]
         for child_id in child_ids:
@@ -103,18 +107,19 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
         size = 110 if is_survivor else 75 if is_path else 58
         ax.scatter([x], [y], s=size, color=color, edgecolor="white", linewidth=0.8, zorder=3)
         name = str(concepts[concept_id].get("name", concept_id))
-        suffix = "  ★ survivor" if is_survivor else "  × dead end" if is_dead_end else ""
-        ax.annotate(f"{name} [{concept_id}]{suffix}", (x, y),
+        wrapped_name = "\n".join(textwrap.wrap(name, width=28) or [name])
+        suffix = "  ★" if is_survivor else "  ×" if is_dead_end else ""
+        ax.annotate(f"{node_labels[concept_id]}  {wrapped_name}{suffix}", (x, y),
                     xytext=(9, 0), textcoords="offset points", va="center",
-                    fontsize=8, fontweight="bold" if is_survivor else "normal",
+                    fontsize=8, linespacing=1.15, fontweight="bold" if is_survivor else "normal",
                     color="#14532d" if is_survivor else "#1f2937", zorder=4)
 
-    ax.set_title("Concept refinement phylogeny — bold blue paths end at final Pareto survivors", loc="left", pad=16)
+    ax.set_title("Concept refinement phylogeny — blue paths lead to final Pareto survivors", loc="left", pad=16)
     ax.set_xlabel("Refinement depth from root")
     ax.set_xticks(range(max_depth + 1), ["Root" if depth == 0 else str(depth) for depth in range(max_depth + 1)])
     ax.set_ylim(next_leaf_y - 0.5, -0.5)
     ax.set_yticks([])
-    ax.set_xlim(-0.25, max_depth + 2.8)
+    ax.set_xlim(-0.25, max_depth + 1.8)
     ax.grid(axis="x", color="#e5e7eb", linewidth=0.8)
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
@@ -122,6 +127,25 @@ def _save_concept_phylogeny(catalog, survivor_ids, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
+    parent_ids = {
+        concept_id: str(concepts[concept_id].get("parent_id") or "")
+        for concept_id in concepts
+    }
+    node_index = pd.DataFrame([
+        {
+            "node_label": node_labels[concept_id],
+            "concept_id": concept_id,
+            "name": str(concepts[concept_id].get("name", concept_id)),
+            "definition": str(concepts[concept_id].get("definition", "")),
+            "parent_id": parent_ids[concept_id],
+            "depth": int(positions[concept_id][0]),
+            "is_survivor": concept_id in survivor_ids,
+            "on_path_to_survivor": concept_id in surviving_paths,
+            "is_dead_end": not children[concept_id] and concept_id not in survivor_ids,
+        }
+        for concept_id in sorted(concepts, key=lambda item: node_labels[item])
+    ])
+    node_index.to_csv(output_path.with_name(f"{output_path.stem}_nodes.csv"), index=False)
     return output_path
 
 def run_automated_concept_refinement(
@@ -815,6 +839,7 @@ def run_automated_concept_refinement(
                 for concept in catalog if str(concept["concept_id"]) in surviving_concept_ids
             ]
             print("Final concept phylogeny: roots at left; × marks terminal dead ends; thick blue paths end at final Pareto survivors.")
+            print(f"Full node names, IDs, definitions, and parent links: {phylogeny_path.with_name(f'{phylogeny_path.stem}_nodes.csv')}")
             print("Final Pareto survivors:", ", ".join(survivor_names) if survivor_names else "none")
             progress("Final Pareto frontier (with expansion status):")
         else:
@@ -831,6 +856,7 @@ def run_automated_concept_refinement(
             "pair_results": pair_results if all_pair_summaries else pd.DataFrame(),
             "iteration_plot_paths": iteration_plot_paths,
             "phylogeny_path": phylogeny_path,
+            "phylogeny_nodes_path": phylogeny_path.with_name(f"{phylogeny_path.stem}_nodes.csv") if phylogeny_path else None,
             "surviving_concept_ids": sorted(surviving_concept_ids),
             "preflight": preflight,
         }

@@ -27,6 +27,7 @@ from amr.si.concepts import (
     rolling_origin_concept_forecasts,
     summarise_incremental_forecast_gains,
 )
+from amr.si.concept_causal import estimate_pair_concept_causal_rankings
 
 
 def _project(project_root: str | Path):
@@ -327,6 +328,7 @@ def confirm_frozen_concepts(
     lag_length: int = 3,
     horizons: Sequence[int] = (1, 2, 3),
     min_prior_observations: int = 10,
+    min_attribution_origins: int = 5,
 ) -> dict[str, Any]:
     """Evaluate a frozen catalog/population once on confirmation pairs."""
     import matplotlib.pyplot as plt
@@ -394,6 +396,15 @@ def confirm_frozen_concepts(
     forecasts.to_parquet(paths["confirmation_forecasts"], index=False)
     pair_summary, population_summary = summarise_incremental_forecast_gains(forecasts, comparisons)
     pair_summary.to_parquet(paths["confirmation_summary"], index=False)
+    causal_horizons, causal_ranking = estimate_pair_concept_causal_rankings(
+        si_df, signals, corpus, catalog, split,
+        fit_start_year=fit_start_year, fit_end_year=fit_end_year,
+        horizons=horizons, lag_length=lag_length,
+        min_prior_observations=min_prior_observations,
+        min_pair_origins=min_attribution_origins,
+    )
+    causal_horizons.to_parquet(paths["pair_concept_causal_horizons"], index=False)
+    causal_ranking.to_parquet(paths["pair_concept_causal_ranking"], index=False)
     horizon_report = pair_summary.groupby(["model", "horizon"], as_index=False).agg(
         generality=("forecast_gain", "mean"),
         specialist_strength=("forecast_gain", lambda values: values.quantile(0.9)),
@@ -415,6 +426,8 @@ def confirm_frozen_concepts(
     return {
         "forecasts": forecasts, "pair_summary": pair_summary,
         "population_summary": population_summary, "horizon_report": horizon_report,
+        "pair_concept_causal_horizons": causal_horizons,
+        "pair_concept_causal_ranking": causal_ranking,
         "figure": fig, "figure_path": figure_path, "catalog_version": version,
         "paths": paths,
     }
