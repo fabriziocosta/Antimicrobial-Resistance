@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -328,6 +330,8 @@ def classify_concept_abstracts_jev(
     model_name: str,
     cache_path: str | Path,
     max_calls: int | None = None,
+    max_workers: int = 1,
+    checkpoint_abstracts: int = 1000,
 ) -> pd.DataFrame:
     """Score concept presence with Jev's typed NOUL endpoint, resumably.
 
@@ -365,8 +369,14 @@ def classify_concept_abstracts_jev(
     pending = work.loc[~work["pmid"].isin(completed_pmids)]
     if max_calls is not None:
         pending = pending.head(max(0, int(max_calls)))
-    new_rows: list[dict[str, Any]] = []
-    for row in pending.itertuples(index=False):
+    if max_workers < 1:
+        raise ValueError("max_workers must be at least 1.")
+    if checkpoint_abstracts < 1:
+        raise ValueError("checkpoint_abstracts must be at least 1.")
+    concepts_list = list(concepts.items())
+    worker_local = threading.local()
+
+    def score_one(row: Any) -> list[dict[str, Any]]:
         state = f"Title: {row.title.strip()}\nAbstract: {row.abstract.strip()}"
         questions = {
             concept_id: (
@@ -378,10 +388,13 @@ def classify_concept_abstracts_jev(
             for concept_id, concept in concepts.items()
         }
         try:
-            response = jev_client.decide_many(state, questions=questions)
+            if not hasattr(worker_local, "client"):
+                make_worker = getattr(jev_client, "for_worker", None)
+                worker_local.client = make_worker() if callable(make_worker) else jev_client
+            response = worker_local.client.decide_many(state, questions=questions)
             answers = response.get("answers", {})
             rows = []
-            for concept_id in concepts:
+            for concept_id, _concept in concepts_list:
                 answer = answers.get(concept_id, {}) if isinstance(answers, Mapping) else {}
                 probability = answer.get("noul") if isinstance(answer, Mapping) else None
                 if probability is None:
@@ -393,20 +406,31 @@ def classify_concept_abstracts_jev(
                              "catalog_version": catalog_version, "model_name": model_name,
                              "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
                              "status": "ok", "error": ""})
-            new_rows.extend(rows)
+            return rows
         except Exception as exc:
-            new_rows.extend({"pmid": row.pmid, "concept_id": concept_id, "probability": np.nan,
+            return [{"pmid": row.pmid, "concept_id": concept_id, "probability": np.nan,
                              "catalog_version": catalog_version, "model_name": model_name,
                              "prompt_version": JEV_CLASSIFICATION_PROMPT_VERSION,
-                             "status": "error", "error": str(exc)} for concept_id in concepts)
-        if len(new_rows) >= 100:
-            cached = pd.concat([cached, pd.DataFrame(new_rows)], ignore_index=True)
-            atomic_write_parquet(cached.drop_duplicates(
-                ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last"),
-                path, index=False)
-            new_rows = []
-    if new_rows:
-        cached = pd.concat([cached, pd.DataFrame(new_rows)], ignore_index=True)
+                             "status": "error", "error": str(exc)} for concept_id, _concept in concepts_list]
+
+    pending_rows = list(pending.itertuples(index=False))
+    batches = (pending_rows[i:i + checkpoint_abstracts]
+               for i in range(0, len(pending_rows), checkpoint_abstracts))
+    completed_count = len(completed_pmids)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for batch in batches:
+            batch_rows: list[dict[str, Any]] = []
+            futures = [pool.submit(score_one, row) for row in batch]
+            for future in as_completed(futures):
+                batch_rows.extend(future.result())
+            cached = pd.concat([cached, pd.DataFrame(batch_rows)], ignore_index=True)
+            cached = cached.drop_duplicates(
+                ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
+            atomic_write_parquet(cached, path, index=False)
+            completed_count += len(batch)
+            error_count = sum(row["status"] == "error" for row in batch_rows)
+            print(f"Jev concept classification: {completed_count:,}/{len(work):,} abstracts processed; "
+                  f"{error_count:,} errors in latest checkpoint.")
     if not cached.empty:
         cached = cached.drop_duplicates(
             ["pmid", "concept_id", "catalog_version", "model_name", "prompt_version"], keep="last")
