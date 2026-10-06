@@ -252,14 +252,24 @@ def estimate_classification_cost(
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    text = raw.strip()
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("Model returned an empty response; no JSON object was available to parse.")
     try:
         result = json.loads(text)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if not match:
-            raise ValueError("Model response did not contain a JSON object.")
-        result = json.loads(match.group(0))
+            preview = text[:300].replace("\n", " ")
+            raise ValueError(
+                f"Model response did not contain a JSON object. Response preview: {preview!r}"
+            ) from exc
+        try:
+            result = json.loads(match.group(0))
+        except json.JSONDecodeError as nested_exc:
+            raise ValueError(
+                f"Model response contained malformed JSON. Response preview: {text[:300]!r}"
+            ) from nested_exc
     if not isinstance(result, dict):
         raise ValueError("Model response must be a JSON object.")
     return result
@@ -474,6 +484,7 @@ def classify_concept_abstracts_jev(
                 current_successes.add(key)
         if missing_concepts:
             pending_rows.append((row, missing_concepts))
+    total_pending_rows = len(pending_rows)
     if max_calls is not None:
         pending_rows = pending_rows[:max(0, int(max_calls))]
     if max_workers < 1:
@@ -541,7 +552,7 @@ def classify_concept_abstracts_jev(
         atomic_write_parquet(cached, path, index=False)
     batches = (pending_rows[i:i + checkpoint_abstracts]
                for i in range(0, len(pending_rows), checkpoint_abstracts))
-    completed_count = len(work) - len(pending_rows)
+    completed_count = len(work) - total_pending_rows
     session_started = time.monotonic()
     session_attempts = 0
     session_successes = 0
@@ -588,7 +599,7 @@ def classify_concept_abstracts_jev(
     def progress_line(latest_batch_errors: int) -> str:
         elapsed = max(0.0, time.monotonic() - session_started)
         rate = session_attempts / elapsed if elapsed > 0 else 0.0
-        remaining_this_session = max(0, len(pending_rows) - completed_count)
+        remaining_this_session = max(0, len(pending_rows) - session_attempts)
         eta = remaining_this_session / rate if rate > 0 else 0.0
         unresolved = max(0, len(pending_rows) - session_successes)
         if latest_credit_amount is not None and observed_cost_per_call is not None:
@@ -695,8 +706,10 @@ def propose_concept_children(
             "Return JSON as {children: [...]} ."
         ),
     }
-    raw = llm.complete(json.dumps(prompt, ensure_ascii=False), system_prompt=CONCEPT_SYSTEM_PROMPT,
-                       model=model_name)
+    raw = llm.complete(
+        json.dumps(prompt, ensure_ascii=False), system_prompt=CONCEPT_SYSTEM_PROMPT,
+        model=model_name, response_format={"type": "json_object"},
+    )
     result = _extract_json_object(raw)
     if not isinstance(result.get("children", []), list):
         raise ValueError("Child-concept response must contain a list named 'children'.")

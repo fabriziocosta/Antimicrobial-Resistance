@@ -146,7 +146,7 @@ def run_automated_concept_refinement(
     JEV_MODEL = parameters["JEV_MODEL"]
     MAX_WORKERS = parameters["MAX_WORKERS"]
     MAX_CLASSIFICATION_CALLS = parameters["MAX_CLASSIFICATION_CALLS"]
-    LLM_MODEL = parameters["LLM_MODEL"]
+    CHILD_GENERATION_MODEL = parameters["CHILD_GENERATION_MODEL"]
     LLM_TEMPERATURE = parameters["LLM_TEMPERATURE"]
     LLM_MAX_TOKENS = parameters["LLM_MAX_TOKENS"]
     MAX_EXAMPLES_PER_PARENT = parameters["MAX_EXAMPLES_PER_PARENT"]
@@ -288,7 +288,7 @@ def run_automated_concept_refinement(
         "corpus_key": CORPUS_KEY,
         "catalog_version": CATALOG_VERSION,
         "jev_model": JEV_MODEL,
-        "llm_model": LLM_MODEL,
+        "child_generation_model": CHILD_GENERATION_MODEL,
         "llm_temperature": LLM_TEMPERATURE,
         "llm_max_tokens": LLM_MAX_TOKENS,
         "max_examples_per_parent": MAX_EXAMPLES_PER_PARENT,
@@ -341,12 +341,18 @@ def run_automated_concept_refinement(
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] {message}", flush=True)
 
-        llm = OpenAILanguageModel(OpenAIConfig(model=LLM_MODEL, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS))
+        llm = OpenAILanguageModel(OpenAIConfig(model=CHILD_GENERATION_MODEL, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS))
         jev = OpenRouterJevClient(model=JEV_MODEL)
         fit_start = FIT_START_YEAR
         fit_end = FORECAST_ORIGIN_END_YEAR
         iteration_plot_paths = []
-        expanded_parent_ids = set()
+        # When continuing from a saved working catalog, do not expand parents that
+        # already have descendants; select their children for any further refinement.
+        expanded_parent_ids = {
+            str(concept["parent_id"])
+            for concept in catalog
+            if concept.get("parent_id") not in (None, "")
+        }
         evaluated_concept_ids = [str(concept["concept_id"]) for concept in catalog]
         all_population_summaries = []
         all_pair_summaries = []
@@ -632,10 +638,29 @@ def run_automated_concept_refinement(
                     proposal = json.loads(proposal_path.read_text())
                 else:
                     progress(f"Iteration {iteration}: requesting up to {NUM_CHILDREN} child hypotheses for {parent_id}.")
-                    proposal = propose_concept_children(
-                        parent, examples_df[["title", "abstract"]].to_dict("records"),
-                        llm=llm, model_name=LLM_MODEL, num_children=NUM_CHILDREN,
-                    )
+                    try:
+                        proposal = propose_concept_children(
+                            parent, examples_df[["title", "abstract"]].to_dict("records"),
+                            llm=llm, model_name=CHILD_GENERATION_MODEL, num_children=NUM_CHILDREN,
+                        )
+                    except (RuntimeError, ValueError) as exc:
+                        error_path = RUN_DIR / f"iteration_{iteration:02d}_proposal_{parent_id}.error.json"
+                        error_path.write_text(json.dumps({
+                            "parent_id": parent_id,
+                            "model": CHILD_GENERATION_MODEL,
+                            "error": str(exc),
+                        }, indent=2, ensure_ascii=False))
+                        progress(
+                            f"Iteration {iteration}: proposal for {parent_id} failed ({exc}). "
+                            f"Recorded at {error_path.name}; continuing with other parents. "
+                            "A later run can retry this parent."
+                        )
+                        expanded_parent_ids.add(parent_id)
+                        parent_results.append({
+                            "parent_id": parent_id, "children": [], "status": "proposal_error",
+                            "error": str(exc), "error_file": str(error_path),
+                        })
+                        continue
                     proposal_path.write_text(json.dumps(proposal, indent=2, ensure_ascii=False))
                     progress(f"Iteration {iteration}: proposal saved for {parent_id}.")
                 proposed_count = len(proposal.get("children", [])) if isinstance(proposal.get("children", []), list) else 0
@@ -676,7 +701,7 @@ def run_automated_concept_refinement(
                         "inclusion_criteria": child.get("inclusion_criteria", []),
                         "exclusion_criteria": child.get("exclusion_criteria", []),
                         "version": iteration,
-                        "generation_model": LLM_MODEL,
+                        "generation_model": CHILD_GENERATION_MODEL,
                         "refinement_iteration": iteration,
                     }
                     new_children.append(child_record)
@@ -708,8 +733,8 @@ def run_automated_concept_refinement(
                     "status": "no_new_children",
                 })
                 (RUN_DIR / "iteration_history.json").write_text(json.dumps(round_log, indent=2, ensure_ascii=False))
-                progress(f"Iteration {iteration}: no new children to evaluate; stopping early.")
-                break
+                progress(f"Iteration {iteration}: no valid children were produced; continuing to the next Pareto parents if rounds remain.")
+                continue
             catalog.extend(new_children)
             evaluated_concept_ids.extend(child["concept_id"] for child in new_children)
             current_catalog_version = save_catalog_snapshot(catalog)
@@ -765,7 +790,8 @@ def run_automated_concept_refinement(
             (RUN_DIR / "iteration_history.json").write_text(json.dumps(round_log, indent=2, ensure_ascii=False))
             progress(f"Iteration {iteration}/{N_ITER}: round status = {status}; history saved.")
             if status != "evaluated":
-                break
+                progress(f"Iteration {iteration}: child models were not evaluable; continuing to the next search round if available.")
+                continue
 
         if all_population_summaries:
             population_results = pd.concat(all_population_summaries, ignore_index=True)

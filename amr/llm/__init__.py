@@ -172,9 +172,7 @@ class OpenAILanguageModel(LanguageModel):
                     payload["prompt_cache_options"] = {"mode": "explicit"}
                 temperature_override = chat_temperature
                 if temperature_override is not None:
-                    if chat_model.startswith("gpt-5") and temperature_override != 1:
-                        temperature_override = None
-                    elif chat_model.startswith("gpt-5"):
+                    if chat_model.startswith(("gpt-5", "gpt-6")):
                         temperature_override = None
                 if temperature_override is not None:
                     payload["temperature"] = temperature_override
