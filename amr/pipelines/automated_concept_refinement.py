@@ -337,10 +337,33 @@ def run_automated_concept_refinement(
     }
     del cached_by_concept
     CATALOG_VERSION = concept_catalog_hash(catalog)
-    CORPUS_KEY = hashlib.sha256(
-        ("|".join(sorted(corpus["pmid"].astype(str).unique())) + "|" +
-         "|".join(f"{p}\t{a}\t{s}" for p, a, s in sorted(map(tuple, split[["pathogen", "antibiotic", "split"]].to_numpy())))).encode("utf-8")
-    ).hexdigest()[:12]
+    # Include pair-year membership and SI in the run identity: a PMID can remain
+    # in the corpus while its pair/year association or outcomes change, which
+    # changes development examples, forecasts, and selected parents.
+    corpus_identity = corpus[["pathogen", "antibiotic", "year", "pmid", "SI", "split"]].copy()
+    for column in ("pathogen", "antibiotic", "pmid", "split"):
+        corpus_identity[column] = corpus_identity[column].fillna("").astype(str)
+    corpus_identity["year"] = pd.to_numeric(corpus_identity["year"], errors="coerce")
+    corpus_identity["SI"] = pd.to_numeric(corpus_identity["SI"], errors="coerce")
+    corpus_identity = corpus_identity.sort_values(
+        ["pathogen", "antibiotic", "year", "pmid", "split"], kind="stable"
+    ).reset_index(drop=True)
+    selected_pairs_for_hash = set(map(tuple, split[["pathogen", "antibiotic"]].to_numpy()))
+    selected_pair_mask = [
+        (str(pathogen), str(antibiotic)) in selected_pairs_for_hash
+        for pathogen, antibiotic in zip(si_df["pathogen"], si_df["antibiotic"])
+    ]
+    si_identity = si_df.loc[selected_pair_mask, ["pathogen", "antibiotic", "year", "SI"]].copy()
+    si_identity["pathogen"] = si_identity["pathogen"].fillna("").astype(str)
+    si_identity["antibiotic"] = si_identity["antibiotic"].fillna("").astype(str)
+    si_identity["year"] = pd.to_numeric(si_identity["year"], errors="coerce")
+    si_identity["SI"] = pd.to_numeric(si_identity["SI"], errors="coerce")
+    si_identity = si_identity.sort_values(
+        ["pathogen", "antibiotic", "year"], kind="stable"
+    ).reset_index(drop=True)
+    corpus_digest = pd.util.hash_pandas_object(corpus_identity, index=False).values.tobytes()
+    si_digest = pd.util.hash_pandas_object(si_identity, index=False).values.tobytes()
+    CORPUS_KEY = hashlib.sha256(corpus_digest + si_digest).hexdigest()[:12]
     horizon_tag = "-".join(map(str, FORECAST_HORIZONS))
     run_configuration = {
         "corpus_key": CORPUS_KEY,
@@ -692,10 +715,25 @@ def run_automated_concept_refinement(
                     parent_results.append({"parent_id": parent_id, "children": [], "status": "no_examples"})
                     continue
                 proposal_path = RUN_DIR / f"iteration_{iteration:02d}_proposal_{parent_id}.json"
+                proposal = None
                 if proposal_path.exists():
                     progress(f"Iteration {iteration}: loading saved proposal for {parent_id} from {proposal_path.name}.")
-                    proposal = json.loads(proposal_path.read_text())
-                else:
+                    try:
+                        proposal = json.loads(proposal_path.read_text())
+                    except (OSError, json.JSONDecodeError) as exc:
+                        invalid_path = proposal_path.with_suffix(".corrupt.json")
+                        suffix = 2
+                        while invalid_path.exists():
+                            invalid_path = proposal_path.with_name(
+                                f"{proposal_path.stem}.corrupt_{suffix}.json"
+                            )
+                            suffix += 1
+                        proposal_path.replace(invalid_path)
+                        progress(
+                            f"Iteration {iteration}: saved proposal was unreadable ({exc}); "
+                            f"preserved it as {invalid_path.name} and will request a replacement."
+                        )
+                if proposal is None:
                     progress(f"Iteration {iteration}: requesting up to {NUM_CHILDREN} child hypotheses for {parent_id}.")
                     try:
                         proposal = propose_concept_children(
@@ -722,8 +760,6 @@ def run_automated_concept_refinement(
                         continue
                     proposal_path.write_text(json.dumps(proposal, indent=2, ensure_ascii=False))
                     progress(f"Iteration {iteration}: proposal saved for {parent_id}.")
-                proposed_count = len(proposal.get("children", [])) if isinstance(proposal.get("children", []), list) else 0
-                progress(f"Iteration {iteration}: proposal for {parent_id} contains {proposed_count} child candidate(s).")
                 proposed_children = proposal.get("children") if isinstance(proposal, Mapping) else None
                 if not isinstance(proposed_children, list):
                     error_path = RUN_DIR / f"iteration_{iteration:02d}_proposal_{parent_id}.error.json"
@@ -732,10 +768,21 @@ def run_automated_concept_refinement(
                         "model": CHILD_GENERATION_MODEL,
                         "error": "Saved proposal must be a JSON object with a list field named 'children'.",
                     }, indent=2, ensure_ascii=False))
+                    if proposal_path.exists():
+                        invalid_path = proposal_path.with_suffix(".invalid.json")
+                        suffix = 2
+                        while invalid_path.exists():
+                            invalid_path = proposal_path.with_name(
+                                f"{proposal_path.stem}.invalid_{suffix}.json"
+                            )
+                            suffix += 1
+                        proposal_path.replace(invalid_path)
                     progress(f"Iteration {iteration}: invalid proposal for {parent_id}; see {error_path.name}.")
                     expanded_parent_ids.add(parent_id)
                     parent_results.append({"parent_id": parent_id, "children": [], "status": "invalid_proposal"})
                     continue
+                proposed_count = len(proposed_children)
+                progress(f"Iteration {iteration}: proposal for {parent_id} contains {proposed_count} child candidate(s).")
                 accepted_ids = []
                 for child in proposed_children[:NUM_CHILDREN]:
                     if not isinstance(child, Mapping):
