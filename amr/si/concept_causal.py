@@ -180,6 +180,7 @@ def estimate_pair_concept_causal_rankings(
                         "split": split_lookup.get((str(pathogen), str(antibiotic)), "unassigned"),
                         "concept_name": concept_names[concept_id], "horizon": horizon,
                         "status": "development_model_not_identified", "n_pair_origins": len(pair_rows),
+                        "n_positive_exposure_origins": 0,
                         "causal_interpretation": _CAUSAL_INTERPRETATION,
                     })
             continue
@@ -267,6 +268,7 @@ def estimate_pair_concept_causal_rankings(
                     "pathogen": pathogen, "antibiotic": antibiotic, "split": split_name,
                     "concept_id": concept_id, "concept_name": concept_names[concept_id],
                     "horizon": horizon, "n_pair_origins": 0,
+                    "n_positive_exposure_origins": 0,
                     "status": "insufficient_pair_history" if len(years) < min_prior_observations else "no_usable_forecast_origins",
                     "causal_interpretation": _CAUSAL_INTERPRETATION,
                 })
@@ -286,13 +288,17 @@ def estimate_pair_concept_causal_rankings(
             effect_per_10pp = float(valid["effect_per_10_percentage_points"].mean())
             status = "assumption_dependent"
             n_origins = int(valid["n_pair_origins"].min())
-            positive_origins = int(valid["n_positive_exposure_origins"].max())
+            positive_counts = pd.to_numeric(valid["n_positive_exposure_origins"], errors="coerce").fillna(0) \
+                if "n_positive_exposure_origins" in valid else pd.Series([0])
+            positive_origins = int(positive_counts.max())
         else:
             contribution = np.nan
             effect_per_10pp = np.nan
             status = "incomplete_horizons"
             n_origins = int(group["n_pair_origins"].min()) if "n_pair_origins" in group else 0
-            positive_origins = int(group["n_positive_exposure_origins"].max()) if "n_positive_exposure_origins" in group else 0
+            positive_counts = pd.to_numeric(group["n_positive_exposure_origins"], errors="coerce").fillna(0) \
+                if "n_positive_exposure_origins" in group else pd.Series([0])
+            positive_origins = int(positive_counts.max())
         first = group.iloc[0]
         aggregate_rows.append({
             "pathogen": pathogen, "antibiotic": antibiotic,

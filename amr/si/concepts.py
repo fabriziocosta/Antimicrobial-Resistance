@@ -70,6 +70,7 @@ JEV_CLASSIFICATION_TEMPLATE_VERSION = "jev-question-template-v2-full-concept-met
 JEV_CLASSIFICATION_PROMPT_VERSION = hashlib.sha256(
     f"{JEV_CLASSIFICATION_TEMPLATE_VERSION}|{JEV_CONCEPT_CLASSIFICATION_RUBRIC}".encode("utf-8")
 ).hexdigest()[:16]
+JEV_CONCEPT_EQUIVALENCE_PROMPT_VERSION = "jev-semantic-concept-equivalence-v1"
 
 
 def _normalise_pmid(value: object) -> str | None:
@@ -91,6 +92,123 @@ def concept_definition_hash(concept: Mapping[str, Any]) -> str:
     """Hash one concept independently so catalog additions do not invalidate it."""
     payload = json.dumps(dict(concept), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def review_concept_equivalence_jev(
+    candidate: Mapping[str, Any],
+    existing_concepts: Sequence[Mapping[str, Any]],
+    *,
+    jev_client: Any,
+    model_name: str,
+    cache_path: str | Path,
+) -> list[dict[str, Any]]:
+    """Ask Jev whether a proposed concept is equivalent to existing catalog concepts.
+
+    Equivalence requires the same intended phenomenon and operational scope.
+    Related concepts and meaningful parent/child specializations remain distinct.
+    Successful pairwise reviews are cached by both concept definitions.
+    """
+    if not candidate.get("definition"):
+        raise ValueError("Candidate concept must have a definition for semantic review.")
+    references = list(existing_concepts)
+    if not references:
+        return []
+    cache_file = Path(cache_path)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    if cache_file.exists():
+        cache = json.loads(cache_file.read_text())
+        if not isinstance(cache, dict) or not isinstance(cache.get("reviews"), dict):
+            raise ValueError(f"Invalid Jev semantic-equivalence cache: {cache_file}")
+    else:
+        cache = {"prompt_version": JEV_CONCEPT_EQUIVALENCE_PROMPT_VERSION, "reviews": {}}
+    cache["prompt_version"] = JEV_CONCEPT_EQUIVALENCE_PROMPT_VERSION
+    cached_reviews = cache["reviews"]
+    candidate_version = concept_definition_hash(candidate)
+    output: list[dict[str, Any] | None] = []
+    pending: list[tuple[int, str, Mapping[str, Any], str]] = []
+    for index, reference in enumerate(references):
+        reference_version = concept_definition_hash(reference)
+        cache_key = hashlib.sha256(json.dumps({
+            "candidate_version": candidate_version,
+            "reference_version": reference_version,
+            "model_name": model_name,
+            "prompt_version": JEV_CONCEPT_EQUIVALENCE_PROMPT_VERSION,
+        }, sort_keys=True).encode("utf-8")).hexdigest()
+        cached = cached_reviews.get(cache_key)
+        if isinstance(cached, dict) and cached.get("status") == "ok":
+            output.append({**cached, "cache_hit": True})
+        else:
+            question_id = f"reference_{len(pending):04d}"
+            output.append(None)
+            pending.append((index, question_id, reference, cache_key))
+
+    if pending:
+        def summary(concept: Mapping[str, Any]) -> dict[str, Any]:
+            fields = (
+                "concept_id", "name", "definition", "parent_id", "scientific_rationale",
+                "inclusion_criteria", "exclusion_criteria", "closest_competing_concept", "difference",
+            )
+            return {key: concept[key] for key in fields if concept.get(key) not in (None, "", [])}
+
+        state = json.dumps({
+            "candidate_concept": summary(candidate),
+            "reference_concepts": {
+                question_id: summary(reference)
+                for _, question_id, reference, _ in pending
+            },
+        }, ensure_ascii=False)
+        common_instructions = (
+            "Judge semantic equivalence of the candidate and the specified reference concept. Answer yes only "
+            "when they describe the same scientific phenomenon with materially the same operational scope and "
+            "inclusion/exclusion boundary; different words or IDs do not make them distinct. Related concepts "
+            "are not automatically equivalent. A narrower child specialization and its broader parent are "
+            "distinct when the child adds a meaningful scope boundary. Use the definitions, criteria, rationale, "
+            "and distinction fields in the supplied state. Do not use abstracts, SI outcomes, forecast results, "
+            "or name similarity alone. The NOUL value is confidence in semantic equivalence."
+        )
+        questions = {
+            question_id: (
+                f"Is candidate_concept semantically equivalent to reference_concepts[{question_id}]? "
+                f"{common_instructions}"
+            )
+            for _, question_id, _, _ in pending
+        }
+        response = jev_client.decide_many(state, questions=questions)
+        answers = response.get("answers", {})
+        unresolved = []
+        for output_index, question_id, reference, cache_key in pending:
+            answer = answers.get(question_id, {}) if isinstance(answers, Mapping) else {}
+            probability = answer.get("noul") if isinstance(answer, Mapping) else None
+            try:
+                if isinstance(probability, bool):
+                    raise ValueError
+                probability = float(probability)
+                if not np.isfinite(probability) or not 0 <= probability <= 1:
+                    raise ValueError
+            except (TypeError, ValueError):
+                unresolved.append(question_id)
+                continue
+            review = {
+                "status": "ok",
+                "candidate_definition_version": candidate_version,
+                "reference_concept_id": str(reference.get("concept_id", "")),
+                "reference_name": str(reference.get("name", reference.get("concept_id", ""))),
+                "reference_definition_version": concept_definition_hash(reference),
+                "model_name": model_name,
+                "prompt_version": JEV_CONCEPT_EQUIVALENCE_PROMPT_VERSION,
+                "equivalence_confidence": probability,
+            }
+            cached_reviews[cache_key] = review
+            output[output_index] = {**review, "cache_hit": False}
+        temporary_cache = cache_file.with_suffix(cache_file.suffix + ".tmp")
+        temporary_cache.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+        temporary_cache.replace(cache_file)
+        if unresolved:
+            raise RuntimeError(
+                "Jev semantic-equivalence review returned missing or invalid NOUL scores for "
+                f"{len(unresolved)} comparison(s): {', '.join(unresolved)}. Successful comparisons were cached; rerun to retry."
+            )
+    return [review for review in output if review is not None]
 
 
 def pareto_concept_frontier(
@@ -1048,7 +1166,7 @@ def compare_parent_children(
 
 __all__ = [
     "SEED_CONCEPTS", "CONCEPT_SYSTEM_PROMPT", "CLASSIFICATION_PROMPT_VERSION", "concept_catalog_hash",
-    "concept_definition_hash", "pareto_concept_frontier", "make_pair_split",
+    "concept_definition_hash", "review_concept_equivalence_jev", "pareto_concept_frontier", "make_pair_split",
     "build_concept_corpus", "estimate_classification_cost", "build_classification_prompt",
     "build_jev_concept_question", "JEV_CONCEPT_CLASSIFICATION_RUBRIC",
     "classify_concept_abstracts", "classify_concept_abstracts_jev", "build_yearly_concept_signals", "propose_concept_children",

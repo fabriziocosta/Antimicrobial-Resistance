@@ -19,6 +19,7 @@ from amr.si.concepts import (
     SEED_CONCEPTS, concept_catalog_hash, concept_definition_hash, JEV_CLASSIFICATION_PROMPT_VERSION,
     pareto_concept_frontier, classify_concept_abstracts_jev, build_yearly_concept_signals,
     rolling_origin_concept_forecasts, summarise_incremental_forecast_gains, propose_concept_children,
+    review_concept_equivalence_jev,
 )
 from amr.si.concept_causal import estimate_pair_concept_causal_rankings
 
@@ -267,6 +268,7 @@ def run_automated_concept_refinement(
     MAX_EXAMPLES_PER_PARENT = parameters["MAX_EXAMPLES_PER_PARENT"]
     PROPOSAL_EXAMPLE_SEED = parameters["PROPOSAL_EXAMPLE_SEED"]
     POSITIVE_EXAMPLE_THRESHOLD = parameters["POSITIVE_EXAMPLE_THRESHOLD"]
+    SEMANTIC_DUPLICATE_THRESHOLD = parameters.get("SEMANTIC_DUPLICATE_THRESHOLD", 0.85)
     FIT_START_YEAR = parameters["FIT_START_YEAR"]
     FORECAST_ORIGIN_END_YEAR = parameters["FORECAST_ORIGIN_END_YEAR"]
     LAG_LENGTH = parameters["LAG_LENGTH"]
@@ -305,6 +307,8 @@ def run_automated_concept_refinement(
         raise ValueError("FIT_START_YEAR must be no later than FORECAST_ORIGIN_END_YEAR.")
     if not 0 <= POSITIVE_EXAMPLE_THRESHOLD <= 1:
         raise ValueError("POSITIVE_EXAMPLE_THRESHOLD must be between 0 and 1.")
+    if not np.isfinite(SEMANTIC_DUPLICATE_THRESHOLD) or not 0 <= SEMANTIC_DUPLICATE_THRESHOLD <= 1:
+        raise ValueError("SEMANTIC_DUPLICATE_THRESHOLD must be between 0 and 1.")
     if MAX_CLASSIFICATION_CALLS is not None and (
         not isinstance(MAX_CLASSIFICATION_CALLS, int) or isinstance(MAX_CLASSIFICATION_CALLS, bool)
         or MAX_CLASSIFICATION_CALLS < 0
@@ -436,6 +440,7 @@ def run_automated_concept_refinement(
         "llm_max_tokens": LLM_MAX_TOKENS,
         "max_examples_per_parent": MAX_EXAMPLES_PER_PARENT,
         "positive_example_threshold": POSITIVE_EXAMPLE_THRESHOLD,
+        "semantic_duplicate_threshold": SEMANTIC_DUPLICATE_THRESHOLD,
         "proposal_example_seed": PROPOSAL_EXAMPLE_SEED,
         "fit_start_year": FIT_START_YEAR,
         "forecast_origin_end_year": FORECAST_ORIGIN_END_YEAR,
@@ -454,6 +459,7 @@ def run_automated_concept_refinement(
         f"_fit{FIT_START_YEAR}-{FORECAST_ORIGIN_END_YEAR}_l{LAG_LENGTH}_h{horizon_tag}_{RUN_KEY}"
     )
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    SEMANTIC_REVIEW_CACHE_PATH = CONCEPT_PATHS["directory"] / "semantic_equivalence_reviews.json"
     assert corpus[["pathogen", "antibiotic", "year", "pmid"]].duplicated().sum() == 0
     assert set(pair_split["split"]) == {"development", "confirmation"}
     print({
@@ -466,6 +472,7 @@ def run_automated_concept_refinement(
         "abstract_coverage": preflight["abstract_coverage"],
         "full_corpus_jev_request_upper_bound_if_uncached": preflight["unique_abstracts_to_classify"],
         "estimated_pending_jev_requests_after_cache": len(pending_jev_pmids),
+        "semantic_duplicate_review_request_upper_bound_if_uncached": N_ITER * K_PARENTS * NUM_CHILDREN,
         "abstracts_with_all_current_concept_labels_cached": len(abstracts) - len(pending_jev_pmids),
         "development_pairs": len(development_pairs),
         "confirmation_pairs": int(split["split"].eq("confirmation").sum()),
@@ -861,6 +868,7 @@ def run_automated_concept_refinement(
                 proposed_count = len(proposed_children)
                 progress(f"Iteration {iteration}: proposal for {parent_id} contains {proposed_count} child candidate(s).")
                 accepted_ids = []
+                semantic_duplicates = []
                 for child in proposed_children[:NUM_CHILDREN]:
                     if not isinstance(child, Mapping):
                         progress(f"Iteration {iteration}: ignored a non-object child proposal for {parent_id}.")
@@ -871,15 +879,8 @@ def run_automated_concept_refinement(
                         continue
                     normalized_definition = re.sub(r"\s+", " ", definition.lower())
                     if normalized_definition in existing_definitions:
+                        progress(f"Iteration {iteration}: skipped '{name}' as an exact-definition duplicate in the working catalog.")
                         continue
-                    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "child"
-                    child_id = f"{parent_id}_{slug}"
-                    suffix = 2
-                    while child_id in existing_ids:
-                        child_id = f"{parent_id}_{slug}_{suffix}"
-                        suffix += 1
-                    existing_ids.add(child_id)
-                    existing_definitions.add(normalized_definition)
                     review_fields = (
                         "scientific_rationale",
                         "inclusion_criteria",
@@ -891,8 +892,7 @@ def run_automated_concept_refinement(
                         "testable_hypothesis",
                         "rejection_conditions",
                     )
-                    child_record = {
-                        "concept_id": child_id,
+                    candidate_record = {
                         "name": name,
                         "parent_id": parent_id,
                         "definition": definition,
@@ -903,7 +903,48 @@ def run_automated_concept_refinement(
                         "refinement_iteration": iteration,
                     }
                     for field in review_fields:
-                        child_record[field] = child.get(field, [] if field.endswith(("criteria", "conditions")) else "")
+                        candidate_record[field] = child.get(field, [] if field.endswith(("criteria", "conditions")) else "")
+                    comparison_catalog = [*catalog, *new_children]
+                    equivalence_reviews = review_concept_equivalence_jev(
+                        candidate_record, comparison_catalog, jev_client=jev, model_name=JEV_MODEL,
+                        cache_path=SEMANTIC_REVIEW_CACHE_PATH,
+                    )
+                    best_match = max(
+                        equivalence_reviews,
+                        key=lambda review: float(review["equivalence_confidence"]),
+                        default=None,
+                    )
+                    if best_match is not None:
+                        best_confidence = float(best_match["equivalence_confidence"])
+                        progress(
+                            f"Iteration {iteration}: Jev semantic screen for '{name}' — highest equivalence "
+                            f"confidence {best_confidence:.3f} vs {best_match['reference_name']} "
+                            f"[{best_match['reference_concept_id']}], threshold {SEMANTIC_DUPLICATE_THRESHOLD:.2f}; "
+                            f"reused {sum(bool(review.get('cache_hit')) for review in equivalence_reviews):,}/"
+                            f"{len(equivalence_reviews):,} pairwise reviews from cache."
+                        )
+                        if best_confidence >= SEMANTIC_DUPLICATE_THRESHOLD:
+                            semantic_duplicates.append({
+                                "proposed_name": name,
+                                "proposed_definition": definition,
+                                "equivalent_to_concept_id": best_match["reference_concept_id"],
+                                "equivalent_to_name": best_match["reference_name"],
+                                "equivalence_confidence": best_confidence,
+                            })
+                            progress(
+                                f"Iteration {iteration}: skipped proposed child '{name}' as semantically equivalent "
+                                f"to {best_match['reference_name']} [{best_match['reference_concept_id']}]."
+                            )
+                            continue
+                    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "child"
+                    child_id = f"{parent_id}_{slug}"
+                    suffix = 2
+                    while child_id in existing_ids:
+                        child_id = f"{parent_id}_{slug}_{suffix}"
+                        suffix += 1
+                    existing_ids.add(child_id)
+                    existing_definitions.add(normalized_definition)
+                    child_record = {"concept_id": child_id, **candidate_record}
                     new_children.append(child_record)
                     accepted_ids.append(child_id)
                     print(f"\nIteration {iteration} — accepted child {child_id}")
@@ -917,7 +958,10 @@ def run_automated_concept_refinement(
                     f"({NUM_CHILDREN} requested)."
                 )
                 expanded_parent_ids.add(parent_id)
-                parent_results.append({"parent_id": parent_id, "children": accepted_ids, "status": "expanded"})
+                parent_results.append({
+                    "parent_id": parent_id, "children": accepted_ids,
+                    "semantic_duplicates": semantic_duplicates, "status": "expanded",
+                })
 
             if not new_children:
                 progress(f"Iteration {iteration}/{N_ITER}: no new child concepts to classify; stopping this search.")
