@@ -1264,6 +1264,7 @@ def plot_yearly_si_pair(
     fill_missing_amr_counts_with_zero: bool = False,
     pathogen_background_df: pd.DataFrame | None = None,
     antibiotic_background_df: pd.DataFrame | None = None,
+    pair_count_label: str = "AMR pair",
 ) -> dict[str, Any]:
     """Plot observed/predicted SI and counts for one pathogen-antibiotic pair."""
     result = fit_predict_yearly_si_loess(
@@ -1389,7 +1390,7 @@ def plot_yearly_si_pair(
         alpha=0.68,
         edgecolor="none",
         width=bar_width,
-        label="AMR pair publication count",
+        label=f"{pair_count_label} publication count",
         zorder=2,
     )
     ax2.set_yscale("log")
@@ -1425,7 +1426,7 @@ def plot_yearly_si_pair(
         np.clip(pred_df["predicted_count_loess"], 1.0, None),
         color="#4e8fb3",
         lw=2.5,
-        label="Predicted AMR pair count",
+        label=f"Predicted {pair_count_label} count",
         zorder=3,
     )
 
@@ -1438,7 +1439,7 @@ def plot_yearly_si_pair(
     )
     ax1.set_title(
         f"{pathogen} vs {antibiotic} | fit {fit_start_year}-{fit_end_year} | "
-        f"total AMR pair publications: {total_amr_pair_publications:,}"
+        f"total {pair_count_label} publications: {total_amr_pair_publications:,}"
     )
     ax1.grid(True, axis="y", color="#c7c7c7", alpha=0.45, linewidth=0.8)
     ax1.grid(False, axis="x")

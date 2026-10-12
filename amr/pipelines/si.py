@@ -29,6 +29,7 @@ from amr.si.core import (
     _materialize_pair_counts,
 )
 from amr.validation import clean_background_counts
+from amr.pipeline_config import cfg, cfg_path
 
 DEFAULT_DRIVER_REQUIRED_COLUMNS = {
     "pathogen",
@@ -471,6 +472,327 @@ def build_yearly_si_dataset(
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         atomic_write_parquet(si_df, output_path, index=False)
     return si_df, pooled_model, design_columns
+
+
+def recompute_pair_si_from_counts(
+    si_reference_df: pd.DataFrame,
+    yearly_pair_counts_df: pd.DataFrame,
+    pathogen_background_df: pd.DataFrame,
+    antibiotic_background_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    *,
+    min_amr_pair_publication_count: float = 1.0,
+) -> pd.DataFrame:
+    """Recompute one pair's SI by refitting the pooled model with its available rows.
+
+    The reference SI table supplies the existing eligible pair-year training rows.
+    The requested pair is then added from the supplied count table, using the
+    supplied yearly count threshold. This is an exploratory pair-specific refit and
+    does not modify or reproduce the canonical SI output exactly.
+    """
+    required_si = {
+        "pathogen", "antibiotic", "year", "count", "count_for_model",
+        "bg_pathogen_n", "bg_antibiotic_n",
+    }
+    missing_si = required_si - set(si_reference_df.columns)
+    if missing_si:
+        raise KeyError(f"si_reference_df missing required columns: {sorted(missing_si)}")
+    required_counts = {"pathogen", "antibiotic", "year", "count"}
+    missing_counts = required_counts - set(yearly_pair_counts_df.columns)
+    if missing_counts:
+        raise KeyError(f"yearly_pair_counts_df missing required columns: {sorted(missing_counts)}")
+
+    threshold = float(min_amr_pair_publication_count)
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("min_amr_pair_publication_count must be a finite non-negative number.")
+
+    pair_mask = (
+        yearly_pair_counts_df["pathogen"].astype(str).eq(str(pathogen))
+        & yearly_pair_counts_df["antibiotic"].astype(str).eq(str(antibiotic))
+    )
+    target = yearly_pair_counts_df.loc[pair_mask, ["pathogen", "antibiotic", "year", "count"]].copy()
+    if target.empty:
+        raise ValueError(
+            f"No screened source counts found for pathogen={pathogen!r}, antibiotic={antibiotic!r}. "
+            "Refresh collection/screening first; SI cannot be recomputed from absent pair counts."
+        )
+    target["year"] = pd.to_numeric(target["year"], errors="coerce")
+    target["count"] = pd.to_numeric(target["count"], errors="coerce")
+    target = (
+        target.dropna(subset=["year", "count"])
+        .assign(year=lambda frame: frame["year"].astype(int))
+        .groupby(["pathogen", "antibiotic", "year"], as_index=False)["count"]
+        .sum()
+    )
+
+    path_bg = clean_background_counts(pathogen_background_df, key_col="pathogen").rename(
+        columns={"count": "bg_pathogen_n"}
+    )
+    ab_bg = clean_background_counts(antibiotic_background_df, key_col="antibiotic").rename(
+        columns={"count": "bg_antibiotic_n"}
+    )
+    target = target.merge(path_bg, on=["pathogen", "year"], how="left").merge(
+        ab_bg, on=["antibiotic", "year"], how="left"
+    )
+    missing_background = target["bg_pathogen_n"].isna() | target["bg_antibiotic_n"].isna()
+    if missing_background.all():
+        raise ValueError(
+            f"No complete yearly background counts found for pathogen={pathogen!r}, "
+            f"antibiotic={antibiotic!r}."
+        )
+    target = target.loc[~missing_background].copy()
+    target["count_for_model"] = _materialize_pair_counts(target["count"], threshold)
+    target = target.dropna(subset=["count_for_model"]).copy()
+    if target.empty:
+        raise ValueError(
+            f"No screened years meet min_amr_pair_publication_count={threshold:g} "
+            f"for pathogen={pathogen!r}, antibiotic={antibiotic!r}."
+        )
+
+    target["log_count"] = np.log10(1.0 + target["count_for_model"].astype(float))
+    target["log_bg_pathogen_n"] = np.log10(1.0 + target["bg_pathogen_n"].astype(float))
+    target["log_bg_antibiotic_n"] = np.log10(1.0 + target["bg_antibiotic_n"].astype(float))
+
+    target_pair = (
+        si_reference_df["pathogen"].astype(str).eq(str(pathogen))
+        & si_reference_df["antibiotic"].astype(str).eq(str(antibiotic))
+    )
+    reference = si_reference_df.loc[
+        si_reference_df["count_for_model"].notna() & ~target_pair,
+        [
+            "pathogen", "antibiotic", "year", "count", "count_for_model", "log_count",
+            "log_bg_pathogen_n", "log_bg_antibiotic_n",
+        ],
+    ].copy()
+    if reference.empty:
+        raise ValueError(
+            "No eligible reference SI rows are available to refit the pooled baseline. "
+            "Run notebook 05 first to create the reference SI dataset."
+        )
+    fit_input = pd.concat(
+        [reference, target[reference.columns]],
+        ignore_index=True,
+    )
+    scored, _, _ = fit_global_pooled_si_model(fit_input)
+    target_scored = scored.loc[
+        scored["pathogen"].astype(str).eq(str(pathogen))
+        & scored["antibiotic"].astype(str).eq(str(antibiotic))
+    ].copy()
+    target_scored["min_amr_pair_publication_count"] = threshold
+    return target_scored.sort_values("year").reset_index(drop=True)
+
+
+def recompute_pair_si_from_available_sources(
+    si_reference_df: pd.DataFrame,
+    pathogen: str,
+    antibiotic: str,
+    *,
+    pipeline_config: dict[str, Any],
+    project_root: str | Path,
+    pathogen_background_df: pd.DataFrame,
+    antibiotic_background_df: pd.DataFrame,
+    min_amr_pair_publication_count: float = 1.0,
+    system1_probability_threshold: float | None = None,
+    llm_include_decisions: Sequence[str] | None = None,
+    allow_candidate_proxy: bool = True,
+) -> dict[str, Any]:
+    """Recover and score one pair from the deepest available cached AMR source.
+
+    The helper prefers stored screened counts. If those are absent, it rebuilds
+    pair-specific screened counts from candidate PMID/year rows and the configured
+    cached prediction source. If yearly candidate rows are absent, it can rebuild
+    them from candidate PMID links plus cached PubMed publication years. If candidate
+    counts are the only evidence left, it can return an explicitly unvalidated
+    candidate-literature proxy when ``allow_candidate_proxy`` is true.
+    """
+    from amr.screening import build_yearly_screened_pairs
+
+    root = Path(project_root)
+    analysis_level = str(cfg(pipeline_config, "si.antibiotic_analysis_level", "antibiotic")).strip()
+    if analysis_level.casefold() not in {"", "antibiotic"}:
+        raise ValueError(
+            "Pair-specific recovery currently supports individual-antibiotic SI only; "
+            f"configured analysis level is {analysis_level!r}."
+        )
+
+    def read_optional(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
+        if not path.exists():
+            return pd.DataFrame(columns=columns or [])
+        frame = pd.read_parquet(path)
+        return frame[[column for column in (columns or frame.columns.tolist()) if column in frame.columns]].copy()
+
+    def select_pair(frame: pd.DataFrame) -> pd.DataFrame:
+        if not {"pathogen", "antibiotic"}.issubset(frame.columns):
+            return frame.iloc[0:0].copy()
+        mask = (
+            frame["pathogen"].astype(str).str.casefold().eq(str(pathogen).casefold())
+            & frame["antibiotic"].astype(str).str.casefold().eq(str(antibiotic).casefold())
+        )
+        return frame.loc[mask].copy()
+
+    paths = {
+        key: cfg_path(pipeline_config, f"paths.{key}", root)
+        for key in (
+            "yearly_screened", "yearly_candidates", "yearly_pair_pmids",
+            "pubmed_metadata_cache", "system1_decisions", "unified_decisions",
+        )
+    }
+    stored_screened = select_pair(
+        read_optional(paths["yearly_screened"], ["pathogen", "antibiotic", "year", "count", "pmids"])
+    )
+    candidate = select_pair(
+        read_optional(paths["yearly_candidates"], ["pathogen", "antibiotic", "year", "count", "pmids"])
+    )
+    candidate_method = "candidate_amr_pair_year_counts.parquet"
+
+    if candidate.empty or "pmids" not in candidate.columns:
+        pair_links = select_pair(
+            read_optional(paths["yearly_pair_pmids"], ["pathogen", "antibiotic", "pmid"])
+        )
+        if not pair_links.empty:
+            metadata = read_optional(paths["pubmed_metadata_cache"], ["pmid", "pub_year"])
+            if not metadata.empty:
+                pair_links["pmid"] = pair_links["pmid"].astype(str)
+                metadata["pmid"] = metadata["pmid"].astype(str)
+                metadata["pub_year"] = pd.to_numeric(metadata["pub_year"], errors="coerce")
+                linked = pair_links.merge(metadata.dropna(subset=["pub_year"]), on="pmid", how="inner")
+                linked["year"] = linked["pub_year"].astype(int)
+                linked = linked.drop_duplicates(["pathogen", "antibiotic", "year", "pmid"])
+                linked_candidate = (
+                    linked.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+                    .agg(count=("pmid", "nunique"), pmids=("pmid", lambda values: sorted(set(values))))
+                )
+                if not linked_candidate.empty:
+                    candidate = linked_candidate
+                    candidate_method = "candidate PMID links + PubMed publication-year cache"
+
+    source_name = str(cfg(pipeline_config, "screening.active_source", "llm")).strip().lower()
+    if source_name not in {"llm", "system1"}:
+        raise ValueError("screening.active_source must be 'llm' or 'system1'.")
+    run_id = str(cfg(pipeline_config, "system1.run_id", "jev-default"))
+    threshold = (
+        float(cfg(pipeline_config, "screening.system1_probability_threshold", 0.5))
+        if system1_probability_threshold is None
+        else float(system1_probability_threshold)
+    )
+    include_decisions = tuple(
+        cfg(pipeline_config, "llm.screened_include_decisions", ["strict", "yes"])
+        if llm_include_decisions is None
+        else llm_include_decisions
+    )
+
+    rebuilt_screened = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
+    screening_overridden = system1_probability_threshold is not None or llm_include_decisions is not None
+    if screening_overridden and (
+        (source_name == "system1" and llm_include_decisions is not None)
+        or (source_name == "llm" and system1_probability_threshold is not None)
+    ):
+        raise ValueError("Set only the override that matches screening.active_source.")
+    rebuild_attempted = screening_overridden or stored_screened.empty
+    if rebuild_attempted and not candidate.empty:
+        decision_key = "system1_decisions" if source_name == "system1" else "unified_decisions"
+        prediction_columns = (
+            ["pmid", "pathogen", "antibiotic", "year", "system1_p_yes", "system1_status", "system1_run_id"]
+            if source_name == "system1"
+            else ["pmid", "pathogen", "antibiotic", "year", "unified_decision"]
+        )
+        predictions = select_pair(read_optional(paths[decision_key], prediction_columns))
+        required_prediction_columns = (
+            {"pmid", "pathogen", "antibiotic", "year", "system1_p_yes", "system1_status"}
+            if source_name == "system1"
+            else {"pmid", "pathogen", "antibiotic", "year", "unified_decision"}
+        )
+        if not predictions.empty and "pmids" in candidate.columns and required_prediction_columns.issubset(predictions.columns):
+            rebuild_kwargs: dict[str, Any] = {"prediction_source": source_name, "output_path": None}
+            if source_name == "system1":
+                rebuild_kwargs.update(probability_threshold=threshold, system1_run_id=run_id)
+            else:
+                rebuild_kwargs.update(include_decisions=include_decisions)
+            rebuilt_screened = build_yearly_screened_pairs(candidate, predictions, **rebuild_kwargs)
+
+    if screening_overridden:
+        selected_counts = rebuilt_screened
+        selected_source = f"recomputed from candidate records using {source_name} override"
+    elif not stored_screened.empty:
+        selected_counts = stored_screened
+        selected_source = "stored yearly_amr_screened_pairs.parquet"
+    else:
+        selected_counts = rebuilt_screened
+        selected_source = f"rebuilt from {candidate_method} and cached {source_name} predictions"
+
+    diagnostic = pd.DataFrame(columns=["year", "candidate_count", "stored_screened_count", "recomputed_screened_count"])
+    yearly_frames: list[pd.DataFrame] = []
+    for frame, name in (
+        (candidate, "candidate_count"),
+        (stored_screened, "stored_screened_count"),
+        (rebuilt_screened, "recomputed_screened_count"),
+    ):
+        if not frame.empty:
+            counts = frame.groupby("year", as_index=False)["count"].sum().rename(columns={"count": name})
+            yearly_frames.append(counts)
+    for frame in yearly_frames:
+        diagnostic = diagnostic.merge(frame, on="year", how="outer") if not diagnostic.empty else frame
+    if not diagnostic.empty:
+        diagnostic = diagnostic.sort_values("year")
+        for column in ["candidate_count", "stored_screened_count", "recomputed_screened_count"]:
+            if column not in diagnostic:
+                diagnostic[column] = 0 if column != "recomputed_screened_count" or rebuild_attempted else pd.NA
+        diagnostic[["candidate_count", "stored_screened_count"]] = diagnostic[["candidate_count", "stored_screened_count"]].fillna(0)
+        if rebuild_attempted:
+            diagnostic["recomputed_screened_count"] = diagnostic["recomputed_screened_count"].fillna(0)
+        diagnostic = diagnostic[["year", "candidate_count", "stored_screened_count", "recomputed_screened_count"]]
+
+    data_label = "AMR pair"
+    data_interpretation = "screened_amr"
+    if selected_counts.empty and allow_candidate_proxy and not candidate.empty:
+        selected_counts = candidate
+        selected_source = f"candidate-only proxy from {candidate_method}; no AMR-screened counts recovered"
+        data_label = "candidate pair"
+        data_interpretation = "candidate_proxy"
+
+    if selected_counts.empty:
+        return {
+            "pair_si_df": pd.DataFrame(),
+            "availability_by_year": diagnostic,
+            "source": selected_source,
+            "candidate_source": candidate_method if not candidate.empty else "no candidate PMID/year records found",
+            "data_label": data_label,
+            "data_interpretation": data_interpretation,
+            "message": (
+                f"No AMR-accepted yearly counts are available for {pathogen!r} — {antibiotic!r}. "
+                "The availability table shows candidate counts and any recoverable screened counts. "
+                "If candidate counts exist but cannot support a fit, review the availability table "
+                "and cached predictions. Raw candidate mentions are not AMR-screened observations."
+            ),
+        }
+
+    pathogen_bg_path = cfg_path(pipeline_config, "paths.pathogen_background", root)
+    antibiotic_bg_path = cfg_path(pipeline_config, "paths.antibiotic_background", root)
+    if not pathogen_background_df.empty and not antibiotic_background_df.empty:
+        pair_si = recompute_pair_si_from_counts(
+            si_reference_df,
+            selected_counts,
+            pathogen_background_df,
+            antibiotic_background_df,
+            str(selected_counts.iloc[0]["pathogen"]),
+            str(selected_counts.iloc[0]["antibiotic"]),
+            min_amr_pair_publication_count=min_amr_pair_publication_count,
+        )
+    else:
+        raise ValueError(
+            "Pathogen and antibiotic background tables are required to recompute SI "
+            f"(expected {pathogen_bg_path} and {antibiotic_bg_path})."
+        )
+    return {
+        "pair_si_df": pair_si,
+        "availability_by_year": diagnostic,
+        "source": selected_source,
+        "candidate_source": candidate_method if not candidate.empty else "no candidate PMID/year records found",
+        "data_label": data_label,
+        "data_interpretation": data_interpretation,
+        "message": None,
+    }
 
 
 def filter_model_inputs_by_average_amr_publications(
@@ -1399,6 +1721,8 @@ __all__ = [
     "load_yearly_si_inputs",
     "print_si_dataset_summary",
     "prepare_antibiotic_analysis_level",
+    "recompute_pair_si_from_counts",
+    "recompute_pair_si_from_available_sources",
     "rank_future_high_interest_pairs",
     "save_category_driver_plots",
     "save_category_driver_pie_grid",
