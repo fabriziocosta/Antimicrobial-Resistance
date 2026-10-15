@@ -1,0 +1,13 @@
+rule,a,b,disagree
+strict_only,gemflash@T0.1,gpt4nano@T0.1,0.42696629213483145
+strict_only,gemflash@T0.1,gpt35@T0.1,0.4943820224719101
+strict_only,gemflash@T0.1,gemma3_4b_or@T0.1,0.47191011235955055
+strict_only,gpt4nano@T0.1,gpt35@T0.1,0.5168539325842697
+strict_only,gpt4nano@T0.1,gemma3_4b_or@T0.1,0.2247191011235955
+strict_only,gpt35@T0.1,gemma3_4b_or@T0.1,0.449438202247191
+strict_or_yes,gemflash@T0.1,gpt4nano@T0.1,0.12359550561797752
+strict_or_yes,gemflash@T0.1,gpt35@T0.1,0.11235955056179775
+strict_or_yes,gemflash@T0.1,gemma3_4b_or@T0.1,0.12359550561797752
+strict_or_yes,gpt4nano@T0.1,gpt35@T0.1,0.14606741573033707
+strict_or_yes,gpt4nano@T0.1,gemma3_4b_or@T0.1,0.15730337078651685
+strict_or_yes,gpt35@T0.1,gemma3_4b_or@T0.1,0.12359550561797752
