@@ -304,78 +304,153 @@ def _build_glass_si_scatter(
     display_name: bool,
     max_text_labels: int | None,
     always_label_glass: bool,
+    show_label_background: bool,
     width: int,
     height: int,
     add_zero_lines: bool,
     add_identity_line: bool,
+    x_axis_range: tuple[float, float] | None = None,
+    y_axis_range: tuple[float, float] | None = None,
 ) -> tuple[Any, pd.DataFrame]:
     try:
         import plotly.graph_objects as go
     except ImportError as exc:  # pragma: no cover - optional notebook dependency
         raise ImportError("plotly is required for interactive SI plots.") from exc
 
+    scatter_df = scatter_df.copy()
+    # Plotly draws later points in a trace over earlier ones. Keep that order
+    # deterministic so greater x values sit on top of smaller x values.
+    scatter_df = scatter_df.sort_values(x_col, ascending=True, na_position="first", kind="stable")
     scatter_df = _add_plot_labels(
-        scatter_df.copy(),
+        scatter_df,
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
     )
     show_text = display_name and scatter_df["display_label"].astype(str).str.len().gt(0).any()
 
-    fig = go.Figure(
-        data=[
-            go.Scatter(
-                x=scatter_df[x_col],
-                y=scatter_df[y_col],
-                mode="markers+text" if show_text else "markers",
-                text=scatter_df["display_label"] if show_text else None,
-                textposition="middle right",
-                textfont=dict(size=9),
-                marker=dict(
-                    color=pd.to_numeric(scatter_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
-                    colorscale=[[0.0, "#2166ac"], [1.0, "#ffffff"]],
-                    cmin=float(min_count_abs_pct_error_mean),
-                    cmax=float(max_count_abs_pct_error_mean),
-                    size=np.where(scatter_df["is_glass_pair"], 13, 10),
-                    opacity=0.78,
-                    line=dict(
-                        color=np.where(scatter_df["is_glass_pair"], "#000000", "#4b5563"),
-                        width=np.where(scatter_df["is_glass_pair"], 3.2, 1.0),
-                    ),
-                    colorbar=dict(title="Mean abs count % error", len=0.7, thickness=18),
-                ),
-                customdata=scatter_df[
-                    [
-                        "pathogen",
-                        "antibiotic",
-                        "latest_available_year",
-                        "future_year",
-                        "latest_available_count",
-                        "latest_smoothed_SI",
-                        "future_predicted_SI",
-                        "future_predicted_count",
-                        "future_minus_latest_smoothed_SI",
-                        "post_fit_count_abs_pct_error_mean",
-                        "n_count_error_years",
-                        "appears_in_GLASS",
-                        "glass_group_column",
-                    ]
-                ].to_numpy(),
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "<b>%{customdata[1]}</b><br>"
-                    "Years: %{customdata[2]} -> %{customdata[3]}<br>"
-                    "Counts: %{customdata[4]:.0f} -> %{customdata[7]:.0f}<br>"
-                    "Smoothed SI: %{customdata[5]:.3f} -> %{customdata[6]:.3f}<br>"
-                    "Delta SI: %{customdata[8]:.3f}<br>"
-                    "Error (pc): %{customdata[9]:.2f}<br>"
-                    "Count-error years: %{customdata[10]:.0f}<br>"
-                    "GLASS: %{customdata[11]}<extra></extra>"
-                ),
-                name="Pairs",
-            )
-        ]
+    marker_trace = go.Scatter(
+        x=scatter_df[x_col],
+        y=scatter_df[y_col],
+        mode="markers+text" if show_text and not show_label_background else "markers",
+        text=scatter_df["display_label"] if show_text and not show_label_background else None,
+        textposition="middle right",
+        textfont=dict(size=9),
+        marker=dict(
+            color=pd.to_numeric(scatter_df["post_fit_count_abs_pct_error_mean"], errors="coerce"),
+            colorscale=[[0.0, "#2166ac"], [1.0, "#ffffff"]],
+            cmin=float(min_count_abs_pct_error_mean),
+            cmax=float(max_count_abs_pct_error_mean),
+            size=np.where(scatter_df["is_glass_pair"], 13, 10),
+            opacity=0.78,
+            line=dict(
+                color=np.where(scatter_df["is_glass_pair"], "#000000", "#4b5563"),
+                width=np.where(scatter_df["is_glass_pair"], 3.2, 1.0),
+            ),
+            colorbar=dict(title="Mean abs count % error", len=0.7, thickness=18),
+        ),
+        customdata=scatter_df[
+            [
+                "pathogen",
+                "antibiotic",
+                "latest_available_year",
+                "future_year",
+                "latest_available_count",
+                "latest_smoothed_SI",
+                "future_predicted_SI",
+                "future_predicted_count",
+                "future_minus_latest_smoothed_SI",
+                "post_fit_count_abs_pct_error_mean",
+                "n_count_error_years",
+                "appears_in_GLASS",
+                "glass_group_column",
+            ]
+        ].to_numpy(),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "<b>%{customdata[1]}</b><br>"
+            "Years: %{customdata[2]} -> %{customdata[3]}<br>"
+            "Counts: %{customdata[4]:.0f} -> %{customdata[7]:.0f}<br>"
+            "Smoothed SI: %{customdata[5]:.3f} -> %{customdata[6]:.3f}<br>"
+            "Delta SI: %{customdata[8]:.3f}<br>"
+            "Error (pc): %{customdata[9]:.2f}<br>"
+            "Count-error years: %{customdata[10]:.0f}<br>"
+            "GLASS: %{customdata[11]}<extra></extra>"
+        ),
+        name="Pairs",
     )
+    fig = go.Figure()
+    if show_text and show_label_background:
+        label_rows = scatter_df.loc[scatter_df["display_label"].astype(str).str.len().gt(0)]
+        x_values = pd.to_numeric(scatter_df[x_col], errors="coerce").dropna()
+        y_values = pd.to_numeric(scatter_df[y_col], errors="coerce").dropna()
+        if x_axis_range is None:
+            x_min = float(x_values.min()) if not x_values.empty else 0.0
+            x_max = float(x_values.max()) if not x_values.empty else 1.0
+            x_pad = max(x_max - x_min, 1e-9) * 0.05
+            x_axis_range = (x_min - x_pad, x_max + x_pad)
+        if y_axis_range is None:
+            y_min = float(y_values.min()) if not y_values.empty else 0.0
+            y_max = float(y_values.max()) if not y_values.empty else 1.0
+            y_pad = max(y_max - y_min, 1e-9) * 0.05
+            y_axis_range = (y_min - y_pad, y_max + y_pad)
+        plot_width_px = max(int(width) - 250, 1)
+        plot_height_px = max(int(height) - 170, 1)
+        x_per_pixel = (x_axis_range[1] - x_axis_range[0]) / plot_width_px
+        y_per_pixel = (y_axis_range[1] - y_axis_range[0]) / plot_height_px
+        marker_gap_px = 8  # marker radius plus a small tangent gap
+        point_x = pd.to_numeric(label_rows[x_col], errors="coerce")
+        box_x0 = point_x + marker_gap_px * x_per_pixel
+        text_y = pd.to_numeric(label_rows[y_col], errors="coerce")
+        text_values = label_rows["display_label"].astype(str)
+        # Add each box and its left-aligned text in sequence, so later boxes
+        # cover earlier labels where they overlap. The marker trace is last.
+        for x0, y, label in zip(box_x0, text_y, text_values):
+            lines = label.split("<br>")
+            max_line_length = max((len(line) for line in lines), default=1)
+            box_width_px = max_line_length * 4.7 + 10
+            box_width = box_width_px * x_per_pixel
+            box_height = max(len(lines) * 10.5 + 6, 16) * y_per_pixel
+            box_left = float(x0)
+            box_right = box_left + box_width
+            fig.add_trace(
+                go.Scatter(
+                    x=[box_left, box_right, box_right, box_left, box_left],
+                    y=[
+                        float(y) - box_height / 2,
+                        float(y) - box_height / 2,
+                        float(y) + box_height / 2,
+                        float(y) + box_height / 2,
+                        float(y) - box_height / 2,
+                    ],
+                    mode="lines",
+                    fill="toself",
+                    fillcolor="white",
+                    line=dict(color="#000000", width=0.5),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name="Label background",
+                )
+            )
+            line_y_positions = [
+                float(y) + ((len(lines) - 1) / 2 - line_i) * 10.5 * y_per_pixel
+                for line_i in range(len(lines))
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=[box_left + 4 * x_per_pixel] * len(lines),
+                    y=line_y_positions,
+                    mode="text",
+                    text=lines,
+                    textposition="middle right",
+                    textfont=dict(size=8, color="#2a3f5f"),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    cliponaxis=False,
+                    name="Pair label",
+                )
+            )
+    fig.add_trace(marker_trace)
 
     fig.update_layout(
         title=title,
@@ -410,17 +485,23 @@ def plot_future_si_vs_si_shift(
     *,
     min_count_abs_pct_error_mean: float = 0.0,
     max_count_abs_pct_error_mean: float = 10.0,
+    predicted_future_si_threshold: float = 0.5,
+    predicted_future_delta_si_threshold: float = 0.1,
+    show_mean_count_pct_error: bool = False,
     display_name: bool = False,
     max_text_labels: int | None = None,
     always_label_glass: bool = True,
+    show_label_background: bool = False,
     title: str = "Predicted future SI vs predicted SI shift",
     width: int = 1400,
     height: int = 900,
     show: bool = True,
+    show_quadrants: bool | None = None,
+    quadrant_output_dir: str | Path | None = None,
     html_path: str | Path | None = None,
     pdf_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Plot predicted future SI against future-minus-latest smoothed SI shift."""
+    """Plot future SI against SI shift with threshold-defined quadrants."""
     required_cols = {
         "pathogen",
         "antibiotic",
@@ -445,6 +526,31 @@ def plot_future_si_vs_si_shift(
     except ImportError as exc:  # pragma: no cover - optional notebook dependency
         raise ImportError("plotly is required for interactive SI plots.") from exc
 
+    x_values_for_range = pd.to_numeric(plot_df["future_predicted_SI"], errors="coerce").dropna()
+    y_values_for_range = pd.to_numeric(plot_df["future_minus_latest_smoothed_SI"], errors="coerce").dropna()
+    x_span_for_range = max(float(x_values_for_range.max() - x_values_for_range.min()), 1.0) if not x_values_for_range.empty else 1.0
+    y_span_for_range = max(float(y_values_for_range.max() - y_values_for_range.min()), 1.0) if not y_values_for_range.empty else 1.0
+    x_min_for_range = (
+        min(float(x_values_for_range.min()), float(predicted_future_si_threshold)) - 0.05 * x_span_for_range
+        if not x_values_for_range.empty
+        else float(predicted_future_si_threshold) - 1.0
+    )
+    x_max_for_range = (
+        max(float(x_values_for_range.max()), float(predicted_future_si_threshold)) + 0.05 * x_span_for_range
+        if not x_values_for_range.empty
+        else float(predicted_future_si_threshold) + 1.0
+    )
+    y_min_for_range = (
+        min(float(y_values_for_range.min()), float(predicted_future_delta_si_threshold)) - 0.05 * y_span_for_range
+        if not y_values_for_range.empty
+        else float(predicted_future_delta_si_threshold) - 1.0
+    )
+    y_max_for_range = (
+        max(float(y_values_for_range.max()), float(predicted_future_delta_si_threshold)) + 0.05 * y_span_for_range
+        if not y_values_for_range.empty
+        else float(predicted_future_delta_si_threshold) + 1.0
+    )
+
     fig, scatter_df = _build_glass_si_scatter(
         plot_df,
         x_col="future_predicted_SI",
@@ -457,11 +563,105 @@ def plot_future_si_vs_si_shift(
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
+        show_label_background=show_label_background,
         width=width,
         height=height,
-        add_zero_lines=True,
+        x_axis_range=(x_min_for_range, x_max_for_range),
+        y_axis_range=(y_min_for_range, y_max_for_range),
+        add_zero_lines=False,
         add_identity_line=False,
     )
+    fig.update_layout(
+        font=dict(size=10),
+        title_font=dict(size=14),
+        xaxis_title_font=dict(size=11),
+        yaxis_title_font=dict(size=11),
+        xaxis_tickfont=dict(size=9),
+        yaxis_tickfont=dict(size=9),
+    )
+    if fig.data and fig.data[0].textfont is not None:
+        fig.data[0].textfont.size = 8
+
+    # Shade the two below-threshold bands. Their overlap gets a blended shade,
+    # while the quadrant above both thresholds remains white.
+    x_values = pd.to_numeric(scatter_df["future_predicted_SI"], errors="coerce").dropna()
+    y_values = pd.to_numeric(scatter_df["future_minus_latest_smoothed_SI"], errors="coerce").dropna()
+    x_span = max(float(x_values.max() - x_values.min()), 1.0) if not x_values.empty else 1.0
+    y_span = max(float(y_values.max() - y_values.min()), 1.0) if not y_values.empty else 1.0
+    x_min = (
+        min(float(x_values.min()), float(predicted_future_si_threshold)) - 0.05 * x_span
+        if not x_values.empty
+        else float(predicted_future_si_threshold) - 1.0
+    )
+    y_min = (
+        min(float(y_values.min()), float(predicted_future_delta_si_threshold)) - 0.05 * y_span
+        if not y_values.empty
+        else float(predicted_future_delta_si_threshold) - 1.0
+    )
+    x_max = (
+        max(float(x_values.max()), float(predicted_future_si_threshold)) + 0.05 * x_span
+        if not x_values.empty
+        else float(predicted_future_si_threshold) + 1.0
+    )
+    y_max = (
+        max(float(y_values.max()), float(predicted_future_delta_si_threshold)) + 0.05 * y_span
+        if not y_values.empty
+        else float(predicted_future_delta_si_threshold) + 1.0
+    )
+    # Match the axis bounds to the shaded bands so Plotly autorange padding
+    # cannot leave a white strip at the left or bottom edges.
+    fig.update_xaxes(range=[x_min, x_max])
+    fig.update_yaxes(range=[y_min, y_max])
+    fig.add_shape(
+        type="rect",
+        xref="x",
+        yref="paper",
+        x0=x_min,
+        x1=float(predicted_future_si_threshold),
+        y0=0,
+        y1=1,
+        fillcolor="#60a5fa",
+        opacity=0.3,
+        line_width=0,
+        layer="below",
+    )
+    fig.add_shape(
+        type="rect",
+        xref="paper",
+        yref="y",
+        x0=0,
+        x1=1,
+        y0=y_min,
+        y1=float(predicted_future_delta_si_threshold),
+        fillcolor="#f59e0b",
+        opacity=0.3,
+        line_width=0,
+        layer="below",
+    )
+    fig.add_vline(
+        x=float(predicted_future_si_threshold),
+        line_dash="dot",
+        line_color="#111827",
+        line_width=2,
+        opacity=0.9,
+    )
+    fig.add_hline(
+        y=float(predicted_future_delta_si_threshold),
+        line_dash="dot",
+        line_color="#111827",
+        line_width=2,
+        opacity=0.9,
+    )
+
+    if not show_mean_count_pct_error:
+        # The shared scatter helper uses error as the fill color. Remove that
+        # encoding when hollow markers are requested, and remove its colorbar.
+        trace = fig.data[-1]
+        trace.marker.symbol = "circle-open"
+        trace.marker.color = np.where(scatter_df["is_glass_pair"], "#000000", "#4b5563")
+        trace.marker.colorbar = None
+        trace.marker.colorscale = None
+        trace.marker.showscale = False
 
     saved_pdf_path, pdf_error, saved_html_path = _write_plotly_outputs(
         fig, html_path=html_path, pdf_path=pdf_path, width=width, height=height
@@ -469,7 +669,98 @@ def plot_future_si_vs_si_shift(
     if show:
         pio.renderers.default = "notebook_connected"
         fig.show()
-    return {"figure": fig, "plot_df": scatter_df, "pdf_path": saved_pdf_path, "pdf_error": pdf_error, "html_path": saved_html_path}
+
+    quadrant_results: dict[str, dict[str, Any]] = {}
+    if show_quadrants is None:
+        show_quadrants = show
+    if quadrant_output_dir is not None:
+        quadrant_output_dir = Path(quadrant_output_dir)
+        quadrant_output_dir.mkdir(parents=True, exist_ok=True)
+
+    x = pd.to_numeric(scatter_df["future_predicted_SI"], errors="coerce")
+    y = pd.to_numeric(scatter_df["future_minus_latest_smoothed_SI"], errors="coerce")
+    x_threshold = float(predicted_future_si_threshold)
+    y_threshold = float(predicted_future_delta_si_threshold)
+    quadrant_masks = {
+        "below_both": x.lt(x_threshold) & y.lt(y_threshold),
+        "below_future_si": x.lt(x_threshold) & y.ge(y_threshold),
+        "below_delta_si": x.ge(x_threshold) & y.lt(y_threshold),
+        "above_both": x.ge(x_threshold) & y.ge(y_threshold),
+    }
+    quadrant_titles = {
+        "below_both": "Below both thresholds",
+        "below_future_si": "Future SI below threshold; delta SI above",
+        "below_delta_si": "Future SI above threshold; delta SI below",
+        "above_both": "Above both thresholds",
+    }
+    for quadrant_name, mask in quadrant_masks.items():
+        quadrant_df = scatter_df.loc[mask].copy()
+        quadrant_fig, quadrant_plot_df = _build_glass_si_scatter(
+            quadrant_df,
+            x_col="future_predicted_SI",
+            y_col="future_minus_latest_smoothed_SI",
+            title=f"{quadrant_titles[quadrant_name]} (n={len(quadrant_df):,})",
+            xaxis_title="Predicted future SI",
+            yaxis_title="Predicted future SI - smoothed SI at latest available year",
+            min_count_abs_pct_error_mean=min_count_abs_pct_error_mean,
+            max_count_abs_pct_error_mean=max_count_abs_pct_error_mean,
+            display_name=display_name,
+            max_text_labels=max_text_labels,
+            always_label_glass=always_label_glass,
+            show_label_background=show_label_background,
+            width=width,
+            height=height,
+            add_zero_lines=False,
+            add_identity_line=False,
+        )
+        quadrant_fig.update_layout(
+            font=dict(size=10),
+            title_font=dict(size=14),
+            xaxis_title_font=dict(size=11),
+            yaxis_title_font=dict(size=11),
+            xaxis_tickfont=dict(size=9),
+            yaxis_tickfont=dict(size=9),
+        )
+        if quadrant_fig.data and quadrant_fig.data[0].textfont is not None:
+            quadrant_fig.data[0].textfont.size = 8
+        if not show_mean_count_pct_error and quadrant_fig.data:
+            trace = quadrant_fig.data[-1]
+            trace.marker.symbol = "circle-open"
+            trace.marker.color = np.where(quadrant_plot_df["is_glass_pair"], "#000000", "#4b5563")
+            trace.marker.colorbar = None
+            trace.marker.colorscale = None
+            trace.marker.showscale = False
+
+        quadrant_pdf_path = None
+        quadrant_pdf_error = None
+        quadrant_html_path = None
+        if quadrant_output_dir is not None:
+            quadrant_pdf_path, quadrant_pdf_error, quadrant_html_path = _write_plotly_outputs(
+                quadrant_fig,
+                html_path=None,
+                pdf_path=quadrant_output_dir / f"future_si_vs_si_shift_{quadrant_name}.pdf",
+                width=width,
+                height=height,
+            )
+        if show_quadrants:
+            pio.renderers.default = "notebook_connected"
+            quadrant_fig.show()
+        quadrant_results[quadrant_name] = {
+            "figure": quadrant_fig,
+            "plot_df": quadrant_plot_df,
+            "pdf_path": quadrant_pdf_path,
+            "pdf_error": quadrant_pdf_error,
+            "html_path": quadrant_html_path,
+        }
+
+    return {
+        "figure": fig,
+        "plot_df": scatter_df,
+        "pdf_path": saved_pdf_path,
+        "pdf_error": pdf_error,
+        "html_path": saved_html_path,
+        "quadrants": quadrant_results,
+    }
 
 
 def plot_latest_si_vs_future_si(
@@ -480,6 +771,7 @@ def plot_latest_si_vs_future_si(
     display_name: bool = False,
     max_text_labels: int | None = None,
     always_label_glass: bool = True,
+    show_label_background: bool = False,
     title: str = "Latest available SI vs predicted future SI",
     width: int = 1400,
     height: int = 900,
@@ -524,6 +816,7 @@ def plot_latest_si_vs_future_si(
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
+        show_label_background=show_label_background,
         width=width,
         height=height,
         add_zero_lines=True,

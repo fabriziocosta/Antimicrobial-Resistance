@@ -27,6 +27,7 @@ __all__ = [
     "build_si_driver_analysis",
     "load_or_build_interactive_rank",
     "load_si_and_clean_glass_list",
+    "plot_single_pair_si",
     "load_yearly_si_inputs",
     "plot_future_si_vs_si_shift",
     "plot_latest_si_vs_future_si",
@@ -117,6 +118,7 @@ _GLASS_SI_EXPORTS = {
     "plot_future_si_vs_si_shift",
     "plot_latest_si_vs_future_si",
 }
+_SINGLE_PAIR_SI_EXPORTS = {"plot_single_pair_si"}
 
 
 def __getattr__(name: str):
@@ -140,4 +142,7 @@ def __getattr__(name: str):
     if name in _GLASS_SI_EXPORTS:
         glass_si = import_module(".glass_si", __name__)
         return getattr(glass_si, name)
+    if name in _SINGLE_PAIR_SI_EXPORTS:
+        single_pair_si = import_module(".single_pair_si", __name__)
+        return getattr(single_pair_si, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
