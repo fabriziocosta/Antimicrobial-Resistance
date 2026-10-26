@@ -243,6 +243,82 @@ def _add_plot_labels(
     return plot_df
 
 
+def _suppress_occluded_plot_labels(
+    plot_df: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    width: int,
+    height: int,
+    x_axis_range: tuple[float, float] | None,
+    y_axis_range: tuple[float, float] | None,
+) -> pd.DataFrame:
+    """Keep labels whose estimated screen boxes clear other labels and markers."""
+    plot_df = plot_df.copy()
+    x_values = pd.to_numeric(plot_df[x_col], errors="coerce")
+    y_values = pd.to_numeric(plot_df[y_col], errors="coerce")
+    if x_axis_range is None:
+        valid_x = x_values.dropna()
+        x_min = float(valid_x.min()) if not valid_x.empty else 0.0
+        x_max = float(valid_x.max()) if not valid_x.empty else 1.0
+        x_pad = max(x_max - x_min, 1e-9) * 0.05
+        x_axis_range = (x_min - x_pad, x_max + x_pad)
+    if y_axis_range is None:
+        valid_y = y_values.dropna()
+        y_min = float(valid_y.min()) if not valid_y.empty else 0.0
+        y_max = float(valid_y.max()) if not valid_y.empty else 1.0
+        y_pad = max(y_max - y_min, 1e-9) * 0.05
+        y_axis_range = (y_min - y_pad, y_max + y_pad)
+
+    plot_width_px = max(int(width) - 250, 1)
+    plot_height_px = max(int(height) - 170, 1)
+    x_per_pixel = (x_axis_range[1] - x_axis_range[0]) / plot_width_px
+    y_per_pixel = (y_axis_range[1] - y_axis_range[0]) / plot_height_px
+    # The same approximate right-of-marker placement is used by both Plotly
+    # text and the optional white label boxes below.
+    marker_gap_px = 8
+    point_x_px = (x_values - x_axis_range[0]) / x_per_pixel
+    point_y_px = (y_values - y_axis_range[0]) / y_per_pixel
+
+    candidate_mask = plot_df["display_label"].astype(str).str.len().gt(0)
+    candidates = plot_df.loc[candidate_mask].copy()
+    if candidates.empty:
+        return plot_df
+    # Prefer GLASS pairs, then the same high-shift/high-count candidates used
+    # when selecting a capped set of labels.
+    candidates = candidates.assign(
+        _label_priority_glass=candidates["is_glass_pair"].fillna(False).astype(bool),
+    ).sort_values(
+        ["_label_priority_glass", "future_minus_latest_smoothed_SI", "latest_available_count"],
+        ascending=[False, False, False],
+        kind="stable",
+    )
+
+    accepted_boxes: list[tuple[float, float, float, float]] = []
+    accepted_indices = []
+    for row_index, row in candidates.iterrows():
+        label = str(row["display_label"])
+        lines = label.split("<br>")
+        label_width = max(max((len(line) for line in lines), default=1) * 4.7 + 10, 18)
+        label_height = max(len(lines) * 10.5 + 6, 16)
+        left = float(point_x_px.loc[row_index]) + marker_gap_px
+        right = left + label_width
+        center_y = float(point_y_px.loc[row_index])
+        top = center_y - label_height / 2
+        bottom = center_y + label_height / 2
+        outside_plot = left < 0 or right > plot_width_px or top < 0 or bottom > plot_height_px
+        overlaps_label = any(
+            left < other_right and right > other_left and top < other_bottom and bottom > other_top
+            for other_left, other_right, other_top, other_bottom in accepted_boxes
+        )
+        if not outside_plot and not overlaps_label:
+            accepted_indices.append(row_index)
+            accepted_boxes.append((left, right, top, bottom))
+
+    plot_df.loc[~plot_df.index.isin(accepted_indices), "display_label"] = ""
+    return plot_df
+
+
 def _write_plotly_outputs(
     fig: Any,
     *,
@@ -304,6 +380,7 @@ def _build_glass_si_scatter(
     display_name: bool,
     max_text_labels: int | None,
     always_label_glass: bool,
+    avoid_label_occlusion: bool,
     show_label_background: bool,
     width: int,
     height: int,
@@ -327,6 +404,16 @@ def _build_glass_si_scatter(
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
     )
+    if display_name and avoid_label_occlusion:
+        scatter_df = _suppress_occluded_plot_labels(
+            scatter_df,
+            x_col=x_col,
+            y_col=y_col,
+            width=width,
+            height=height,
+            x_axis_range=x_axis_range,
+            y_axis_range=y_axis_range,
+        )
     show_text = display_name and scatter_df["display_label"].astype(str).str.len().gt(0).any()
 
     marker_trace = go.Scatter(
@@ -485,12 +572,13 @@ def plot_future_si_vs_si_shift(
     *,
     min_count_abs_pct_error_mean: float = 0.0,
     max_count_abs_pct_error_mean: float = 10.0,
-    predicted_future_si_threshold: float = 0.5,
-    predicted_future_delta_si_threshold: float = 0.1,
+    predicted_future_si_threshold: float = 0.0,
+    predicted_future_delta_si_threshold: float = 0.0,
     show_mean_count_pct_error: bool = False,
     display_name: bool = False,
     max_text_labels: int | None = None,
     always_label_glass: bool = True,
+    avoid_label_occlusion: bool = True,
     show_label_background: bool = False,
     title: str = "Predicted future SI vs predicted SI shift",
     width: int = 1400,
@@ -563,6 +651,7 @@ def plot_future_si_vs_si_shift(
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
+        avoid_label_occlusion=avoid_label_occlusion,
         show_label_background=show_label_background,
         width=width,
         height=height,
@@ -707,6 +796,7 @@ def plot_future_si_vs_si_shift(
             display_name=display_name,
             max_text_labels=max_text_labels,
             always_label_glass=always_label_glass,
+            avoid_label_occlusion=avoid_label_occlusion,
             show_label_background=show_label_background,
             width=width,
             height=height,
@@ -771,6 +861,7 @@ def plot_latest_si_vs_future_si(
     display_name: bool = False,
     max_text_labels: int | None = None,
     always_label_glass: bool = True,
+    avoid_label_occlusion: bool = True,
     show_label_background: bool = False,
     title: str = "Latest available SI vs predicted future SI",
     width: int = 1400,
@@ -816,6 +907,7 @@ def plot_latest_si_vs_future_si(
         display_name=display_name,
         max_text_labels=max_text_labels,
         always_label_glass=always_label_glass,
+        avoid_label_occlusion=avoid_label_occlusion,
         show_label_background=show_label_background,
         width=width,
         height=height,

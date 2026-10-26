@@ -146,7 +146,7 @@ glass_interactive:
   num_future_years: 3
   min_amr_pair_publication_count: 1.0
   min_num_years_with_valid_counts: 8
-  min_plot_si: 0.0
+  min_plot_si: -100.0
   min_last_available_count: 7
   min_total_publications: 100
   min_count_abs_pct_error_mean: 0
@@ -154,8 +154,8 @@ glass_interactive:
   min_counts_background: 10
   min_abs_delta_si: 0.005
   min_si_delta: null
-  predicted_future_si_threshold: 0.5
-  predicted_future_delta_si_threshold: 0.1
+  predicted_future_si_threshold: 0.0
+  predicted_future_delta_si_threshold: 0.0
   show_mean_count_pct_error: false
   show_label_background: true
   display_name: true
