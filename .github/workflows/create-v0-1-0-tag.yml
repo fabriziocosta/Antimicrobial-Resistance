@@ -29,5 +29,7 @@ jobs:
             echo "Tag v0.1.0 already exists."
             exit 1
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a v0.1.0 "$RELEASE_COMMIT" -m "AMR SI Explorer v0.1.0"
           git push origin refs/tags/v0.1.0
