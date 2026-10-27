@@ -1,0 +1,48 @@
+name: Deploy AMR SI Explorer to GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy-amr-si-explorer.yml
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download the current AMR SI Explorer
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          base_url="https://amr-si-explorer.sassycat1024.chatgpt.site"
+          for file in index.html pairs.json pair_timeseries.json pair_pmids_by_year.json; do
+            curl --fail --silent --show-error --location "$base_url/$file" --output "site/$file"
+          done
+          test -s site/index.html
+          jq empty site/pairs.json site/pair_timeseries.json site/pair_pmids_by_year.json
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
