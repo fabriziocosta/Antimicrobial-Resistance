@@ -38,7 +38,7 @@ Detailed project documents live in `docs/`:
 
 ## AMR SI Explorer
 
-A GitHub Pages deployment workflow for the interactive AMR SI Explorer is available at
+The live [AMR SI Explorer](https://fabriziocosta.github.io/Antimicrobial-Resistance/) is published on GitHub Pages. Its deployment workflow is available at
 `.github/workflows/deploy-amr-si-explorer.yml`. It packages the current public Site
 assets, including the PMID title toggle.
 
