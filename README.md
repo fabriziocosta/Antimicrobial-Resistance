@@ -1,5 +1,9 @@
 # Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
 
+[![DOI](https://zenodo.org/badge/1220110463.svg)](https://doi.org/10.5281/zenodo.23689422)
+
+Version v0.1.0 DOI: [10.5281/zenodo.23689423](https://doi.org/10.5281/zenodo.23689423).
+
 This project uses a module-first workflow with nineteen active
 notebooks:
 
