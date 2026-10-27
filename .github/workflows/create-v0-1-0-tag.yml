@@ -1,0 +1,33 @@
+name: Create v0.1.0 tag
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/create-v0-1-0-tag.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_COMMIT: 6081710485f148f2067d7a2e096bb9d9532d5e8a
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_COMMIT }}
+          fetch-depth: 0
+
+      - name: Create and push the annotated tag
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin refs/tags/v0.1.0 >/dev/null 2>&1; then
+            echo "Tag v0.1.0 already exists."
+            exit 1
+          fi
+          git tag -a v0.1.0 "$RELEASE_COMMIT" -m "AMR SI Explorer v0.1.0"
+          git push origin refs/tags/v0.1.0
