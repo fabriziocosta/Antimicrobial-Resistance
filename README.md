@@ -36,6 +36,19 @@ Detailed project documents live in `docs/`:
 - [Scientific-interest concept discovery research plan](docs/si_concept_discovery_plan.md)
 - [Collaborator communications log](collaborator_communications/communications.md)
 
+## AMR SI Explorer
+
+A GitHub Pages deployment workflow for the interactive AMR SI Explorer is available at
+`.github/workflows/deploy-amr-si-explorer.yml`. It packages the current public Site
+assets, including the PMID title toggle.
+
+Before the first deployment, open the repository's
+[Pages settings](https://github.com/fabriziocosta/Antimicrobial-Resistance/settings/pages)
+and set **Build and deployment → Source** to **GitHub Actions**. Then run
+**Deploy AMR SI Explorer to GitHub Pages** from the Actions tab (or rerun the first
+attempt). You can run it again after the hosted Site assets change to refresh the
+GitHub Pages copy.
+
 ## Repository Layout
 
 - `assets/`: static lookup inputs used by the notebooks and PubMed query builders.
