@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Pathogen Atlas — Antimicrobial Resistance"
+type: software
+version: 0.1.0
+date-released: 2026-10-27
+repository-code: "https://github.com/fabriziocosta/Antimicrobial-Resistance"
+abstract: >-
+  PubMed collection, LLM-assisted filtering, and scientific-interest modeling
+  for antimicrobial resistance analysis.
+keywords:
+  - antimicrobial resistance
+  - PubMed
+  - scientific interest
+authors:
+  - given-names: Fabrizio
+    family-names: Costa
