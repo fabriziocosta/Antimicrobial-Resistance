@@ -42,16 +42,9 @@ Detailed project documents live in `docs/`:
 
 ## AMR SI Explorer
 
-The live [AMR SI Explorer](https://fabriziocosta.github.io/Antimicrobial-Resistance/) is published on GitHub Pages. Its deployment workflow is available at
-`.github/workflows/deploy-amr-si-explorer.yml`. It packages the current public Site
-assets, including the PMID title toggle.
+The live [AMR SI Explorer](https://fabriziocosta.github.io/Antimicrobial-Resistance/) is published on GitHub Pages from the committed files in `sites/amr-si-explorer/dist/`. The deployment workflow, `.github/workflows/deploy-amr-si-explorer.yml`, deploys automatically when the explorer files change on `main`; it can also be run manually from the Actions tab. PMID confidence, date and sorting controls, paper-title loading, pathogen links, and antibiotic Wikipedia links are served from this repository.
 
-Before the first deployment, open the repository's
-[Pages settings](https://github.com/fabriziocosta/Antimicrobial-Resistance/settings/pages)
-and set **Build and deployment → Source** to **GitHub Actions**. Then run
-**Deploy AMR SI Explorer to GitHub Pages** from the Actions tab (or rerun the first
-attempt). You can run it again after the hosted Site assets change to refresh the
-GitHub Pages copy.
+Run `notebooks/11_wikipedia_antibiotic_references.ipynb` to refresh the antibiotic-to-Wikipedia table and browser payload before publishing changes to the explorer.
 
 ## Repository Layout
 
