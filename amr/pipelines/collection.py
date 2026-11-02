@@ -24,6 +24,7 @@ from amr.pubmed.grouped import fetch_pmids_intervals_grouped
 from ..pubmed.yearly import (
     aggregate_pair_counts_by_year,
     attach_pubmed_metadata,
+    exclude_composite_antibiotic_pmids,
     explode_positive_pair_pmids,
     refresh_pubmed_metadata_cache,
 )
@@ -639,6 +640,7 @@ def collect_yearly_amr_dataset(
         new_pair_pmid_df["collection_run_min_date"] = min_date
         new_pair_pmid_df["collection_run_max_date"] = max_date
     pair_pmid_df = _merge_pair_pmid_frames(existing_to_keep, new_pair_pmid_df)
+    pair_pmid_df = exclude_composite_antibiotic_pmids(pair_pmid_df)
     pair_pmid_df = pair_pmid_df.sort_values(
         ["pathogen", "antibiotic", "start_date", "end_date", "pmid"], kind="stable"
     ).reset_index(drop=True)
@@ -712,6 +714,29 @@ def collect_yearly_amr_dataset(
         else:
             existing_yearly_df = pd.DataFrame(columns=["pathogen", "antibiotic", "year", "count", "pmids"])
         yearly_df = _merge_yearly_counts_incremental(existing_yearly_df, yearly_delta_df)
+
+    # Rebuild counts from the canonical pair-PMID table so removing a PMID from
+    # a single-drug pair also corrects historical yearly aggregates. The cache
+    # returned by refresh_pubmed_metadata_cache includes existing metadata.
+    provenance_cols = [
+        column
+        for column in ("collection_run_min_date", "collection_run_max_date")
+        if column in yearly_df.columns
+    ]
+    provenance = None
+    if provenance_cols and not yearly_df.empty:
+        provenance = (
+            yearly_df.groupby(["pathogen", "antibiotic", "year"], as_index=False)
+            .agg({column: lambda values: ";".join(sorted({str(v) for v in values if pd.notna(v)})) for column in provenance_cols})
+        )
+    enriched_df = attach_pubmed_metadata(pair_pmid_df, metadata_df) if not pair_pmid_df.empty else pd.DataFrame(
+        columns=["pathogen", "antibiotic", "start_date", "end_date", "pmid", "pub_date", "pub_year", "venue"]
+    )
+    yearly_df = aggregate_pair_counts_by_year(enriched_df) if not enriched_df.empty else pd.DataFrame(
+        columns=["pathogen", "antibiotic", "year", "count", "pmids"]
+    )
+    if provenance is not None and not yearly_df.empty:
+        yearly_df = yearly_df.merge(provenance, on=["pathogen", "antibiotic", "year"], how="left")
     yearly_df = yearly_df.sort_values(["pathogen", "antibiotic", "year"], kind="stable").reset_index(drop=True)
     if not enriched_df.empty:
         enriched_df = enriched_df.sort_values(

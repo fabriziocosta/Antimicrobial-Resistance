@@ -32,6 +32,39 @@ def explode_positive_pair_pmids(positive_df: pd.DataFrame) -> pd.DataFrame:
     return clean_pair_pmid_df(pair_pmid_df)
 
 
+def exclude_composite_antibiotic_pmids(pair_pmid_df: pd.DataFrame) -> pd.DataFrame:
+    """Keep combo-treatment PMIDs out of rows for the combo's individual drugs.
+
+    Antibiotic combinations in the lookup use ``/`` between their components
+    (for example, ``Amoxicillin/clavulanic-acid``). A PMID matched to that
+    combination for a pathogen should not also inflate a component's single
+    antibiotic count for the same pathogen.
+    """
+    work = clean_pair_pmid_df(pair_pmid_df)
+    if work.empty:
+        return work
+
+    def key(value: object) -> str:
+        return "".join(character for character in str(value).casefold() if character.isalnum())
+
+    composite_pairs = work.loc[work["antibiotic"].astype(str).str.contains("/", regex=False)]
+    if composite_pairs.empty:
+        return work
+
+    combo_keys = set()
+    for row in composite_pairs.itertuples(index=False):
+        pathogen_key = key(row.pathogen)
+        components = {key(part) for part in str(row.antibiotic).split("/")}
+        components.discard("")
+        combo_keys.update((pathogen_key, component, str(row.pmid)) for component in components)
+
+    keep = [
+        (key(row.pathogen), key(row.antibiotic), str(row.pmid)) not in combo_keys
+        for row in work.itertuples(index=False)
+    ]
+    return work.loc[keep].reset_index(drop=True)
+
+
 def load_pubmed_metadata_cache(cache_path: str | Path) -> pd.DataFrame:
     """Load a PMID metadata cache from parquet or return an empty frame."""
     cache_path = Path(cache_path)
@@ -233,6 +266,7 @@ def summarize_metadata_coverage(enriched_df: pd.DataFrame) -> pd.DataFrame:
 
 __all__ = [
     "explode_positive_pair_pmids",
+    "exclude_composite_antibiotic_pmids",
     "load_pubmed_metadata_cache",
     "metadata_dataframe_to_dict",
     "metadata_dict_to_dataframe",
