@@ -33,10 +33,6 @@ Use the checked-in outputs first; do not rerun expensive forecasting or PubMed c
 | `sites/amr-si-explorer/dist/pairs.json` | Existing static web data bundle and its field shape. |
 | `sites/amr-si-explorer/dist/pair_timeseries.json` | Precomputed yearly observed SI, forecast and uncertainty, plus annual publication-count tables for every plotted pair. |
 | `sites/amr-si-explorer/scripts/build_pair_timeseries.py` | Regenerates the static single-pair plotting tables from the yearly SI dataset and current pipeline configuration. |
-| `sites/amr-si-explorer/.openai/hosting.json` | Existing Sites project ID and static output configuration. Preserve these values when updating this Site. |
-
-The project has an existing public Sites deployment. When rebuilding within this repository, retain its current Site identity and audience. Do not create a second Site unless explicitly asked.
-
 ## Data preparation
 
 Create a static JSON file at `sites/amr-si-explorer/dist/pairs.json` so the page can load quickly without a backend. Use the CSV inputs above as the reproducible current source. The JSON top level should be:
