@@ -6,7 +6,7 @@ The concept search asks whether themes reported in antimicrobial-resistance (AMR
 
 ## Approach
 
-The workflow in notebooks [10a–10f](../notebooks/) starts from the screened pair-year literature and the existing scientific-interest series. It classifies each unique abstract against operationally defined concepts, then averages article scores into yearly concept-prevalence signals for each pair. Nine broad concepts seed the search.
+The workflow in notebooks [10a–10f](../../notebooks/specialized/) starts from the screened pair-year literature and the existing scientific-interest series. It classifies each unique abstract against operationally defined concepts, then averages article scores into yearly concept-prevalence signals for each pair. Nine broad concepts seed the search.
 
 Pairs are assigned deterministically to development (80%) or confirmation (20%). Concept proposals and model selection use development data only. A rolling-origin forecast compares a scientific-interest-only baseline with models that add lagged concept signals. It predicts one, two, and three years ahead using three annual lags. Concepts are assessed both for average forecast improvement across pairs and for a robust upper-tail improvement, so a concept can be useful for a subset of pairs without being useful everywhere.
 

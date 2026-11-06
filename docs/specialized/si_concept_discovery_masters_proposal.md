@@ -82,5 +82,5 @@ The project should produce a reviewed concept catalog, an auditable account of h
 ## Project references
 
 - SI implementation: `amr/si/core.py` and notebook `notebooks/05_model_scientific_interest.ipynb`.
-- Concept-discovery workflow: `docs/si_concept_discovery.md` and research rationale in `docs/si_concept_discovery_plan.md`.
-- Notebooks: `notebooks/10a_prepare_si_concept_corpus.ipynb` through `notebooks/10f_automated_concept_refinement.ipynb`.
+- Concept-discovery workflow: `docs/specialized/si_concept_discovery.md` and research rationale in `docs/specialized/si_concept_discovery_plan.md`.
+- Notebooks: `notebooks/specialized/10a_prepare_si_concept_corpus.ipynb` through `notebooks/specialized/10f_automated_concept_refinement.ipynb`.

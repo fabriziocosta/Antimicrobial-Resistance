@@ -4,7 +4,7 @@ This document is a self-contained build brief for recreating the interactive AMR
 
 ## Goal
 
-Build a responsive, shareable web page that lets collaborators explore the predicted future scientific-interest score and SI change for bacteria–antibiotic pairs. Users should be able to find a pair, inspect its model and validation fields, compare it to the quadrant thresholds, and open the PubMed records from 2025 for that pair.
+Build a responsive, shareable web page that lets collaborators explore the predicted future scientific-interest score and SI change for bacteria–antibiotic pairs. Users should be able to find a pair, inspect its model and validation fields, compare it to the quadrant thresholds, and open the PubMed records for a selected year for that pair (defaulting to 2025).
 
 The main chart is a scatter plot:
 
@@ -15,7 +15,7 @@ The main chart is a scatter plot:
 - Keep drawing every circle regardless of whether its name can be placed without collision.
 - Draw a name only when it fits without overlapping other names, points, or chart boundaries. When a label cannot be placed legibly, suppress the label and retain the circle.
 - Hovering a circle shows all available pair information. Clicking a circle selects the pair, updates a compact summary, and loads that pair's 2025 PMID list below the chart.
-- The selected-pair summary is followed by a collapsible `plot_single_pair_si`-style yearly plot, then the collapsible 2025 PMID list. Keep this order: pair info → yearly plot → PMIDs.
+- The selected-pair summary is followed by a collapsible `plot_single_pair_si`-style yearly plot, then the collapsible PMID list. Clicking a year in the yearly plot selects that calendar year, updates the PMID count and list, opens the PMID section, and scrolls it into view. Keep this order: pair info → yearly plot → PMIDs.
 - Precompute the yearly plot inputs for every scatter pair and store them as static Site data so the browser does not need to fit LOESS models or access the analysis repository.
 
 ## Repository inputs
@@ -26,12 +26,14 @@ Use the checked-in outputs first; do not rerun expensive forecasting or PubMed c
 | --- | --- |
 | `outputs/figures/future_si_vs_current_si_quadrant.csv` | Current plotted pair records. Despite the filename, the interactive explorer's axes are future predicted SI and future-minus-latest-smoothed SI. It currently contains 324 rows and 69 columns. |
 | `outputs/figures/plotted_pair_pmids_2025.csv` | Pair-to-PMID mapping for the plot, with `bacteria`, `antibiotic`, `year`, and `PMID` columns. The current artifact has 14,479 rows, all for year 2025. |
-| `outputs/parquets/yearly_amr_screened_pairs.parquet` | Yearly screened-pair publication data; useful for regenerating the PMID mapping if the CSV is absent. |
+| `outputs/parquets/yearly_amr_screened_pairs.parquet` | Exact annual pair-to-PMID mapping used to build the site’s year-selectable PMID data. Its 2025 lists match the existing site lists. |
 | `notebooks/06_glass_interactive_si_shift.ipynb` | Notebook context for creating `latest_count_shift_df`, the interactive plot, the plotted-pair PMID list, and the Excel PMID output. |
 | `amr/pipelines/glass_si.py` | Python plotting implementation and expected SI field semantics. |
 | `sites/amr-si-explorer/dist/index.html` | Existing UI and Plotly interaction reference. |
 | `sites/amr-si-explorer/dist/pairs.json` | Existing static web data bundle and its field shape. |
 | `sites/amr-si-explorer/dist/pair_timeseries.json` | Precomputed yearly observed SI, forecast and uncertainty, plus annual publication-count tables for every plotted pair. |
+| `sites/amr-si-explorer/dist/pair_pmids_by_year.json` | Static PMID arrays for each plotted pair and calendar year. |
+| `sites/amr-si-explorer/scripts/build_pair_pmids_by_year.py` | Builds the year-indexed PMID JSON from `yearly_amr_screened_pairs.parquet` and verifies existing 2025 mappings. |
 | `sites/amr-si-explorer/scripts/build_pair_timeseries.py` | Regenerates the static single-pair plotting tables from the yearly SI dataset and current pipeline configuration. |
 ## Data preparation
 
@@ -59,7 +61,7 @@ The example's PMIDs are illustrative only; load all matching IDs from the curren
 - De-duplicate PMIDs per pair while preserving a stable order (numeric ascending is acceptable).
 - Include `pmids_2025: []` for a pair with no matching PMID records. Do not use null for this field.
 
-The current expected data size is 324 pairs and 14,479 pair-PMID links. Use this as a sanity check, not as a hard-coded limit. The published data is current through latest available year 2025, with forecast year 2028.
+The current expected data size is 324 pairs and 14,479 pair-PMID links. Use this as a sanity check, not as a hard-coded limit. The site currently has yearly PMID data from 2000 through 2026; future forecast years without collected PMID data show an explicit availability message.
 
 ## Page structure
 
@@ -67,11 +69,11 @@ Use a single-page, buildless HTML/CSS/JavaScript implementation unless the deplo
 
 Recommended page layout:
 
-1. Header with the title **Predicted future SI vs SI shift**, a short explanation, and a badge showing the latest available year and forecast year.
+1. Header with the title **AMR Scientific Interest**, a short explanation, and a badge showing the latest available year and forecast year.
 2. Small summary metrics: visible pair count, visible GLASS-match count, and forecast year.
 3. Main workspace with a filter panel and a large chart.
 4. Selected-pair detail card under the chart.
-5. A collapsible 2025 PMID section at the bottom of the page, below the chart and selected-pair summary.
+5. A collapsible year-specific PMID section at the bottom, after the yearly SI plot. Pair selection defaults to 2025; clicking a year in the yearly plot updates and opens this section.
 
 The page should work at desktop, tablet, and mobile widths. On narrow screens, stack the filter panel above the plot; keep labels and filter controls usable, and allow the plot to scroll/zoom using Plotly.
 
@@ -180,17 +182,17 @@ Clicking a marker selects the pair. Clicking a different marker changes the sele
 
 Hover should remain available while selection is active. Keep a helpful empty state before the user chooses a point.
 
-## Collapsible 2025 PMID panel
+## Collapsible year-specific PMID panel
 
 Add a native, accessible collapsible section (`<details><summary>…</summary>…</details>` is suitable) at the bottom, after the chart and pair details.
 
 - Initial state: closed.
-- Empty state before a point is selected: explain that selecting a plotted pair loads the 2025 PubMed IDs.
-- On selection, update the summary to include the selected bacterium and antibiotic, and show a count of its 2025 PMIDs.
+- Empty state before a point is selected: explain that selecting a plotted pair loads its 2025 PubMed IDs by default, and clicking a year in the single-pair yearly plot selects that year.
+- On pair selection, default to 2025 and update the summary to include the selected bacterium, antibiotic, year, and PMID count. When a calendar year is clicked in the yearly plot, update the summary and PMID list to that year, open the PMID panel, and scroll it into view.
 - Render the IDs as a compact responsive grid with as many columns as can fit in the available width. A CSS grid using `repeat(auto-fill, minmax(76px–90px, 1fr))` is suitable. Keep each cell compact, readable, and keyboard-focusable.
 - Each PMID is a link to `https://pubmed.ncbi.nlm.nih.gov/{PMID}/`, with `target="_blank"` and `rel="noopener noreferrer"` so it opens the PubMed entry in a new tab safely.
 - Use a bounded height with internal scrolling for very large lists; do not truncate or omit IDs from the data.
-- If a selected pair has zero PMIDs, display a clear “No 2025 PMIDs are available for this pair” message.
+- If a selected pair has zero PMIDs in an available year, display a clear no-records message for that pair and year. For years beyond the bundled data coverage, state the latest year for which PMID data is available.
 - Updating the selected point must replace the old pair's PMIDs immediately; never leave stale links from the previous selection.
 
 ## Accessibility, responsiveness, and safety
@@ -205,12 +207,12 @@ Add a native, accessible collapsible section (`<details><summary>…</summary>�
 ## Implementation outline
 
 1. Read this file, the two CSV inputs, and the existing `sites/amr-si-explorer/dist/index.html` before changing the project.
-2. Prepare or regenerate `dist/pairs.json` from the current plot CSV plus 2025 PMID CSV. Keep the 69 source plot columns and add `pmids_2025`.
+2. Prepare or regenerate `dist/pairs.json` from the current plot CSV plus 2025 PMID CSV. Keep the 69 source plot columns and add `pmids_2025` for the initial/default display. Run `python sites/amr-si-explorer/scripts/build_pair_pmids_by_year.py` to create `dist/pair_pmids_by_year.json` from `yearly_amr_screened_pairs.parquet`; verify its 2025 arrays match the existing `pmids_2025` arrays.
 3. Build the responsive page with semantic HTML, CSS, and JavaScript. Plotly.js can be loaded from its official CDN if network access is acceptable; otherwise vendor/pin it as a local static asset.
 4. Render the filtered points as one marker trace, with text labels handled independently so label filtering never filters markers.
 5. Re-render after filter and threshold changes; attach click selection to marker points and update the detail card and PMID panel.
 6. Generate `dist/pair_timeseries.json` by running `python sites/amr-si-explorer/scripts/build_pair_timeseries.py` from the repository root. It stores, for every scatter pair, annual observed SI and count rows, precomputed predicted SI and ±1 SD bounds, predicted publication counts, and the pair/pathogen/antibiotic publication-count series. Use `amr.si.core.fit_predict_yearly_si_loess`, the model called by `plot_single_pair_si`; do not fit a model in the browser.
-7. Add a collapsible yearly chart immediately after the pair detail card and before the PMID section. When the user selects a point, bind its matching precomputed record; render the chart when expanded. Use a year X axis, SI left Y axis, logarithmic publication-count right Y axis, observed SI markers/line, predicted SI line and uncertainty ribbon, three annual publication-count bar series, predicted pair-count curve, zero SI reference, and vertical fit-end marker. If no pair is selected, show an instruction. If a pair's time series is absent, show an explicit unavailable state.
+7. Add a collapsible yearly chart immediately after the pair detail card and before the PMID section. When the user selects a point, bind its matching precomputed record; render the chart when expanded. On a plot click with a calendar year, load that selected pair-year’s IDs from `pair_pmids_by_year.json`, update the PMID header/count and list, open the PMID section, and scroll it into view. Keep 2025 as the default PMID year when selecting a new pair. Use a year X axis, SI left Y axis, logarithmic publication-count right Y axis, observed SI markers/line, predicted SI line and uncertainty ribbon, three annual publication-count bar series, predicted pair-count curve, zero SI reference, and vertical fit-end marker. If no pair is selected, show an instruction. If a pair's time series is absent, show an explicit unavailable state.
 8. Verify field mappings, threshold positions, no-label/no-circle regressions, filter behavior, PMID links, selected-pair chart data, collapse/expand behavior, and mobile layout.
 9. Preserve the existing hosting manifest and public audience. For a hosted edit, use the repository's Sites source helper, push the exact finished source state, save a version from that commit and static `dist` output, then deploy the saved version. Never deploy an unsaved working tree.
 
@@ -229,7 +231,7 @@ Add a native, accessible collapsible section (`<details><summary>…</summary>�
 - [ ] Every plotted pair has precomputed observed, predicted, uncertainty, and annual count data in the static Site assets.
 - [ ] The yearly chart includes observed SI, predicted SI with ±1 SD, yearly pair/pathogen/antibiotic counts, predicted pair counts, a zero reference, and the fit-end marker.
 - [ ] The yearly chart remains collapsed until opened and resizes correctly when expanded.
-- [ ] The bottom PMID section is collapsible, responsive, and updates to exactly the selected pair's 2025 records.
+- [ ] The bottom PMID section is collapsible, responsive, defaults to 2025 on pair selection, and updates to the clicked year when a year is selected in the yearly plot.
 - [ ] The PMID grid uses available page width effectively; each link opens the matching PubMed record in a new tab.
 - [ ] A pair with no PMIDs receives an explicit empty-state message.
 - [ ] Reset restores the default zero thresholds and unfiltered plot.

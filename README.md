@@ -20,12 +20,13 @@ notebooks:
 10. `notebooks/06_glass_interactive_si_shift.ipynb`
 11. `notebooks/07_glass_dedicated_pair_plots.ipynb`
 12. `notebooks/08_inspect_pair_pmids.ipynb`
-13. `notebooks/10a_prepare_si_concept_corpus.ipynb`
-14. `notebooks/10b_seed_and_refine_concepts.ipynb`
-15. `notebooks/10c_classify_abstract_concepts.ipynb`
-16. `notebooks/10d_evaluate_and_refine_concepts.ipynb`
-17. `notebooks/10f_automated_concept_refinement.ipynb`
-18. `notebooks/10e_confirm_si_concepts.ipynb`
+13. `notebooks/specialized/10a_prepare_si_concept_corpus.ipynb`
+14. `notebooks/specialized/10b_seed_and_refine_concepts.ipynb`
+15. `notebooks/specialized/10c_classify_abstract_concepts.ipynb`
+16. `notebooks/specialized/10d_evaluate_and_refine_concepts.ipynb`
+17. `notebooks/specialized/10f_automated_concept_refinement.ipynb`
+18. `notebooks/specialized/10e_confirm_si_concepts.ipynb`
+19. `notebooks/specialized/11_wikipedia_antibiotic_references.ipynb`
 
 All earlier exploratory notebooks are considered legacy and should remain archived.
 
@@ -36,8 +37,8 @@ Detailed project documents live in `docs/`:
 - [Data collection and filtering process](docs/data_collection_and_filtering.md)
 - [Scientific interest modeling notes](docs/scientific_interest.md)
 - [SI driver classification analysis](docs/si_driver_classification_analysis.md)
-- [Scientific-interest concept discovery](docs/si_concept_discovery.md)
-- [Scientific-interest concept discovery research plan](docs/si_concept_discovery_plan.md)
+- [Scientific-interest concept discovery](docs/specialized/si_concept_discovery.md)
+- [Scientific-interest concept discovery research plan](docs/specialized/si_concept_discovery_plan.md)
 - [Collaborator communications log](collaborator_communications/communications.md)
 
 ## AMR SI Explorer
@@ -138,7 +139,7 @@ Explains the paper-category mix behind ranked pairs using LLM classification met
 
 Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The suite builds a deterministic pair-level development/confirmation split, manages a versioned concept catalog, classifies each unique abstract, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. Notebook 10f is stand-alone: it prepares the corpus and pair split itself, and exposes corpus, model, forecast, refinement, and final attribution settings in its setup cell. Its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` settings control the Pareto-guided development search; `ATTRIBUTION_NUM_PAIRS` (default 3) selects the highest-SI development pairs for the final exploratory concept ranking. The staged 10a–10e notebooks expose the same steps and shared helpers for inspection; 10f automates the corpus-to-development loop, while 10e remains the separate held-out confirmation step after freezing the catalog.
 
-Artifacts are saved under `outputs/concept_search/`. Notebook 10e also writes pair-level, assumption-dependent concept-attribution rankings; read them as exploratory estimates rather than identified causal effects. Notebook 10f's phylogeny uses readable short labels and saves a full node index beside the plot. See [docs/si_concept_discovery.md](docs/si_concept_discovery.md) for methods and interpretation limits.
+Artifacts are saved under `outputs/concept_search/`. Notebook 10e also writes pair-level, assumption-dependent concept-attribution rankings; read them as exploratory estimates rather than identified causal effects. Notebook 10f's phylogeny uses readable short labels and saves a full node index beside the plot. See [docs/specialized/si_concept_discovery.md](docs/specialized/si_concept_discovery.md) for methods and interpretation limits.
 
 ### Notebook 06: `notebooks/06_glass_interactive_si_shift.ipynb`
 
