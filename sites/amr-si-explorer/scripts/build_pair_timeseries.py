@@ -200,6 +200,7 @@ def main() -> None:
                 "antibiotic": antibiotic,
                 "fit_start_year": fit_start_year,
                 "fit_end_year": fit_end_year,
+                "fit_method": result["loess_fit"].get("fit_method"),
                 "latest_available_year": result["latest_available_year"],
                 "prediction_end_year": int(pred_df["year"].max()),
                 "forecast_years": pair_forecast_years,
