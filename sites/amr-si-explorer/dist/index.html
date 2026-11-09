@@ -26,7 +26,7 @@
   <main class="shell">
     <div class="topline"><div class="eyebrow">Antimicrobial resistance · Scientific interest</div><div class="badge" id="periodBadge">Loading data…</div></div>
     <h1>AMR Scientific Interest</h1>
-    <p class="intro">Explore each pathogen–antibiotic pair’s projected scientific-interest score and change from its latest smoothed SI. Search or filter the points, adjust either quadrant threshold, and hover or click a point for the full model and validation details.</p>
+    <p class="intro">Explore each pathogen–antibiotic pair’s projected scientific-interest score and annualized SI gradient from its latest smoothed SI. Search or filter the points, adjust either quadrant threshold, and hover or click a point for the full model and validation details.</p>
     <section class="workspace">
       <div class="sidebar">
       <aside class="panel">
@@ -41,10 +41,10 @@
             <h2>Quadrant thresholds</h2>
             <div class="threshold-grid">
               <div><label for="xThreshold">Predicted future SI</label><input id="xThreshold" type="number" step="0.01" value="0"></div>
-              <div><label for="yThreshold">SI shift</label><input id="yThreshold" type="number" step="0.01" value="0"></div>
+              <div><label for="yThreshold">SI Gradient (SI/year)</label><input id="yThreshold" type="number" step="0.01" value="0"></div>
             </div>
             <div class="buttons"><button class="button primary" id="applyThresholds" type="button">Apply thresholds</button><button class="button" id="reset" type="button">Reset filters</button></div>
-            <p class="hint">SI shift = future predicted SI − smoothed SI at the latest available year. The dashed lines and shaded regions follow the two threshold values.</p>
+            <p class="hint">SI Gradient = (future predicted SI − latest smoothed SI) ÷ (future year − latest available year). The dashed lines and shaded regions follow the two threshold values.</p>
           </div>
           <div class="buttons"><button class="button" id="download" type="button">Download filtered CSV</button></div>
         </form>
@@ -56,11 +56,11 @@
         </section>
       </div>
       <div class="main">
-        <section class="chart-card"><div class="chart-head"><h2>Each circle is one bacteria–antibiotic pair</h2><span>Hover for all fields · click for a focused summary</span></div><div id="chart" role="img" aria-label="Interactive scatter plot of predicted future scientific interest against its projected change"></div></section>
+        <section class="chart-card"><div class="chart-head"><h2>Each circle is one bacteria–antibiotic pair</h2><span>Hover for all fields · click for a focused summary</span></div><div id="chart" role="img" aria-label="Interactive scatter plot of predicted future scientific interest against its annualized SI gradient"></div></section>
         <section class="details" id="details" aria-live="polite"><div class="details-top"><div class="pair-name" id="detailTitle">Select a circle to inspect a pair</div><div class="detail-actions"><div id="glassPill" class="glass-pill hidden">GLASS match</div></div></div><div id="detailGrid" class="detail-grid"></div></section>
         <details class="ranking-panel" id="rankYPanel">
-          <summary><span>Rank pairs by SI shift (Y)</span><span class="ranking-hint" id="rankYHint">Hover for pair and value · click to select</span></summary>
-          <div class="ranking-inner"><div class="ranking-chart" id="rankYChart" role="img" aria-label="Pairs ranked from highest to lowest by SI shift"></div></div>
+          <summary><span>Rank pairs by SI Gradient (Y)</span><span class="ranking-hint" id="rankYHint">Hover for pair and value · click to select</span></summary>
+          <div class="ranking-inner"><div class="ranking-chart" id="rankYChart" role="img" aria-label="Pairs ranked from highest to lowest by SI Gradient"></div></div>
         </details>
         <details class="ranking-panel" id="rankXPanel">
           <summary><span>Rank pairs by predicted future SI (X)</span><span class="ranking-hint" id="rankXHint">Hover for pair and value · click to select</span></summary>
@@ -122,7 +122,7 @@
         ['Reference year',r.reference_year],['Latest available year',r.latest_available_year],['Raw latest available year',r.raw_latest_available_year],['Future year',r.future_year],['Forecast horizon (years)',r.num_future_years],['Current SI source',r.current_si_source],['Current count',fmtInt(r.current_count)],['Latest available count',fmtInt(r.latest_available_count)],['Latest count source',r.latest_count_source],['Latest predicted count',fmtInt(r.latest_available_predicted_count)],['Future predicted count',fmtInt(r.future_predicted_count)],['Count change',fmtInt(r.count_change)],[resistanceScreenActive?'Total resistance publications':'Total previous broad-screen publications',fmtInt(r.total_publications)],['Pair-years',fmtInt(r.n_pair_years)]
       ]],
       ['Scientific interest',[
-        ['Observed current SI',fmt(r.observed_current_SI)],['Current predicted SI',fmt(r.current_predicted_SI)],['Latest available observed SI',fmt(r.latest_available_SI)],['Latest available predicted SI',fmt(r.latest_available_predicted_SI)],['Latest smoothed SI',fmt(r.latest_smoothed_SI)],['Future predicted SI',fmt(r.future_predicted_SI)],['Future − latest observed SI',fmt(r.future_minus_latest_SI)],['Future − latest smoothed SI',fmt(r.future_minus_latest_smoothed_SI)],['Projected SI change',fmt(r.si_change)],['Current rank',fmtInt(r.current_rank)],['Future rank',fmtInt(r.future_rank)],['Rank change',fmtInt(r.rank_change)],['Absolute rank change',fmtInt(r.abs_rank_change)]
+        ['Observed current SI',fmt(r.observed_current_SI)],['Current predicted SI',fmt(r.current_predicted_SI)],['Latest available observed SI',fmt(r.latest_available_SI)],['Latest available predicted SI',fmt(r.latest_available_predicted_SI)],['Latest smoothed SI',fmt(r.latest_smoothed_SI)],['Future predicted SI',fmt(r.future_predicted_SI)],['SI Gradient (SI/year)',fmt(siGradient(r))],['Future − latest observed SI',fmt(r.future_minus_latest_SI)],['Future − latest smoothed SI',fmt(r.future_minus_latest_smoothed_SI)],['Projected SI change',fmt(r.si_change)],['Current rank',fmtInt(r.current_rank)],['Future rank',fmtInt(r.future_rank)],['Rank change',fmtInt(r.rank_change)],['Absolute rank change',fmtInt(r.abs_rank_change)]
       ]],
       ['Count validation',[
         ['Latest count error',fmtPct(r.latest_count_pct_error)],['Latest absolute count error',fmtPct(r.latest_count_abs_pct_error)],['Mean count error',fmtPct(r.post_fit_count_pct_error_mean)],['Mean absolute count error',fmtPct(r.post_fit_count_abs_pct_error_mean)],['Count-error years',fmtInt(r.n_count_error_years)],['Observed holdout years',fmtInt(r.n_post_fit_observed_years)],['Count error display',r.count_error_display]
@@ -142,16 +142,18 @@
     {type:'line',xref:'x',yref:'paper',x0:state.thresholdX,x1:state.thresholdX,y0:0,y1:1,line:{color:'#172b4d',width:2,dash:'dot'}},
     {type:'line',xref:'paper',yref:'y',x0:0,x1:1,y0:state.thresholdY,y1:state.thresholdY,line:{color:'#172b4d',width:2,dash:'dot'}}
   ];return s;}
+  function siGradient(r){const years=Number(r.future_year)-Number(r.latest_available_year);const change=Number(r.future_minus_latest_smoothed_SI);return Number.isFinite(years)&&years>0&&Number.isFinite(change)?change/years:NaN;}
   function bounds(rows,key,threshold){const vals=rows.map(r=>Number(r[key])).filter(Number.isFinite);let lo=Math.min(...vals,Number(threshold)),hi=Math.max(...vals,Number(threshold));if(lo===hi){lo-=.1;hi+=.1;}const pad=(hi-lo)*.055;return [lo-pad,hi+pad];}
-  function labels(rows){if(!el('showLabels').checked)return rows.map(()=> '');const selected=[...rows].sort((a,b)=>Number(b.is_glass_pair)-Number(a.is_glass_pair)||Number(b.future_minus_latest_smoothed_SI)-Number(a.future_minus_latest_smoothed_SI)).slice(0,10);const keys=new Set(selected.map(r=>`${r.pathogen}\0${r.antibiotic}`));return rows.map(r=>keys.has(`${r.pathogen}\0${r.antibiotic}`)?`${r.pathogen}<br>${r.antibiotic}`:'');}
+  function boundsValues(values,threshold){const vals=values.filter(Number.isFinite);let lo=Math.min(...vals,Number(threshold)),hi=Math.max(...vals,Number(threshold));if(lo===hi){lo-=.1;hi+=.1;}const pad=(hi-lo)*.055;return [lo-pad,hi+pad];}
+  function labels(rows){if(!el('showLabels').checked)return rows.map(()=> '');const selected=[...rows].sort((a,b)=>Number(b.is_glass_pair)-Number(a.is_glass_pair)||siGradient(b)-siGradient(a)).slice(0,10);const keys=new Set(selected.map(r=>`${r.pathogen}\0${r.antibiotic}`));return rows.map(r=>keys.has(`${r.pathogen}\0${r.antibiotic}`)?`${r.pathogen}<br>${r.antibiotic}`:'');}
   function renderRankingPlots(rows){
     const specs=[
-      {panel:'rankYPanel',chart:'rankYChart',hint:'rankYHint',key:'future_minus_latest_smoothed_SI',label:'SI shift'},
+      {panel:'rankYPanel',chart:'rankYChart',hint:'rankYHint',value:siGradient,label:'SI Gradient (SI/year)'},
       {panel:'rankXPanel',chart:'rankXChart',hint:'rankXHint',key:'future_predicted_SI',label:'Predicted future SI'}
     ];
     for(const spec of specs){
       const panel=el(spec.panel);const chart=el(spec.chart);
-      const ranked=rows.map(r=>({record:r,value:Number(r[spec.key])})).filter(d=>Number.isFinite(d.value)).sort((a,b)=>b.value-a.value||a.record.pathogen.localeCompare(b.record.pathogen)||a.record.antibiotic.localeCompare(b.record.antibiotic));
+      const ranked=rows.map(r=>({record:r,value:spec.value?spec.value(r):Number(r[spec.key])})).filter(d=>Number.isFinite(d.value)).sort((a,b)=>b.value-a.value||a.record.pathogen.localeCompare(b.record.pathogen)||a.record.antibiotic.localeCompare(b.record.antibiotic));
       el(spec.hint).textContent=`${ranked.length.toLocaleString()} pairs · hover for details · click to select`;
       if(!panel.open)continue;
       const traces=[false,true].map(isGlass=>{
@@ -167,9 +169,9 @@
   }
   function render(){state.filtered=visible();el('visibleCount').textContent=state.filtered.length.toLocaleString();el('glassCount').textContent=state.filtered.filter(r=>r.is_glass_pair).length.toLocaleString();
     if(state.selected&&!state.filtered.includes(state.selected)){state.selected=null;state.pmidYear=2025;}
-    const rows=state.filtered;renderRankingPlots(rows);const xRange=bounds(rows,'future_predicted_SI',state.thresholdX);const yRange=bounds(rows,'future_minus_latest_smoothed_SI',state.thresholdY);
-    const trace={type:'scatter',mode:el('showLabels').checked?'markers+text':'markers',x:rows.map(r=>r.future_predicted_SI),y:rows.map(r=>r.future_minus_latest_smoothed_SI),text:labels(rows),textposition:'middle right',textfont:{size:10,color:'#203b5e'},hovertext:rows.map(tooltip),hovertemplate:'%{hovertext}<extra></extra>',customdata:rows.map(r=>[r.pathogen,r.antibiotic]),marker:{size:rows.map(r=>r.is_glass_pair?13:9),opacity:.8,color:rows.map(r=>r.post_fit_count_abs_pct_error_mean),colorscale:[[0,'#2166ac'],[1,'#f4f7fa']],cmin:0,cmax:75,showscale:true,colorbar:{title:{text:'Mean abs<br>count error (%)'},len:.62,thickness:13},line:{color:rows.map(r=>r.is_glass_pair?'#141c27':'#66788d'),width:rows.map(r=>r.is_glass_pair?2.8:1)}} ,name:'Pairs',showlegend:false};
-    const selectedTrace={type:'scatter',mode:'markers',x:state.selected?[state.selected.future_predicted_SI]:[],y:state.selected?[state.selected.future_minus_latest_smoothed_SI]:[],hoverinfo:'skip',showlegend:false,marker:{symbol:'circle-open',size:20,color:'#d84a36',line:{width:3}}};
+    const rows=state.filtered;renderRankingPlots(rows);const xRange=bounds(rows,'future_predicted_SI',state.thresholdX);const yRange=boundsValues(rows.map(siGradient),state.thresholdY);
+    const trace={type:'scatter',mode:el('showLabels').checked?'markers+text':'markers',x:rows.map(r=>r.future_predicted_SI),y:rows.map(siGradient),text:labels(rows),textposition:'middle right',textfont:{size:10,color:'#203b5e'},hovertext:rows.map(tooltip),hovertemplate:'%{hovertext}<extra></extra>',customdata:rows.map(r=>[r.pathogen,r.antibiotic]),marker:{size:rows.map(r=>r.is_glass_pair?13:9),opacity:.8,color:rows.map(r=>r.post_fit_count_abs_pct_error_mean),colorscale:[[0,'#2166ac'],[1,'#f4f7fa']],cmin:0,cmax:75,showscale:true,colorbar:{title:{text:'Mean abs<br>count error (%)'},len:.62,thickness:13},line:{color:rows.map(r=>r.is_glass_pair?'#141c27':'#66788d'),width:rows.map(r=>r.is_glass_pair?2.8:1)}} ,name:'Pairs',showlegend:false};
+    const selectedTrace={type:'scatter',mode:'markers',x:state.selected?[state.selected.future_predicted_SI]:[],y:state.selected?[siGradient(state.selected)]:[],hoverinfo:'skip',showlegend:false,marker:{symbol:'circle-open',size:20,color:'#d84a36',line:{width:3}}};
     const layout={autosize:true,paper_bgcolor:'#fff',plot_bgcolor:'#fff',font:{family:'Inter, Segoe UI, Arial, sans-serif',color:'#24405f',size:11},margin:{l:76,r:72,t:18,b:62},xaxis:{title:'Predicted future SI',range:xRange,gridcolor:'#e9eff6',zeroline:false},yaxis:{title:'SI Gradient',range:yRange,gridcolor:'#e9eff6',zeroline:false},shapes:shapes(xRange,yRange),hoverlabel:{align:'left',font:{size:11}},dragmode:'pan',showlegend:false};
     Plotly.react(el('chart'),[trace,selectedTrace],layout,{responsive:true,displaylogo:false,modeBarButtonsToRemove:['lasso2d','select2d']}).then(attachClickListener);
     updateDetails();
@@ -228,7 +230,7 @@
     const antibioticLink=document.createElement('a');const wiki=antibioticWikiByName.get(r.antibiotic);antibioticLink.textContent=r.antibiotic;if(wiki?.wikipedia_url){antibioticLink.href=wiki.wikipedia_url;antibioticLink.target='_blank';antibioticLink.rel='noopener noreferrer';antibioticLink.title=wiki.match_status==='review_search_result'?`Open a Wikipedia candidate for ${r.antibiotic}; this association needs review.`:`Open the Wikipedia article for ${r.antibiotic}`;}else{antibioticLink.removeAttribute('href');}
     title.replaceChildren(pathogenLink,document.createTextNode(' · '),antibioticLink);el('glassPill').classList.toggle('hidden',!r.is_glass_pair);
     const latestCountLabel=`Latest count${r.latest_count_source?` (${r.latest_count_source})`:''}`;
-    const cards=[['Latest available SI',fmt(r.latest_available_SI)], [latestCountLabel,fmtInt(r.latest_available_count)], ['Future predicted SI',fmt(r.future_predicted_SI)],['SI shift',fmt(r.future_minus_latest_smoothed_SI)],['Future predicted count',fmtInt(r.future_predicted_count)],['Mean abs count error',fmtPct(r.post_fit_count_abs_pct_error_mean)],['Rank change',fmtInt(r.rank_change)]];
+    const cards=[['Latest available SI',fmt(r.latest_available_SI)], [latestCountLabel,fmtInt(r.latest_available_count)], ['Future predicted SI',fmt(r.future_predicted_SI)],['SI Gradient (SI/year)',fmt(siGradient(r))],['SI shift over forecast',fmt(r.future_minus_latest_smoothed_SI)],['Future predicted count',fmtInt(r.future_predicted_count)],['Mean abs count error',fmtPct(r.post_fit_count_abs_pct_error_mean)],['Rank change',fmtInt(r.rank_change)]];
     el('detailGrid').innerHTML=cards.map(([a,b])=>`<div class="detail-item"><span>${a}</span><strong>${b}</strong></div>`).join('');
   }
   let clickListenerAttached=false;
@@ -237,7 +239,7 @@
   el('bacteria').addEventListener('change',()=>{const subset=records.filter(r=>!el('bacteria').value||r.pathogen===el('bacteria').value);fillSelect(el('antibiotic'),[...new Set(subset.map(r=>r.antibiotic))].sort((a,b)=>a.localeCompare(b)),'All antibiotics');render();});
   el('applyThresholds').addEventListener('click',()=>{state.thresholdX=Number(el('xThreshold').value)||0;state.thresholdY=Number(el('yThreshold').value)||0;render();});
   el('reset').addEventListener('click',()=>{el('search').value='';el('bacteria').value='';fillSelect(el('antibiotic'),antibiotics,'All antibiotics');el('glassOnly').checked=false;el('showLabels').checked=false;el('xThreshold').value='0';el('yThreshold').value='0';state.thresholdX=0;state.thresholdY=0;state.selected=null;state.pmidYear=2025;render();});
-  el('download').addEventListener('click',()=>{const rows=state.filtered;const headers=['Bacteria','Antibiotic','Reference year','Future year','Latest available SI','Latest smoothed SI','Future predicted SI','SI change','Latest available count','Future predicted count','Mean abs count error (%)','GLASS match','GLASS group'];const values=rows.map(r=>[r.pathogen,r.antibiotic,r.reference_year,r.future_year,r.latest_available_SI,r.latest_smoothed_SI,r.future_predicted_SI,r.future_minus_latest_smoothed_SI,r.latest_available_count,r.future_predicted_count,r.post_fit_count_abs_pct_error_mean,r.appears_in_GLASS,r.glass_group_column]);const csv=[headers,...values].map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='filtered_amr_si_pairs.csv';a.click();URL.revokeObjectURL(a.href);});
+  el('download').addEventListener('click',()=>{const rows=state.filtered;const headers=['Bacteria','Antibiotic','Reference year','Future year','Latest available SI','Latest smoothed SI','Future predicted SI','SI Gradient (SI/year)','Total SI shift over forecast','Latest available count','Future predicted count','Mean abs count error (%)','GLASS match','GLASS group'];const values=rows.map(r=>[r.pathogen,r.antibiotic,r.reference_year,r.future_year,r.latest_available_SI,r.latest_smoothed_SI,r.future_predicted_SI,siGradient(r),r.future_minus_latest_smoothed_SI,r.latest_available_count,r.future_predicted_count,r.post_fit_count_abs_pct_error_mean,r.appears_in_GLASS,r.glass_group_column]);const csv=[headers,...values].map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='filtered_amr_si_pairs.csv';a.click();URL.revokeObjectURL(a.href);});
   el('pmidMetric').addEventListener('click',()=>{const panel=el('pmidPanel');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'start'});});
   el('pmidSort').addEventListener('change',()=>updatePmids(state.selected,state.pmidYear));
   ['rankYPanel','rankXPanel'].forEach(id=>el(id).addEventListener('toggle',()=>{if(el(id).open)renderRankingPlots(state.filtered);}));
