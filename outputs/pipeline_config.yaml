@@ -80,7 +80,10 @@ screening:
 system1:
   run_filter: true
   model: typesafe/jev-1.13
-  run_id: jev-1.13-amr-support-v1
+  run_id: jev-explicit-pair-resistance-v1-20261109
+  question_version: explicit-pair-resistance-noul-v1
+  target_precision: 0.9
+  threshold_calibration_status: provisional_uncalibrated
   max_calls: null
   rate_limit: 0.0
   max_workers: 128

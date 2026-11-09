@@ -5,6 +5,7 @@ from .core import __all__ as _core_all
 from .system1 import (
     JEV_DEFAULT_MODEL,
     SYSTEM1_AMR_SUPPORT_QUESTION,
+    SYSTEM1_QUESTION_VERSION,
     OpenRouterJevClient,
     build_system1_state,
     run_system1_filter,
@@ -13,6 +14,7 @@ from .system1 import (
 __all__ = list(_core_all) + [
     "JEV_DEFAULT_MODEL",
     "SYSTEM1_AMR_SUPPORT_QUESTION",
+    "SYSTEM1_QUESTION_VERSION",
     "OpenRouterJevClient",
     "build_system1_state",
     "run_system1_filter",

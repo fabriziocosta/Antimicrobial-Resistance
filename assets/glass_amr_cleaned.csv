@@ -165,16 +165,6 @@ Pseudomonas aeruginosa,Imipenem,Pseudomonas aeruginosa,Imipenem/cilastatin,False
 Pseudomonas aeruginosa,meropenem,Pseudomonas aeruginosa,Meropenem,False,True,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Pseudomonas aeruginosa,Piperacillin/tazobactam,Pseudomonas aeruginosa,Piperacillin/tazobactam,False,False,Beta-lactam/beta-lactamase-inhibitor_anti-pseudomonal,Beta-lactamase-inhibitors/combinations,Beta lactam and related,Naturally occurring/modified
 Pseudomonas aeruginosa,tobramycin,Pseudomonas aeruginosa,Tobramycin,False,True,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
-Salmonella spp,cefotaxime,Salmonella bongori,Cefotaxime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,ceftazidime,Salmonella bongori,Ceftazidime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,Ceftriaxone,Salmonella bongori,Ceftriaxone,True,False,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,Ciprofloxacin,Salmonella bongori,Ciprofloxacin,True,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
-Salmonella spp,doripenem,Salmonella bongori,Doripenem,True,True,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,ertapenem,Salmonella bongori,Ertapenem,True,True,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,Imipenem,Salmonella bongori,Imipenem/cilastatin,True,True,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
-Salmonella spp,levofloxacin,Salmonella bongori,Levofloxacin,True,True,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
-Salmonella spp,meropenem,Salmonella bongori,Meropenem,True,True,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
-Salmonella spp.,co-trimoxazole,Salmonella bongori,Sulfamethoxazole/trimethoprim,True,True,Sulfonamide-trimethoprim-combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
 Salmonella enterica,Ampicillin,Salmonella enterica,Ampicillin,False,False,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Salmonella enterica,Azithromycin,Salmonella enterica,Azithromycin,False,False,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Salmonella spp,cefotaxime,Salmonella enterica,Cefotaxime,True,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified

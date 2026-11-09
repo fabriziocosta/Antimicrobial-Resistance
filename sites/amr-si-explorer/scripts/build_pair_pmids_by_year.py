@@ -49,6 +49,8 @@ def as_pmids(value: Any) -> list[str]:
 
 def main() -> None:
     root = find_project_root()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     dist = root / "sites/amr-si-explorer/dist"
     pair_path = dist / "pairs.json"
     annual_path = root / "outputs/parquets/yearly_amr_screened_pairs.parquet"
@@ -68,6 +70,19 @@ def main() -> None:
 
     config = yaml.safe_load((root / "outputs/pipeline_config.yaml").read_text(encoding="utf-8"))
     system1_config = config.get("system1", {})
+    calibration_status = system1_config.get("threshold_calibration_status")
+    if calibration_status not in {"validated", "provisional_uncalibrated"}:
+        raise RuntimeError("Explorer PMID data require a validated threshold or explicit provisional_uncalibrated mode.")
+    from amr.screening.calibration import validate_resistance_screen_provenance
+
+    provenance = validate_resistance_screen_provenance(
+        annual_path.with_suffix(".provenance.json"),
+        run_id=str(system1_config.get("run_id", "")),
+        question_version=str(system1_config.get("question_version", "")),
+        probability_threshold=float(config.get("screening", {}).get("system1_probability_threshold", 0.5)),
+        target_precision=float(system1_config.get("target_precision", 0.90)),
+        allow_provisional=calibration_status == "provisional_uncalibrated",
+    )
     decisions = pd.read_parquet(
         decisions_path,
         columns=["pmid", "pathogen", "antibiotic", "system1_run_id", "system1_p_yes", "system1_status"],
@@ -111,6 +126,15 @@ def main() -> None:
     years = [int(year) for mapping in by_pair.values() for year in mapping]
     payload = {
         "source": "outputs/parquets/yearly_amr_screened_pairs.parquet + outputs/parquets/yearly_amr_system1_decisions.parquet + outputs/parquets/pubmed_pmid_metadata.parquet",
+        "screening_provenance": {
+            "run_id": provenance["run_id"],
+            "question_version": provenance["question_version"],
+            "probability_threshold": provenance["probability_threshold"],
+            "target_precision": provenance["target_precision"],
+            "holdout_precision": provenance["holdout_precision"],
+            "threshold_calibration_status": provenance["threshold_calibration_status"],
+            "provisional_note": provenance.get("provisional_note"),
+        },
         "year_min": min(years) if years else None,
         "year_max": max(years) if years else None,
         "count": len(pair_records),

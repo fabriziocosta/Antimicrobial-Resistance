@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
 
 from amr.pipeline_config import cfg, cfg_path, load_pipeline_config  # noqa: E402
 from amr.pipelines.si import build_si_analysis_paths  # noqa: E402
+from amr.screening.calibration import validate_resistance_screen_provenance  # noqa: E402
 from amr.si.core import fit_predict_yearly_si_loess  # noqa: E402
 
 
@@ -55,7 +56,19 @@ def records_for(frame: pd.DataFrame, columns: list[str]) -> list[dict[str, Any]]
 
 def main() -> None:
     config = load_pipeline_config(project_root=ROOT)
+    calibration_status = str(cfg(config, "system1.threshold_calibration_status", "pending"))
+    if calibration_status not in {"validated", "provisional_uncalibrated"}:
+        raise RuntimeError("Explorer timeseries require a validated threshold or explicit provisional_uncalibrated mode.")
     analysis_level = cfg(config, "si.antibiotic_analysis_level", "antibiotic")
+    screened_path = cfg_path(config, "paths.yearly_screened", ROOT)
+    provenance = validate_resistance_screen_provenance(
+        screened_path.with_suffix(".provenance.json"),
+        run_id=str(cfg(config, "system1.run_id", "")),
+        question_version=str(cfg(config, "system1.question_version", "")),
+        probability_threshold=float(cfg(config, "screening.system1_probability_threshold", 0.5)),
+        target_precision=float(cfg(config, "system1.target_precision", 0.90)),
+        allow_provisional=calibration_status == "provisional_uncalibrated",
+    )
     si_path = build_si_analysis_paths(ROOT, analysis_level)["yearly_si"]
     plotted_pairs_path = ROOT / "outputs/figures/future_si_vs_current_si_quadrant.csv"
     out_path = ROOT / "sites/amr-si-explorer/dist/pair_timeseries.json"
@@ -203,6 +216,15 @@ def main() -> None:
             "loess_frac": loess_frac,
             "loess_degree": loess_degree,
             "tail_damping_years": tail_damping_years,
+        },
+        "screening_provenance": {
+            "run_id": provenance["run_id"],
+            "question_version": provenance["question_version"],
+            "probability_threshold": provenance["probability_threshold"],
+            "target_precision": provenance["target_precision"],
+            "holdout_precision": provenance["holdout_precision"],
+            "threshold_calibration_status": provenance["threshold_calibration_status"],
+            "provisional_note": provenance.get("provisional_note"),
         },
         "count": len(pair_rows),
         "records": pair_rows,

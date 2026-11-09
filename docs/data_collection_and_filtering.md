@@ -1,6 +1,6 @@
 # Data Collection and Filtering Process
 
-This document describes how the active workflow builds AMR publication signals from PubMed and filters them into pair-level yearly datasets.
+This document describes how the active workflow retrieves candidate records and builds resistance-only pair-year datasets for SI.
 
 The active entrypoint is `notebooks/04_collect_yearly_data.ipynb`. The implementation lives mainly in:
 
@@ -17,10 +17,10 @@ The pipeline intentionally separates broad retrieval from strict interpretation.
 1. Broad PubMed searches collect candidate papers for pathogen-antibiotic pairs.
 2. PubMed publication metadata converts interval-level PMID lists into yearly pair counts.
 3. Background publication counts are collected for the pathogen and antibiotic marginals used by SI modeling.
-4. A unified LLM pass reviews each `(PMID, pathogen, antibiotic, year)` candidate using the title and abstract.
-5. Screened yearly pair counts are rebuilt from LLM decisions.
+4. The active Jev screen reviews each `(PMID, pathogen, antibiotic, year)` candidate using a resistance-specific question.
+5. Only papers explicitly reporting resistance for the exact pathogen–antibiotic pair enter the yearly SI counts. Final results require a human-calibrated Jev threshold; explicitly provisional exploratory results can be rebuilt before calibration and carry uncalibrated provenance.
 
-The search stage is recall-oriented. The LLM stage is the pair-specific relation and relevance filter.
+The search stage is recall-oriented and may retrieve susceptibility or sensitivity records. Search hits are candidates only. The resistance screen excludes susceptibility/testing alone, resistance mechanisms without an explicitly resistant phenotype, treatment or policy context, and class-level findings that do not report resistance for the target antibiotic.
 
 ## Inputs
 
@@ -44,7 +44,8 @@ Important notebook controls:
 - `EXTRA_AMR_KEYWORDS`: broad AMR keyword constraint applied during pair retrieval.
 - `PAIR_FULL_FETCH_THRESHOLD`: if pair total count is below this value, fetch all pair PMIDs once and partition locally.
 - `BACKGROUND_SCOPE`: `observed_entities` for fast runs, `all_entities` for full canonical background coverage.
-- `LLM_CATEGORY_BACKFILL_DECISIONS`: which old decisions should be reprocessed when new category columns are missing.
+- `system1.question_version` and `system1.run_id`: isolate the resistance-only screen from previous broad-context decisions.
+- `system1.threshold_calibration_status`: use `validated` for final outputs; `provisional_uncalibrated` explicitly enables exploratory outputs without claiming the precision target was met.
 
 `NUM_PATHOGENS = None` or `NUM_ANTIBIOTICS = None` means use the full active vocabulary. Setting explicit values such as `NUM_PATHOGENS = 5` and `NUM_ANTIBIOTICS = 5` processes only the first `5 x 5` Cartesian grid for that run. For pathogens, "first" means highest `pathogenic_index` first.
 
@@ -200,101 +201,21 @@ for each entity:
       split window into smaller windows and repeat
 ```
 
-## Unified LLM Filtering
+## Resistance-Only Jev Screening
 
-The LLM screen runs at the reviewed combination level:
+The active screen evaluates one candidate association at a time:
 
 ```text
 (PMID, pathogen, antibiotic, year)
 ```
 
-This is important because a single PMID can be relevant for one pathogen-antibiotic pair and irrelevant for another.
+A paper enters the SI count only when the title or abstract explicitly reports resistance for the exact target pathogen and antibiotic. Resistant-isolate findings and reported resistance rates qualify. Susceptibility or sensitivity testing alone, reduced susceptibility not called resistance, a gene or mechanism without a reported resistant phenotype, treatment context alone, and a class-level result without antibiotic-specific resistance do not qualify. A PMID may count for several pairs only when it reports resistance for each pair.
 
-For each candidate row, the pipeline fetches or reuses cached PubMed title/abstract text. The LLM receives:
-
-- target pathogen
-- target antibiotic or antibiotic class
-- title
-- abstract
-
-The LLM returns JSON with:
-
-- `decision`: `strict`, `yes`, `no`, or `uncertain`
-- `primary_category`: SI-driver category
-- `rationale`
-- `evidence_phrases`
-- `target_pair_relation_supported`
-- `is_amr_relevant`
-
-`strict` means the abstract explicitly links the target pathogen to the target antibiotic/class. `yes` means the pair is supported more broadly by an AMR-relevant panel, class, or shared study context. Unsupported target-pair relations are treated as `NONE`.
-
-Rows without abstracts do not call the LLM. They receive deterministic `uncertain` / `NONE` defaults.
-
-### LLM Filtering Pseudocode
-
-```text
-candidate_df = explode candidate_amr_pair_year_counts into one row per PMID, pathogen, antibiotic, year
-resume_df = read yearly_amr_unified_decisions.parquet if it exists
-
-for existing decision rows:
-  if all AMR category columns exist:
-    mark row complete
-  else if category_backfill_decisions is set and row decision is not in that set:
-    defer category backfill and keep row as-is
-  else:
-    requeue row for LLM category backfill
-
-prefetch missing abstracts for rows that are not complete
-
-for candidate row:
-  if row is complete:
-    skip
-
-  title, abstract = abstract cache lookup or PubMed fetch
-
-  if abstract missing:
-    write uncertain weak-signal default row
-    continue
-
-  prompt LLM with target pair, title, abstract
-  parse JSON
-  normalize decision and category fields
-  write reviewed row
-
-checkpoint decisions, abstract cache, and failure retry state periodically
-```
+The final threshold is calibrated on a score-stratified human-reviewed sample. The sample is split into calibration and held-out records before review. The calibrated threshold maximizes coverage while meeting the configured minimum precision on calibration records and must independently meet the same precision target on the held-out records. `scripts/create_resistance_screen_review.py` creates the review file; after yes/no labels are added, `scripts/calibrate_resistance_screen.py` validates the cutoff and updates the configuration. For exploratory work only, the explicit `provisional_uncalibrated` status allows notebook and explorer builders to proceed while retaining a visible uncalibrated warning and null holdout precision.
 
 ## Screened Yearly Dataset
 
-The final screened yearly dataset is rebuilt from LLM-reviewed candidate rows.
-
-By default, `build_yearly_screened_pairs(...)` includes:
-
-- `strict`
-- `yes`
-
-and excludes:
-
-- `no`
-- `uncertain`
-
-The default keeps accepted AMR evidence while leaving missing-abstract or technical-failure `uncertain` rows out of downstream SI modeling.
-
-### Screened Dataset Pseudocode
-
-```text
-yearly_candidates = explode candidate_amr_pair_year_counts.pmids
-reviewed_keep_keys = unified decisions where decision in {"strict", "yes"}
-
-filtered = yearly_candidates inner join reviewed_keep_keys
-deduplicate by PMID, pathogen, antibiotic, year
-
-yearly_screened = group filtered by pathogen, antibiotic, year:
-  count = number of unique PMIDs
-  pmids = sorted unique PMIDs
-
-write yearly_amr_screened_pairs.parquet
-```
+Notebook 04c joins the complete Jev prediction run to the candidate pair-year PMID lists. It excludes unresolved technical errors and records with no abstract, applies the configured probability threshold, deduplicates by PMID, pathogen, antibiotic, and year, and counts retained pair–PMID associations. It writes `yearly_amr_screened_pairs.parquet` and an adjacent provenance JSON file containing the run ID, question version, threshold, calibration status, and held-out precision when available. Notebook 05 and the explorer builders verify that provenance before using the data.
 
 ## Main Outputs
 
@@ -305,29 +226,30 @@ write yearly_amr_screened_pairs.parquet
 - `pathogen_tiab_counts.parquet`: pathogen background counts.
 - `antibiotic_tiab_counts.parquet`: antibiotic background counts.
 - `pmid_abstracts.parquet`: title/abstract cache.
-- `yearly_amr_unified_decisions.parquet`: LLM decision and category table.
-- `yearly_amr_screened_pairs.parquet`: screened yearly pair counts used by SI modeling.
+- `yearly_amr_system1_decisions.parquet`: append-preserving Jev predictions, isolated by run ID and question version.
+- `yearly_amr_screened_pairs.parquet`: resistance-only yearly pair counts used by SI modeling, either validated or explicitly provisional.
+- `yearly_amr_screened_pairs.provenance.json`: source run, calibration status, threshold, and human-validated precision when available.
 
 ## Practical Run Modes
 
-For fast iteration:
+For a scoped candidate retrieval run:
 
 ```text
 NUM_PATHOGENS = 5
 NUM_ANTIBIOTICS = 5
 BACKGROUND_SCOPE = "observed_entities"
 PAIR_FULL_FETCH_THRESHOLD = 9500
-LLM_CATEGORY_BACKFILL_DECISIONS = ("strict", "yes", "uncertain")
+SYSTEM1_MAX_CALLS = 1000
 ```
 
-For a fuller canonical refresh:
+For a full resistance-only screening run:
 
 ```text
 NUM_PATHOGENS = None
 NUM_ANTIBIOTICS = None
 BACKGROUND_SCOPE = "all_entities"
 PAIR_FULL_FETCH_THRESHOLD = 9500
-LLM_CATEGORY_BACKFILL_DECISIONS = None
+SYSTEM1_MAX_CALLS = None
 ```
 
-The fast mode is usually appropriate during exploration because it avoids full-vocabulary background counts and avoids spending LLM calls categorizing old `no` rows.
+Candidate-retrieval scope and the resistance screen are separate. A limited call cap is useful for smoke testing but cannot be used to build canonical SI. The current broad candidate pool is retained for recall; only Jev predictions indicating explicit pair-specific resistance enter the screened table. Use the validated status for final SI; mark all uncalibrated exploratory outputs as provisional.

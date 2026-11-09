@@ -109,13 +109,11 @@ Run the screening stages in this order after collection:
 3. `04b_predict_candidate_pairs.ipynb` runs the active LLM or System 1 source
    for the configured year slice. The prediction stores remain separate and
    resume independently.
-4. `04c_build_screened_dataset.ipynb` applies the configured source and, for
-   System 1, run ID and probability threshold. It rebuilds the screened parquet
-   offline from saved predictions.
-5. `05_model_scientific_interest.ipynb` builds SI and ranks future high-interest pairs.
-6. `05a_analyze_si_drivers.ipynb` uses the saved SI/ranking outputs and LLM category metadata to explain the selected pairs.
+4. `04c_build_screened_dataset.ipynb` applies the configured resistance-only Jev run and cutoff and writes run provenance beside the screened parquet. Final analysis requires human validation; `provisional_uncalibrated` is available for explicitly exploratory outputs and remains marked uncalibrated.
+5. `05_model_scientific_interest.ipynb` checks that provenance, then builds SI and ranks future high-interest pathogen–antibiotic resistance pairs. Provisional inputs are labeled in notebook output and provenance.
+6. Context-category driver analysis is retired. The current SI analysis counts papers that explicitly report resistance for the exact pair.
 
-Choose the active prediction source once in notebook 00 by setting `PREDICTION_SOURCE` to `"llm"` or `"system1"`, then run the config cell. It writes `screening.active_source` to `outputs/pipeline_config.yaml`; notebooks 04b and 04c use that same selection. Notebook 02 continues to estimate both approaches. For System 1, credentials can come from `OPENROUTER_API_KEY` or a macOS Keychain generic-password item with service `OpenRouter` by default. Use account name `OPENROUTER_API_KEY` by default; set `OPENROUTER_KEYCHAIN_SERVICE`, `OPENROUTER_KEYCHAIN_INTERNET_SERVER`, or `OPENROUTER_KEYCHAIN_ACCOUNT` to match differently named items. Notebook 04b runs Jev requests concurrently; tune `system1.max_workers` in notebook 00 (default 128) and lower it if OpenRouter returns rate limits. Adjust `screening.system1_probability_threshold` in notebook 00 and rerun the config cell, then run notebook 04c to rebuild from saved Jev probabilities without repeating API calls. Change `system1.run_id` to create a distinct prediction snapshot; results are stored at the configured `paths.system1_decisions` path. Jev uses OpenRouter's typed Decisions API and `typesafe/jev-1.13` by default. System 1 driver-category classification is not included yet.
+The broad PubMed query remains a candidate-retrieval step; it does not make a paper eligible for SI. The resistance-only Jev question requires explicit evidence that the exact pathogen is resistant to the exact antibiotic. The first run is isolated by a new run ID and question version. In `outputs/review/resistance_screen_review_sample.csv`, label `resistance_demonstrated` as `yes` or `no` from the title and abstract for the exact pair. Preserve `review_split`, scores, and sampling weights. The score-stratified sample has calibration and holdout records assigned before review. Then run `scripts/calibrate_resistance_screen.py`; it selects the highest-coverage threshold meeting 90% precision on calibration records and marks the screen validated only if holdout precision also reaches 90%. Until then, set `threshold_calibration_status` to `provisional_uncalibrated` only for exploratory output; the site and manuscript must identify that status clearly. A Jev spot check is saved at `outputs/review/resistance_screen_prompt_spot_check.csv`. Jev credentials can come from `OPENROUTER_API_KEY` or a macOS Keychain item; the default request concurrency is 128.
 
 ### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
 
@@ -133,7 +131,7 @@ Primary APIs:
 
 ### Notebook 05a: `notebooks/05a_analyze_si_drivers.ipynb`
 
-Explains the paper-category mix behind ranked pairs using LLM classification metadata. It writes driver summaries, category trend plots, and an all-years driver-composition pie-chart grid. Run it after notebook 05; it does not rebuild SI or rankings.
+Retired. Paper-context categories are not part of the resistance-only SI measure.
 
 ### Notebooks 10a–10f: SI concept discovery
 
@@ -207,11 +205,11 @@ pip install -e ".[dev,notebooks,loess]"
 git lfs pull
 ```
 
-Run notebooks 05, 05a, 06, 07, and 08 in order. Notebook 05 rebuilds the SI and ranking
-parquets from the screened AMR and background-count caches. Notebook 05a builds the
-driver summaries and plots from those rankings and the unified-decision cache.
-Notebooks 06 and 07 rebuild the GLASS comparisons and figures; notebook 08 rebuilds
-the selected pair-PMID Excel export. Generated figures and exports remain local.
+Run notebooks 05, 06, 07, and 08 in order after a validated resistance-only screen
+has been rebuilt, or use explicit provisional mode for exploratory outputs. Notebook 05 rebuilds SI and ranking parquets from that screened
+dataset and the background-count caches. Notebooks 06 and 07 rebuild GLASS comparisons
+and figures; notebook 08 rebuilds the selected pair-PMID Excel export. Generated figures
+and exports remain local.
 
 Run notebook 00 first only when intentionally changing the tracked configuration
 snapshot.

@@ -59,83 +59,57 @@ def _merge_checkpoint_rows(
     return merged
 
 DEFAULT_SYSTEM_PROMPT = """
-You are a careful biomedical evidence reviewer. Given a title and abstract, decide whether the authors explicitly state or conclude that the specified pathogen is showing clinically meaningful resistance to the specified antibiotic.
+You are a careful biomedical evidence reviewer. Given the specified target pathogen, target antibiotic, title, and abstract, decide whether the text explicitly reports that the exact pathogen–antibiotic pair is resistant.
 
-Rules:
-- Answer "yes" only if the abstract clearly reports resistance, reduced susceptibility, treatment failure due to resistance, or emergence of resistant isolates for that pathogen/antibiotic pair.
-- Answer "no" if the abstract does not make that claim, is about a different organism/drug, only mentions testing without resistance, or only provides background.
-- Answer "uncertain" if the abstract is missing, ambiguous, or only indirectly related.
-- Base the decision only on the provided text; do not infer beyond it.
+Count only an explicit resistant phenotype for the exact pair, such as resistant isolates, a resistance rate, or an explicit statement that the pathogen is resistant to the antibiotic. Do not count susceptibility testing alone, reduced susceptibility not identified as resistance, MIC values without an explicit resistant interpretation, a resistance gene or mechanism without a resistant phenotype, treatment failure or other context alone, or resistance reported for another pathogen, antibiotic, or antibiotic class.
+
+Answer "yes" only when the provided text explicitly reports resistance for the exact target pair. Answer "no" when it does not. Answer "uncertain" only if the text is missing or technically unusable. Do not infer beyond the text.
 
 Return compact JSON with keys: decision (yes/no/uncertain) and rationale (one short sentence).
 """.strip()
 
 _UNIFIED_AMR_INTEREST_POLICY = """
-You classify scientific abstracts for antimicrobial-resistance (AMR) analysis.
+You screen scientific abstracts for explicit pathogen-antibiotic resistance findings.
 
 Task:
-Given a target pathogen, a target antibiotic or antibiotic class, a title, and an abstract,
-decide whether the target pair is supported by the paper and select the main scientific-interest
-category for that supported pair.
+Given a target pathogen, a target antibiotic, a title, and an abstract, decide whether the paper
+explicitly reports that the target pathogen is resistant to that exact target antibiotic.
 
-Use the text as evidence, not keyword co-occurrence. The pair is AMR-relevant when the title or
-abstract provides resistance, susceptibility, treatment, testing, mechanism, surveillance,
-stewardship, policy, or another substantive AMR context.
+Count explicit resistant-isolate findings, resistance rates, or another reported resistant phenotype
+for the exact pathogen-antibiotic pair. The paper need not be primarily about resistance if it
+reports such a finding. For example, a surveillance study reporting a rate of resistant isolates
+qualifies because it reports resistance.
 
-Target-pair attribution:
-- Strict support includes direct modification (for example, methicillin-resistant S. aureus),
-  an explicit pathogen-drug assertion, group attribution, or an explicit class relation.
-- Broader support includes a shared susceptibility/resistance study panel in which the target
-  pathogen is studied and the target drug/class is tested, reported, monitored, or discussed.
-- Class attribution is valid when the target drug belongs to a class explicitly tested or discussed
-  for the target pathogen; for example, carbapenems support imipenem or meropenem.
-- Do not transfer resistance, susceptibility, treatment, testing, or AMR relevance from one
-  pathogen or drug to another merely because they occur nearby. A shared panel is an exception.
-- A stray co-mention, a clearly different organism or drug, or a pair with no AMR context is not
-  supported.
-
-Attribution examples:
-- "Methicillin-resistant Staphylococcus aureus and E. coli were detected" supports methicillin
-  resistance for Staphylococcus aureus, not for E. coli.
-- "Resistance to gentamicin was common in Enterococcus faecalis, while E. coli was also detected"
-  does not support gentamicin resistance in E. coli.
-- "Gentamicin-resistant coliforms, including Enterobacter cloacae and Klebsiella pneumoniae"
-  supports gentamicin resistance for both listed species.
-- "Susceptibility of Acinetobacter baumannii isolates to commonly used antimicrobial agents was
-  tested" supports target drugs named in the same study-panel context.
-- "Resistance to third-generation cephalosporins among Acinetobacter baumannii isolates" supports
-  ceftazidime and ceftriaxone for Acinetobacter baumannii.
+Strict pair-specific evidence:
+- The abstract must state that the target pathogen is resistant to the target antibiotic or explicitly
+  report resistant isolates for that exact pair.
+- A resistance percentage, resistant-isolate count, or emergence of resistant isolates qualifies
+  when both members of the pair are clearly linked.
+- A class-level resistance claim does not establish resistance to a specific target antibiotic unless
+  the abstract also reports resistance to that antibiotic.
+- A resistance gene, mutation, plasmid, mechanism, MIC value, or other laboratory measure alone does
+  not qualify unless the abstract explicitly identifies the target pathogen-antibiotic phenotype as
+  resistant.
+- Do not infer resistance from susceptibility testing, susceptibility patterns, nonsusceptibility,
+  reduced susceptibility, treatment failure, or a breakpoint unless the abstract explicitly reports
+  the target pair as resistant.
+- Treatment, surveillance, stewardship, policy, diagnostic, environmental, animal, or other context
+  alone does not qualify. Such a paper qualifies only if it also reports explicit resistance for the
+  target pair.
+- Never transfer a resistance finding from another pathogen or antibiotic to the target pair.
 
 Decision labels:
-- strict: the target pathogen-drug/class relation is explicit.
-- yes: the pair is supported by a broader shared panel, class-level relation, or shared AMR context.
-- no: the pair is incidental, contradicted, unsupported, or not AMR-relevant.
+- strict: explicit resistance is reported for the exact target pathogen-antibiotic pair.
+- yes: the target pair is discussed in an AMR context, but explicit resistance is not reported.
+- no: explicit resistance for the target pair is absent, contradicted, or cannot be supported.
 - uncertain: use only when the abstract is missing or a technical failure is being represented;
   for a present but insufficient abstract, use no.
 
-Primary categories, in order of precedence:
-1. ENVIRONMENTAL_ANIMAL_NON_HUMAN — animals, livestock, wildlife, veterinary, food production,
-   aquaculture, wastewater, sewage, soil, water, environmental sampling, non-human reservoirs,
-   or One Health transmission.
-2. CLINICAL_OUTBREAKS_REPORTS — human clinical cases, patient cohorts, infections, treatment
-   experience, outcomes, hospital events, case reports, or outbreak investigations. Do not use this
-   merely because isolates came from a hospital laboratory.
-3. SURVEILLANCE — resistance rates, susceptibility patterns, prevalence, incidence, frequencies,
-   epidemiological trends, geographic spread, temporal change, or routine monitoring.
-4. MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES — resistance genes, mutations, plasmids,
-   integrons, transfer, beta-lactamases, carbapenemases, ESBLs, efflux, porin loss, target
-   modification, biofilms, sequencing, molecular epidemiology, MIC shifts, gene expression,
-   fitness cost, or laboratory resistance evolution. Prefer this over surveillance when mechanism
-   is a main contribution.
-5. OTHER — AMR-relevant diagnostics, policy, stewardship, guidelines, prescribing, consumption,
-   reviews, modelling, economic burden, education, or anything not covered above.
-
 Classification procedure:
-1. Identify the pathogens and antibiotics/classes in the text.
-2. Determine whether the target pair shares a supported AMR-relevant relation.
-3. Use strict for an explicit relation and yes for broader support.
-4. If the relation is unsupported, use decision no and primary_category NONE.
-5. Select the category for the paper's main contribution to the supported target pair.
+1. Identify the target pathogen and target antibiotic.
+2. Find an explicit resistance statement or reported resistant phenotype for that exact pair.
+3. Use strict only when that evidence is present; otherwise use no or yes for AMR context without
+   explicit resistance. Only strict decisions count as resistance-positive papers.
 """.strip()
 
 _UNIFIED_COMPACT_OUTPUT_CONTRACT = """
@@ -143,14 +117,13 @@ Output only valid compact JSON. Do not output rationale, explanation, reasoning,
 or copied phrases:
 {
   "decision": "strict | yes | no | uncertain",
-  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
   "target_pair_relation_supported": true,
   "is_amr_relevant": true
 }
 
 Consistency rules:
-- If target_pair_relation_supported is false, decision must be no and primary_category must be NONE.
-- If is_amr_relevant is false, decision must be no and primary_category must be NONE.
+- If target_pair_relation_supported is false, decision must be no.
+- If is_amr_relevant is false, decision must be no.
 - If decision is strict, both boolean fields must be true.
 - If the target pair has a shared AMR-relevant study context but no pair-specific percentage or MIC,
   prefer yes over no.
@@ -161,7 +134,6 @@ _UNIFIED_EXPLANATORY_OUTPUT_CONTRACT = """
 Output only valid JSON:
 {
   "decision": "strict | yes | no | uncertain",
-  "primary_category": "ENVIRONMENTAL_ANIMAL_NON_HUMAN | CLINICAL_OUTBREAKS_REPORTS | SURVEILLANCE | MECHANISMS_OF_RESISTANCE_GENETICS_LAB_STUDIES | OTHER | NONE",
   "rationale": "Brief explanation in 1-3 sentences using the title or abstract evidence.",
   "evidence_phrases": ["short phrase copied exactly from the title or abstract"],
   "target_pair_relation_supported": true,
@@ -169,8 +141,8 @@ Output only valid JSON:
 }
 
 Consistency rules:
-- If target_pair_relation_supported is false, decision must be no and primary_category must be NONE.
-- If is_amr_relevant is false, decision must be no and primary_category must be NONE.
+- If target_pair_relation_supported is false, decision must be no.
+- If is_amr_relevant is false, decision must be no.
 - If decision is strict, both boolean fields must be true.
 - If the target pair has a shared AMR-relevant study context but no pair-specific percentage or MIC,
   prefer yes over no.
@@ -186,8 +158,8 @@ UNIFIED_AMR_INTEREST_COMPACT_SYSTEM_PROMPT = UNIFIED_AMR_INTEREST_SYSTEM_PROMPT
 UNIFIED_AMR_INTEREST_EXPLANATORY_SYSTEM_PROMPT = (
     f"{_UNIFIED_AMR_INTEREST_POLICY}\n\n{_UNIFIED_EXPLANATORY_OUTPUT_CONTRACT}"
 )
-UNIFIED_PROMPT_CACHE_KEY = "amr-unified-classifier-v2"
-UNIFIED_EXPLANATORY_PROMPT_CACHE_KEY = "amr-unified-classifier-explanatory-v1"
+UNIFIED_PROMPT_CACHE_KEY = "amr-unified-classifier-resistance-only-v1"
+UNIFIED_EXPLANATORY_PROMPT_CACHE_KEY = "amr-unified-classifier-resistance-only-explanatory-v1"
 
 PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 RETRIES = 3

@@ -1,5 +1,7 @@
 # AMR Exploratory Quadrants Site: LLM Build Handoff
 
+> **Archived data contract.** This handoff describes the previous broad AMR-context explorer and its cached counts. Do not use those outputs for the resistance-only manuscript or current explorer. The active workflow now requires the human-validated resistance-only System 1 screen described in [the explorer README](sites/amr-si-explorer/README.md); regenerate `dist/pairs.json`, pair-year PMIDs, and time series from that screen after calibration passes.
+
 This document is a self-contained build brief for recreating the interactive AMR scientific-interest (SI) quadrant explorer in this repository. It describes the intended user experience, data contract, calculations, implementation behavior, visual design, validation checks, and publishing requirements. Treat the current implementation in `sites/amr-si-explorer/` as a reference, and treat the data files listed below as the source of truth for the current published figure.
 
 ## Goal

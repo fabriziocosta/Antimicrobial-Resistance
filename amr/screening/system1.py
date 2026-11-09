@@ -25,14 +25,16 @@ OPENROUTER_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 JEV_DEFAULT_MODEL = "typesafe/jev-1.13"
-SYSTEM1_QUESTION_VERSION = "amr-pair-support-noul-v1"
+SYSTEM1_QUESTION_VERSION = "explicit-pair-resistance-noul-v1"
 SYSTEM1_AMR_SUPPORT_QUESTION = (
     "Is the following statement true based only on the provided title and abstract? "
-    "The paper provides substantive antimicrobial-resistance evidence or context for the "
-    "specified target pathogen and target antibiotic (or an explicitly applicable antibiotic class). "
-    "Count resistance, susceptibility testing or patterns, AMR mechanisms, treatment, surveillance, "
-    "stewardship, or policy as relevant. Do not infer support from unrelated co-mentions. "
-    "The target pathogen and antibiotic must be linked by the paper's evidence or study context."
+    "The paper explicitly reports that the specified target pathogen is resistant to the specified "
+    "target antibiotic. Count reported resistant isolates, resistance rates, or another explicit "
+    "resistant phenotype for that exact pathogen-antibiotic pair. Require resistance evidence for "
+    "the target antibiotic itself; do not infer it from an antibiotic class, a resistance gene or "
+    "mechanism alone, or a result for another pathogen or drug. Susceptibility testing or reduced "
+    "susceptibility without an explicit resistance finding, treatment context, surveillance context, "
+    "stewardship, policy, or general AMR discussion alone do not qualify."
 )
 
 
