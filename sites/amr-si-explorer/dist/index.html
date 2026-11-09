@@ -27,7 +27,6 @@
     <div class="topline"><div class="eyebrow">Antimicrobial resistance · Scientific interest</div><div class="badge" id="periodBadge">Loading data…</div></div>
     <h1>AMR Scientific Interest</h1>
     <p class="intro">Explore each pathogen–antibiotic pair’s projected scientific-interest score and change from its latest smoothed SI. Search or filter the points, adjust either quadrant threshold, and hover or click a point for the full model and validation details.</p>
-    <p class="screen-status" id="screenStatus"><strong>Resistance-only update in progress.</strong> The cached results below come from the previous broader AMR-context screen. They are not resistance-only counts and should not be interpreted as papers demonstrating resistance. Resistance-specific results will replace them after the new Jev run passes human validation.</p>
     <section class="workspace">
       <div class="sidebar">
       <aside class="panel">
@@ -95,9 +94,6 @@
   const resistanceScreenValidated=Boolean(screeningProvenance.threshold_calibration_status==='validated'&&screeningProvenance.run_id&&screeningProvenance.question_version&&Number.isFinite(Number(screeningProvenance.probability_threshold))&&targetPrecision>=0.90&&holdoutPrecision>=targetPrecision);
   const resistanceScreenProvisional=Boolean(screeningProvenance.threshold_calibration_status==='provisional_uncalibrated'&&screeningProvenance.run_id&&screeningProvenance.question_version&&Number.isFinite(Number(screeningProvenance.probability_threshold)));
   const resistanceScreenActive=resistanceScreenValidated||resistanceScreenProvisional;
-  const screenStatus=el('screenStatus');
-  if(resistanceScreenValidated){screenStatus.classList.add('validated');screenStatus.innerHTML=`<strong>Resistance-only data · validated.</strong> Counts include publications reporting resistance for exact pathogen–antibiotic pairs. Held-out review precision: ${(100*holdoutPrecision).toFixed(1)}% (target ${(100*targetPrecision).toFixed(0)}%); Jev cutoff: ${Number(screeningProvenance.probability_threshold).toFixed(3)}.`;}
-  else if(resistanceScreenProvisional){screenStatus.innerHTML=`<strong>PROVISIONAL resistance-only data · uncalibrated.</strong> Counts include publications scored as reporting resistance for the exact pathogen–antibiotic pair. The Jev cutoff (${Number(screeningProvenance.probability_threshold).toFixed(3)}) has not passed human calibration; these exploratory results may change.`;}
   const pairCountLabel=resistanceScreenActive?'Resistance publications':'Previous broad-screen pair publications';
   const records=source.records||[];
   let pairSeries=new Map();
