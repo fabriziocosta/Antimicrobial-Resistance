@@ -111,6 +111,10 @@ def main() -> None:
             pair_si = si_df.loc[
                 si_df["pathogen"].eq(pathogen) & si_df["antibiotic"].eq(antibiotic)
             ]
+            summary = summary_by_pair[(pathogen, antibiotic)]
+            summary_future_year = int(summary.future_year)
+            pair_latest_year = int(pd.to_numeric(pair_si["year"], errors="coerce").max())
+            pair_forecast_years = max(forecast_years, summary_future_year - pair_latest_year)
             available_fit_years = int(
                 pair_si.loc[
                     pair_si["year"].between(fit_start_year, fit_end_year)
@@ -131,7 +135,7 @@ def main() -> None:
                 antibiotic=antibiotic,
                 fit_start_year=fit_start_year,
                 fit_end_year=fit_end_year,
-                num_additional_years=forecast_years,
+                num_additional_years=pair_forecast_years,
                 loess_frac=loess_frac,
                 loess_degree=loess_degree,
                 tail_damping_years=tail_damping_years,
@@ -140,8 +144,6 @@ def main() -> None:
             )
             pair_df = result["pair_df"].sort_values("year").copy()
             pred_df = result["pred_df"].sort_values("year").copy()
-            summary = summary_by_pair[(pathogen, antibiotic)]
-            summary_future_year = int(summary.future_year)
             summary_future_si = float(summary.future_predicted_SI)
             pair_future = pred_df.loc[pred_df["year"].eq(summary_future_year), "predicted_SI"]
             if pair_future.empty or not math.isclose(
@@ -200,7 +202,7 @@ def main() -> None:
                 "fit_end_year": fit_end_year,
                 "latest_available_year": result["latest_available_year"],
                 "prediction_end_year": int(pred_df["year"].max()),
-                "forecast_years": forecast_years,
+                "forecast_years": pair_forecast_years,
                 "min_amr_pair_publication_count": min_count,
                 "min_num_years_with_valid_counts": min_valid_years,
                 "min_valid_years_used": pair_min_valid_years,

@@ -150,8 +150,8 @@ glass_interactive:
   min_amr_pair_publication_count: 1.0
   min_num_years_with_valid_counts: 8
   min_plot_si: -100.0
-  min_last_available_count: 7
-  min_total_publications: 100
+  min_last_available_count: 3
+  min_total_publications: 20
   min_count_abs_pct_error_mean: 0
   max_count_abs_pct_error_mean: 75
   min_counts_background: 10
