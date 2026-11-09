@@ -14,13 +14,13 @@ After notebook 04c and the SI notebooks have rebuilt the screened counts and cur
 python sites/amr-si-explorer/scripts/build_pairs_json.py
 ```
 
-Then regenerate the precomputed yearly plot table from the current yearly SI data and plotted pair list:
+Then regenerate the precomputed yearly plot table from Notebook 06's yearly SI data and plotted pair list:
 
 ```sh
 python sites/amr-si-explorer/scripts/build_pair_timeseries.py
 ```
 
-This uses the same `fit_predict_yearly_si_loess` model called by `plot_single_pair_si`. GitHub Pages serves the generated JSON directly. Rebuild the JSON after changing the yearly SI source data or model settings, then push the changed `dist/` files to `main`.
+This uses the same `fit_predict_yearly_si_loess` model and fit settings as the Notebook 06 explorer summary. The builder checks that each pair's future SI in the yearly plot matches the summary value for the same year. GitHub Pages serves the generated JSON directly. Rebuild the JSON after changing the yearly SI source data or model settings, then push the changed `dist/` files to `main`.
 
 Regenerate the pair-year PMID table from the screened-pair data, matching Jev run, and PubMed date metadata by running from the repository root:
 

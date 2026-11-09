@@ -69,7 +69,7 @@ def main() -> None:
         target_precision=float(cfg(config, "system1.target_precision", 0.90)),
         allow_provisional=calibration_status == "provisional_uncalibrated",
     )
-    si_path = build_si_analysis_paths(ROOT, analysis_level)["yearly_si"]
+    si_path = build_si_analysis_paths(ROOT, analysis_level)["yearly_si"].with_name("yearly_si_nb06.parquet")
     plotted_pairs_path = ROOT / "outputs/figures/future_si_vs_current_si_quadrant.csv"
     out_path = ROOT / "sites/amr-si-explorer/dist/pair_timeseries.json"
 
@@ -79,12 +79,17 @@ def main() -> None:
         raise FileNotFoundError(f"Missing plotted pair table: {plotted_pairs_path}")
 
     si_df = pd.read_parquet(si_path)
-    plotted_pairs = pd.read_csv(plotted_pairs_path)[["pathogen", "antibiotic"]].drop_duplicates()
+    plot_summary = pd.read_csv(plotted_pairs_path)
+    plotted_pairs = plot_summary[["pathogen", "antibiotic"]].drop_duplicates()
+    summary_by_pair = {
+        (str(row.pathogen), str(row.antibiotic)): row
+        for row in plot_summary.itertuples(index=False)
+    }
     fit_start_year = int(cfg(config, "si.fit_start_year"))
     fit_end_year = int(cfg(config, "si.curve_fit_end_year"))
-    forecast_years = int(cfg(config, "si.num_future_years"))
-    min_count = float(cfg(config, "si.min_amr_pair_publication_count"))
-    min_valid_years = int(cfg(config, "si.min_num_years_with_valid_counts"))
+    forecast_years = int(cfg(config, "glass_interactive.num_future_years"))
+    min_count = float(cfg(config, "glass_interactive.min_amr_pair_publication_count"))
+    min_valid_years = int(cfg(config, "glass_interactive.min_num_years_with_valid_counts"))
     loess_frac = float(cfg(config, "si.loess_frac"))
     loess_degree = int(cfg(config, "si.loess_degree"))
     tail_damping_years = cfg(config, "si.tail_damping_years")
@@ -135,6 +140,17 @@ def main() -> None:
             )
             pair_df = result["pair_df"].sort_values("year").copy()
             pred_df = result["pred_df"].sort_values("year").copy()
+            summary = summary_by_pair[(pathogen, antibiotic)]
+            summary_future_year = int(summary.future_year)
+            summary_future_si = float(summary.future_predicted_SI)
+            pair_future = pred_df.loc[pred_df["year"].eq(summary_future_year), "predicted_SI"]
+            if pair_future.empty or not math.isclose(
+                float(pair_future.iloc[0]), summary_future_si, rel_tol=1e-9, abs_tol=1e-9
+            ):
+                raise ValueError(
+                    f"Pair time-series forecast for {summary_future_year} does not match the explorer "
+                    f"summary ({pair_future.iloc[0] if not pair_future.empty else 'missing'} vs {summary_future_si})."
+                )
 
             # The Matplotlib source plot shows observed SI for each calendar
             # year through the latest observed pair year. Nulls preserve gaps.
@@ -206,7 +222,7 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "source": str(si_path.relative_to(ROOT)),
-        "method": "amr.si.core.fit_predict_yearly_si_loess used by plot_single_pair_si",
+        "method": "amr.si.core.fit_predict_yearly_si_loess using the Notebook 06 SI dataset and forecast settings; 2028 predictions are checked against the explorer summary",
         "fit_settings": {
             "fit_start_year": fit_start_year,
             "fit_end_year": fit_end_year,
