@@ -1,245 +1,86 @@
-# Pathogen Atlas — Antimicrobial Resistance (Refactored Workflow)
+<div align="center">
+  <img src="sites/amr-si-explorer/dist/amr-explorer-logo.png" alt="AMR SI Explorer logo: bacterium and resistance shield" width="150">
+</div>
 
-[![DOI](https://zenodo.org/badge/1220110463.svg)](https://doi.org/10.5281/zenodo.23689422)
+# AMR SI Explorer
 
-Version v0.1.0 DOI: [10.5281/zenodo.23689423](https://doi.org/10.5281/zenodo.23689423).
+*Scientific interest in antimicrobial resistance*
 
-This project uses a module-first workflow with nineteen active
-notebooks:
+**How is research attention to antimicrobial resistance changing across pathogen–antibiotic pairs?**
 
-0. `notebooks/00_configure_pipeline.ipynb`
-1. `notebooks/01_prepare_inputs.ipynb`
-2. `notebooks/02_estimate_llm_screening_cost.ipynb`
-3. `notebooks/03_query_examples.ipynb`
-4. `notebooks/04_collect_yearly_data.ipynb`
-5. `notebooks/04a_prepare_candidate_abstracts.ipynb`
-6. `notebooks/04b_predict_candidate_pairs.ipynb`
-7. `notebooks/04c_build_screened_dataset.ipynb`
-8. `notebooks/05_model_scientific_interest.ipynb`
-9. `notebooks/05a_analyze_si_drivers.ipynb`
-10. `notebooks/06_glass_interactive_si_shift.ipynb`
-11. `notebooks/07_glass_dedicated_pair_plots.ipynb`
-12. `notebooks/08_inspect_pair_pmids.ipynb`
-13. `notebooks/specialized/10a_prepare_si_concept_corpus.ipynb`
-14. `notebooks/specialized/10b_seed_and_refine_concepts.ipynb`
-15. `notebooks/specialized/10c_classify_abstract_concepts.ipynb`
-16. `notebooks/specialized/10d_evaluate_and_refine_concepts.ipynb`
-17. `notebooks/specialized/10f_automated_concept_refinement.ipynb`
-18. `notebooks/specialized/10e_confirm_si_concepts.ipynb`
-19. `notebooks/specialized/11_wikipedia_antibiotic_references.ipynb`
+This project collects and screens PubMed records, estimates pair-level scientific interest (SI), and explores projected changes in an interactive atlas. Its central idea is to compare AMR publication activity for a pathogen–antibiotic pair with the activity expected from the general research attention to that pathogen and antibiotic.
 
-All earlier exploratory notebooks are considered legacy and should remain archived.
+<div align="center">
+  <a href="https://fabriziocosta.github.io/Antimicrobial-Resistance/">Open the AMR SI Explorer →</a>
+</div>
 
-## Documentation
+## What SI means
 
-Detailed project documents live in `docs/`:
+For each pathogen–antibiotic pair and year, the workflow counts papers that report resistance for that exact pair. A pooled model estimates the expected pair-level log-count from the general publication activity for the pathogen and antibiotic, together with pooled pathogen and antibiotic effects. SI is the difference between the observed and expected log-counts:
 
-- [Data collection and filtering process](docs/data_collection_and_filtering.md)
-- [Scientific interest modeling notes](docs/scientific_interest.md)
-- [SI driver classification analysis](docs/si_driver_classification_analysis.md)
-- [Scientific-interest concept discovery](docs/specialized/si_concept_discovery.md)
-- [Scientific-interest concept discovery research plan](docs/specialized/si_concept_discovery_plan.md)
-- [Collaborator communications log](collaborator_communications/communications.md)
-
-## AMR SI Explorer
-
-The live [AMR SI Explorer](https://fabriziocosta.github.io/Antimicrobial-Resistance/) is published on GitHub Pages from the committed files in `sites/amr-si-explorer/dist/`. The deployment workflow, `.github/workflows/deploy-amr-si-explorer.yml`, deploys automatically when the explorer files change on `main`; it can also be run manually from the Actions tab. PMID confidence, date and sorting controls, paper-title loading, pathogen links, and antibiotic Wikipedia links are served from this repository.
-
-Run `notebooks/11_wikipedia_antibiotic_references.ipynb` to refresh the antibiotic-to-Wikipedia table and browser payload before publishing changes to the explorer.
-
-## Repository Layout
-
-- `assets/`: static lookup inputs used by the notebooks and PubMed query builders.
-- `notebooks/`: active notebook workflow entrypoints.
-- `outputs/parquets/`: generated parquet tables and caches, versioned with Git LFS
-  because they are expensive to rebuild.
-- `outputs/pipeline_config.yaml`: versioned configuration snapshot used to reproduce
-  the current notebook outputs.
-- `outputs/figures/`: generated plots, kept local and excluded from Git because they
-  can be reconstructed from the versioned parquet outputs.
-- `amr/pubmed/`: PubMed query construction, Entrez retrieval, metadata, and yearly PMID transforms.
-- `amr/screening/`: LLM-assisted abstract screening and screened-pair dataset builders.
-- `amr/si/`: scientific-interest modeling, forecasting, ranking, driver summaries, and plots.
-- `amr/pipelines/`: notebook-facing orchestration functions.
-
-## Active Workflow
-
-Static lookup inputs live in `assets/`; generated parquet outputs are written under `outputs/parquets/`.
-
-### Notebook 00: `notebooks/00_configure_pipeline.ipynb`
-
-Writes the shared YAML configuration used by the remaining notebooks.
-
-### Notebook 01: `notebooks/01_prepare_inputs.ipynb`
-
-Prepares static input assets. It downloads/validates the pathogen priority list and builds antibiotic lookup CSVs from `assets/antibiotic_list3.xlsx`:
-
-- `assets/antibiotic_synonym_lookup.csv`
-- `assets/antibiotic_coarsening_lookup.csv`
-
-### Notebook 02: `notebooks/02_estimate_llm_screening_cost.ipynb`
-
-Estimates LLM screening costs before collection. It can project from an existing pilot candidate set to the configured pathogen count, while excluding rows already present in the decisions parquet.
-
-### Notebook 03: `notebooks/03_query_examples.ipynb`
-
-Prints example PubMed queries, cache preflight summaries, and prompt templates before collection.
-
-### Notebook 04: `notebooks/04_collect_yearly_data.ipynb`
-
-Collects yearly candidates and background marginals:
-
-- Collects pathogen-antibiotic PMIDs through PubMed interval queries.
-- Converts pair-PMID associations to yearly counts from publication dates.
-- Collects yearly background publication counts for pathogens and antibiotics.
-- Supports partitioned collection runs via `SLICE_START_YEAR` / `SLICE_END_YEAR`.
-
-Primary APIs:
-
-- `amr.pipelines.collection.collect_yearly_amr_dataset(...)`
-- `amr.pipelines.collection.collect_yearly_background_counts(...)`
-
-Run the screening stages in this order after collection:
-
-1. `04a_prepare_candidate_abstracts.ipynb` fills `pmid_abstracts.parquet` for
-   every unique candidate PMID. Existing cache rows are reused, no-abstract
-   results are retained, and failed fetches are retried on later runs.
-2. `02_estimate_llm_screening_cost.ipynb` estimates both LLM and Jev costs.
-   It stops with missing PMID examples if abstract cache coverage is incomplete.
-3. `04b_predict_candidate_pairs.ipynb` runs the active LLM or System 1 source
-   for the configured year slice. The prediction stores remain separate and
-   resume independently.
-4. `04c_build_screened_dataset.ipynb` applies the configured resistance-only Jev run and cutoff and writes run provenance beside the screened parquet. Final analysis requires human validation; `provisional_uncalibrated` is available for explicitly exploratory outputs and remains marked uncalibrated.
-5. `05_model_scientific_interest.ipynb` checks that provenance, then builds SI and ranks future high-interest pathogen–antibiotic resistance pairs. Provisional inputs are labeled in notebook output and provenance.
-6. Context-category driver analysis is retired. The current SI analysis counts papers that explicitly report resistance for the exact pair.
-
-The broad PubMed query remains a candidate-retrieval step; it does not make a paper eligible for SI. The resistance-only Jev question requires explicit evidence that the exact pathogen is resistant to the exact antibiotic. The first run is isolated by a new run ID and question version. In `outputs/review/resistance_screen_review_sample.csv`, label `resistance_demonstrated` as `yes` or `no` from the title and abstract for the exact pair. Preserve `review_split`, scores, and sampling weights. The score-stratified sample has calibration and holdout records assigned before review. Then run `scripts/calibrate_resistance_screen.py`; it selects the highest-coverage threshold meeting 90% precision on calibration records and marks the screen validated only if holdout precision also reaches 90%. Until then, set `threshold_calibration_status` to `provisional_uncalibrated` only for exploratory output; the site and manuscript must identify that status clearly. A Jev spot check is saved at `outputs/review/resistance_screen_prompt_spot_check.csv`. Jev credentials can come from `OPENROUTER_API_KEY` or a macOS Keychain item; the default request concurrency is 128.
-
-### Notebook 05: `notebooks/05_model_scientific_interest.ipynb`
-
-Performs SI modeling and forecasting:
-
-- Builds yearly SI with pooled background-adjusted baseline.
-- Forecasts future SI using yearly LOESS count modeling.
-- Ranks pairs for reliable future high scientific interest.
-- Produces focused plots and shape screens for shortlisted pairs.
-
-Primary APIs:
-
-- `amr.pipelines.si.build_yearly_si_dataset(...)`
-- `amr.pipelines.si.rank_future_high_interest_pairs(...)`
-
-### Notebook 05a: `notebooks/05a_analyze_si_drivers.ipynb`
-
-Retired. Paper-context categories are not part of the resistance-only SI measure.
-
-### Notebooks 10a–10f: SI concept discovery
-
-Run these after notebook 05 has produced `yearly_si.parquet` and the abstract cache is available. The suite builds a deterministic pair-level development/confirmation split, manages a versioned concept catalog, classifies each unique abstract, evaluates rolling forecasts, and confirms the frozen catalog on held-out pairs. Notebook 10f is stand-alone: it prepares the corpus and pair split itself, and exposes corpus, model, forecast, refinement, and final attribution settings in its setup cell. Its `N_ITER`, `K_PARENTS`, and `NUM_CHILDREN` settings control the Pareto-guided development search; `ATTRIBUTION_NUM_PAIRS` (default 3) selects the highest-SI development pairs for the final exploratory concept ranking. The staged 10a–10e notebooks expose the same steps and shared helpers for inspection; 10f automates the corpus-to-development loop, while 10e remains the separate held-out confirmation step after freezing the catalog.
-
-Artifacts are saved under `outputs/concept_search/`. Notebook 10e also writes pair-level, assumption-dependent concept-attribution rankings; read them as exploratory estimates rather than identified causal effects. Notebook 10f's phylogeny uses readable short labels and saves a full node index beside the plot. See [docs/specialized/si_concept_discovery.md](docs/specialized/si_concept_discovery.md) for methods and interpretation limits.
-
-### Notebook 06: `notebooks/06_glass_interactive_si_shift.ipynb`
-
-Builds interactive GLASS comparisons, future-SI shift plots, and their raw plotted
-tables from the screened and modeled outputs.
-
-### Notebook 07: `notebooks/07_glass_dedicated_pair_plots.ipynb`
-
-Produces dedicated longitudinal plots for selected GLASS pathogen–antibiotic pairs.
-
-### Notebook 08: `notebooks/08_inspect_pair_pmids.ipynb`
-
-Exports and inspects the PMIDs, titles, abstracts, and screening decisions for a
-configured pathogen–antibiotic pair.
-
-## Canonical Data Contracts
-
-- `outputs/parquets/candidate_amr_pair_year_counts.parquet`
-  - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
-- `outputs/parquets/yearly_amr_screened_pairs.parquet`
-  - Columns: `pathogen`, `antibiotic`, `year`, `count`, `pmids`
-  - Rebuilt from the active LLM or System 1 prediction source and its configured selection rule
-- `outputs/parquets/yearly_amr_system1_decisions.parquet`
-  - Append-preserving System 1 prediction runs with `system1_p_yes`, status, model, and run metadata
-- `outputs/parquets/yearly_si.parquet`
-  - Includes `bg_pathogen_n`, `bg_antibiotic_n`, `expected_log_count_global`, `SI`
-- `outputs/parquets/yearly_si_ranked_future.parquet`
-  - Per-pair forecast and rank-shift outputs for future SI, including `total_publications`
-
-## Installation
-
-Python 3.10+ is required.
-
-```bash
-pip install -e ".[dev,notebooks]"
+```text
+SI = log1p(observed AMR publication count) − expected log-count
 ```
 
-Optional model backends:
+Positive SI means the pair receives more AMR research attention than the baseline expects; negative SI means less. The Explorer shows forecast SI and its annualized gradient to help readers find pairs whose research attention is high or changing.
+
+**SI measures publication attention. It is not a clinical resistance rate, a measure of disease burden, or a prediction of future pathogenic threat.** PubMed searches find candidate papers; only papers passing the resistance-specific screen contribute to the SI counts. Screen provenance is marked as validated or provisional in the published data.
+
+## Explore
+
+The [AMR SI Explorer](https://fabriziocosta.github.io/Antimicrobial-Resistance/) lets you:
+
+- Search and filter pathogen–antibiotic pairs, including GLASS matches.
+- Compare projected future SI with its annualized gradient, and adjust the quadrant thresholds.
+- Select a pair to view its yearly SI and publication counts, plus its linked PubMed records.
+- Explore a collapsed map of antibiotic profiles weighted by future SI.
+- Download the currently filtered pairs as CSV.
+
+The site is a static browser application. It uses precomputed data committed in [`sites/amr-si-explorer/dist/`](sites/amr-si-explorer/dist/) and does not fit models in the browser. Changes to the Explorer payload on `main` trigger the [GitHub Pages deployment workflow](.github/workflows/deploy-amr-si-explorer.yml). See the [Explorer guide](sites/amr-si-explorer/README.md) to rebuild its data.
+
+## Analysis workflow
+
+The notebooks orchestrate a modular Python pipeline. The main sequence is:
+
+| Stage | Notebook | Purpose |
+| --- | --- | --- |
+| Configure | [`00_configure_pipeline.ipynb`](notebooks/00_configure_pipeline.ipynb) | Set the shared run configuration. |
+| Prepare inputs | [`01_prepare_inputs.ipynb`](notebooks/01_prepare_inputs.ipynb) | Build canonical pathogen and antibiotic lookup tables. |
+| Collect | [`04_collect_yearly_data.ipynb`](notebooks/04_collect_yearly_data.ipynb) | Retrieve PubMed candidates and background publication counts. |
+| Prepare and screen | [`04a_prepare_candidate_abstracts.ipynb`](notebooks/04a_prepare_candidate_abstracts.ipynb), [`04b_predict_candidate_pairs.ipynb`](notebooks/04b_predict_candidate_pairs.ipynb), [`04c_build_screened_dataset.ipynb`](notebooks/04c_build_screened_dataset.ipynb) | Cache abstracts, screen exact pairs for reported resistance, and assemble the yearly dataset. Notebook [`02_estimate_llm_screening_cost.ipynb`](notebooks/02_estimate_llm_screening_cost.ipynb) helps plan screening before a run. |
+| Model and rank | [`05_model_scientific_interest.ipynb`](notebooks/05_model_scientific_interest.ipynb) | Estimate yearly SI, forecast publication counts, and rank pairs. |
+| Inspect | [`06_glass_interactive_si_shift.ipynb`](notebooks/06_glass_interactive_si_shift.ipynb), [`07_glass_dedicated_pair_plots.ipynb`](notebooks/07_glass_dedicated_pair_plots.ipynb), [`08_inspect_pair_pmids.ipynb`](notebooks/08_inspect_pair_pmids.ipynb) | Compare with GLASS records, plot selected pairs, and inspect their papers. |
+
+Additional notebooks support SI concept discovery, antibiotic reference links, and exploratory analyses. See [the SI methods](docs/scientific_interest.md), [data collection and screening](docs/data_collection_and_filtering.md), and [specialized analysis guides](docs/specialized/).
+
+## Install
+
+Python 3.10 or newer is required. To install the notebook and modeling dependencies and retrieve the versioned parquet data:
 
 ```bash
-pip install -e ".[llm]"
-```
-
-Optional SI smoothing backend:
-
-```bash
-pip install -e ".[loess]"
-```
-
-The computed parquet cache uses [Git LFS](https://git-lfs.com/). After cloning,
-install Git LFS and retrieve the cached datasets:
-
-```bash
+python -m pip install -e ".[dev,notebooks,loess]"
 git lfs install
 git lfs pull
 ```
 
-### Re-running the SI and GLASS notebooks from a clone
-
-After installing the project and running `git lfs pull`, notebooks 05–08 can use the
-versioned configuration, static assets, and parquet caches directly:
+The optional `llm` extra installs the OpenAI client for workflows that use it:
 
 ```bash
-pip install -e ".[dev,notebooks,loess]"
-git lfs pull
+python -m pip install -e ".[llm]"
 ```
 
-Run notebooks 05, 06, 07, and 08 in order after a validated resistance-only screen
-has been rebuilt, or use explicit provisional mode for exploratory outputs. Notebook 05 rebuilds SI and ranking parquets from that screened
-dataset and the background-count caches. Notebooks 06 and 07 rebuild GLASS comparisons
-and figures; notebook 08 rebuilds the selected pair-PMID Excel export. Generated figures
-and exports remain local.
+PubMed collection requires an Entrez contact email. Screening providers may require credentials; keep credentials in environment variables or the local system keychain and out of committed configuration.
 
-Run notebook 00 first only when intentionally changing the tracked configuration
-snapshot.
+## Repository map
 
-## Runtime Requirements
+- [`amr/`](amr/) — PubMed collection, resistance screening, SI modeling, forecasting, and pipeline APIs.
+- [`notebooks/`](notebooks/) — pipeline entrypoints and exploratory analyses.
+- [`assets/`](assets/) — pathogen and antibiotic lists, synonyms, and other static inputs.
+- [`outputs/parquets/`](outputs/parquets/) — versioned intermediate and analysis tables stored with Git LFS.
+- [`docs/`](docs/) — methods, data handling, and research notes.
+- [`sites/amr-si-explorer/`](sites/amr-si-explorer/) — static Explorer and data builders.
+- [`archive/`](archive/) — legacy code and notebooks retained for historical reference.
 
-- PubMed access: use a real contact email with Entrez calls.
-- LLM backend: configure OpenAI or Ollama credentials.
-- Existing parquet caches are reusable and supported.
+## Citation
 
-## Migration Notes
-
-- The legacy second-pass screen in `amr.refined_filtering` is deprecated.
-- Use `run_unified_llm_filter` as the canonical screening path.
-- Legacy notebooks are kept for reproducibility only and should not be extended.
-
-## Incremental Update Pattern
-
-The refactored pipeline is designed for yearly (or multi-year slice) updates:
-
-1. Update shared settings in notebook 00 if required.
-2. Run notebook 04 on a slice (for example `2027-2027` or `2025-2027`), then run
-   `04a → 02 → 04b → 04c` in order.
-3. Collection and prediction outputs resume into their canonical stores:
-   - `outputs/parquets/candidate_amr_pair_year_counts.parquet`
-   - `outputs/parquets/candidate_amr_pair_pmid_links.parquet`
-   - `outputs/parquets/yearly_amr_unified_decisions.parquet`
-   - `outputs/parquets/yearly_amr_system1_decisions.parquet`
-   - `outputs/parquets/yearly_amr_screened_pairs.parquet` (rebuilt from the
-     selected source, run ID, and threshold)
-4. Re-run notebook 05 with the chosen modeling window, then notebook 05a to refresh driver analyses.
-5. Re-run notebooks 06–08 as needed to refresh comparisons, figures, and PMID
-   inspection exports.
+Citation metadata is maintained in [`CITATION.cff`](CITATION.cff). Please cite the project when reusing its code or results.
