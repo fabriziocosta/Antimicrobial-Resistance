@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="sites/amr-si-explorer/dist/amr-explorer-logo.png" alt="AMR SI Explorer logo: bacterium and resistance shield" width="150">
+  <img src="sites/amr-si-explorer/dist/amr-si-explorer-logo.svg" alt="AMR SI Explorer logo: bacterium and resistance shield over a globe" width="150">
 </div>
 
 # AMR SI Explorer
