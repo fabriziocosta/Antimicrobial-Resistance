@@ -1,6 +1,6 @@
 # AMR SI Explorer
 
-A static, browser-local Plotly viewer for resistance-focused SI pairs. It supports pathogen, antibiotic, and GLASS filters, editable quadrant thresholds, point selection, detailed hover records, and filtered CSV download. Pair counts and PMID lists are rebuilt from the resistance-only screen. Provisional data can be published for exploratory review, with an explicit uncalibrated status banner; final data require the human-reviewed precision target.
+A static, browser-local Plotly viewer for resistance-focused SI pairs. It supports pathogen, antibiotic, and GLASS filters, editable quadrant thresholds, point selection, detailed hover records, and filtered CSV download. Click the circled information buttons for definitions of SI, axes, rankings, and the plots. Pair counts and PMID lists are rebuilt from the resistance-only screen. Provisional data can be published for exploratory review, with an explicit uncalibrated status banner; final data require the human-reviewed precision target.
 
 The explorer version is tracked in `dist/version.json` and shown in the header; increment it with each release. Header author links follow Pathogen Atlas V2. The canonical public explorer is [AMR SI Explorer on GitHub Pages](https://fabriziocosta.github.io/Antimicrobial-Resistance/). Its static files are committed under `dist/` and deployed by `.github/workflows/deploy-amr-si-explorer.yml` whenever this directory changes on `main`.
 
