@@ -21,7 +21,7 @@
     .detail-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;flex:0 0 auto}
     .pmid-tools{display:flex;align-items:center;justify-content:flex-end;gap:10px;width:100%}.pmid-sort{height:31px;border:1px solid #d7e1e5;border-radius:7px;background:#fff;padding:0 8px;color:#526a7c;font:inherit;font-size:11px}.pmid-sort:focus{outline:3px solid #bfd7f3;border-color:#5284b4}.pmid-list{display:grid;grid-template-columns:1fr;gap:8px;padding:0 18px 17px;max-height:420px;overflow:auto}.pmid-paper{border:1px solid #e7edef;border-radius:12px;padding:10px 12px;background:#fcfdfd}.pmid-paper-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.pmid-paper a{color:#176c68;font-size:12px;font-weight:740;text-decoration:none;font-variant-numeric:tabular-nums}.pmid-paper a:hover{text-decoration:underline}.pmid-confidence{color:#566f75;font-size:11px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}.pmid-meta{margin-top:5px;color:#778895;font-size:11px}
 
-    .info-heading{display:flex;align-items:center;gap:7px}.summary-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#526a86;font-size:11px}.summary-heading strong{font-size:11px;font-weight:700}
+    .info-heading{display:flex;align-items:center;gap:7px}.detail-title-row{display:flex;align-items:center;gap:9px;min-width:0}.detail-title-row .pair-name{min-width:0}.summary-heading{display:flex;align-items:center;justify-content:flex-start;gap:8px;color:#526a86;font-size:11px}.summary-heading strong{font-size:11px;font-weight:700}
     .info-button{display:inline-grid;place-items:center;flex:0 0 19px;width:19px;height:19px;padding:0;border:1px solid #b9c8d8;border-radius:50%;background:#fff;color:#607993;font:700 12px/1 Georgia,serif;cursor:pointer;vertical-align:middle}
     .info-button:hover,.info-button[aria-expanded="true"]{border-color:#5b86ad;background:#edf4fb;color:#214d75}.info-button:focus-visible,.info-close:focus-visible{outline:3px solid #bfd7f3;outline-offset:2px}
     .info-popover{position:fixed;z-index:10000;width:min(400px,calc(100vw - 24px));max-height:min(72vh,560px);overflow:auto;padding:15px 16px 16px;border:1px solid #cbd8e5;border-radius:12px;background:#fff;box-shadow:0 14px 42px rgba(25,48,76,.2);color:var(--ink)}.info-popover.hidden{display:none}
@@ -37,7 +37,7 @@
         <img class="brand-logo" src="./amr-explorer-logo.png" alt="AMR Explorer emblem: a bacterium inside a circle with a resistance shield">
         <div class="brand-copy">
           <div class="brand-kicker">Antimicrobial resistance · scientific interest</div>
-          <h1 class="brand-title"><span>AMR</span><span class="brand-accent">Explorer</span><span class="brand-version" id="appVersion">v1.0.9</span></h1>
+          <h1 class="brand-title"><span>AMR</span><span class="brand-accent">Explorer</span><span class="brand-version" id="appVersion">v1.0.10</span></h1>
         </div>
       </div>
       <div class="brand-meta">
@@ -48,7 +48,7 @@
     <section class="workspace">
       <div class="sidebar">
       <aside class="panel">
-        <h2 class="info-heading">Explore the pairs <button type="button" class="info-button" data-info="filters" aria-label="Information about explorer filters" aria-haspopup="dialog" aria-expanded="false">i</button></h2>
+        <h2 class="info-heading"><button type="button" class="info-button" data-info="filters" aria-label="Information about explorer filters" aria-haspopup="dialog" aria-expanded="false">i</button>Explore the pairs</h2>
         <form id="filters" onsubmit="return false">
           <div class="field"><label for="search">Search bacteria or antibiotic</label><input id="search" type="search" placeholder="e.g. E. coli, ceftriaxone" autocomplete="off"></div>
           <div class="field"><label for="bacteria">Bacterium</label><select id="bacteria"><option value="">All bacteria</option></select></div>
@@ -56,7 +56,7 @@
           <label class="check"><input id="glassOnly" type="checkbox"> GLASS pairs only</label>
           <label class="check"><input id="showLabels" type="checkbox"> Label selected high-shift pairs</label>
           <div class="thresholds">
-            <h2 class="info-heading">Quadrant thresholds <button type="button" class="info-button" data-info="thresholds" aria-label="Information about quadrant thresholds" aria-haspopup="dialog" aria-expanded="false">i</button></h2>
+            <h2 class="info-heading"><button type="button" class="info-button" data-info="thresholds" aria-label="Information about quadrant thresholds" aria-haspopup="dialog" aria-expanded="false">i</button>Quadrant thresholds</h2>
             <div class="threshold-grid">
               <div><label for="xThreshold">Predicted future SI</label><input id="xThreshold" type="number" step="0.01" value="0"></div>
               <div><label for="yThreshold">SI Gradient (SI/year)</label><input id="yThreshold" type="number" step="0.01" value="0"></div>
@@ -67,7 +67,7 @@
         </form>
       </aside>
         <section class="summary" aria-label="Figure summary">
-          <div class="summary-heading"><strong>Current view</strong><button type="button" class="info-button" data-info="view-summary" aria-label="Information about current view counts" aria-haspopup="dialog" aria-expanded="false">i</button></div>
+          <div class="summary-heading"><button type="button" class="info-button" data-info="view-summary" aria-label="Information about current view counts" aria-haspopup="dialog" aria-expanded="false">i</button><strong>Current view</strong></div>
           <div class="metric"><strong id="visibleCount">—</strong><span>Pairs shown</span></div>
           <div class="metric"><strong id="bacteriaCount">—</strong><span>Bacteria shown</span></div>
           <div class="metric"><strong id="antibioticCount">—</strong><span>Antibiotics shown</span></div>
@@ -76,28 +76,28 @@
         </section>
       </div>
       <div class="main">
-        <section class="chart-card"><div class="chart-head"><h2>AMR scientific-interest outlook</h2><button type="button" class="info-button" data-info="main-chart" aria-label="Information about the main scatter plot" aria-haspopup="dialog" aria-expanded="false">i</button></div><div id="chart" role="img" aria-label="Interactive scatter plot of predicted future scientific interest against its annualized SI gradient"></div></section>
+        <section class="chart-card"><div class="chart-head"><button type="button" class="info-button" data-info="main-chart" aria-label="Information about the main scatter plot" aria-haspopup="dialog" aria-expanded="false">i</button><h2>AMR scientific-interest outlook</h2></div><div id="chart" role="img" aria-label="Interactive scatter plot of predicted future scientific interest against its annualized SI gradient"></div></section>
         <details class="future-profile-panel" id="futureProfilePanel">
-          <summary><span>Future-SI-weighted Atlas profiles</span><span class="future-profile-hint" id="futureProfileHint">All forecast antibiotics · expand to view</span><button type="button" class="info-button" data-info="future-profiles" aria-label="Information about future-SI-weighted Atlas profiles" aria-haspopup="dialog" aria-expanded="false">i</button></summary>
+          <summary><button type="button" class="info-button" data-info="future-profiles" aria-label="Information about future-SI-weighted Atlas profiles" aria-haspopup="dialog" aria-expanded="false">i</button><span>Future-SI-weighted Atlas profiles</span><span class="future-profile-hint" id="futureProfileHint">All forecast antibiotics · expand to view</span></summary>
           <div class="future-profile-inner">
             <div id="futureProfileMap" role="img" aria-label="Interactive IMSTE projection of future-SI-weighted antibiotic profiles"></div>
           </div>
         </details>
-        <section class="details" id="details" aria-live="polite"><div class="details-top"><div class="pair-name" id="detailTitle">Select a circle to inspect a pair</div><div class="detail-actions"><button type="button" class="info-button" data-info="pair-details" aria-label="Information about selected-pair metrics" aria-haspopup="dialog" aria-expanded="false">i</button><div id="glassPill" class="glass-pill hidden">GLASS match</div></div></div><div id="detailGrid" class="detail-grid"></div></section>
+        <section class="details" id="details" aria-live="polite"><div class="details-top"><div class="detail-title-row"><button type="button" class="info-button" data-info="pair-details" aria-label="Information about selected-pair metrics" aria-haspopup="dialog" aria-expanded="false">i</button><div class="pair-name" id="detailTitle">Select a circle to inspect a pair</div></div><div class="detail-actions"><div id="glassPill" class="glass-pill hidden">GLASS match</div></div></div><div id="detailGrid" class="detail-grid"></div></section>
         <details class="ranking-panel" id="rankYPanel">
-          <summary><span>Rank pairs by SI Gradient</span><span class="ranking-hint" id="rankYHint"></span><button type="button" class="info-button" data-info="rank-gradient" aria-label="Information about ranking by SI gradient" aria-haspopup="dialog" aria-expanded="false">i</button></summary>
+          <summary><button type="button" class="info-button" data-info="rank-gradient" aria-label="Information about ranking by SI gradient" aria-haspopup="dialog" aria-expanded="false">i</button><span>Rank pairs by SI Gradient</span><span class="ranking-hint" id="rankYHint"></span></summary>
           <div class="ranking-inner"><div class="ranking-chart" id="rankYChart" role="img" aria-label="Pairs ranked from highest to lowest by SI Gradient"></div></div>
         </details>
         <details class="ranking-panel" id="rankXPanel">
-          <summary><span>Rank pairs by predicted future SI</span><span class="ranking-hint" id="rankXHint"></span><button type="button" class="info-button" data-info="rank-future" aria-label="Information about ranking by future SI" aria-haspopup="dialog" aria-expanded="false">i</button></summary>
+          <summary><button type="button" class="info-button" data-info="rank-future" aria-label="Information about ranking by future SI" aria-haspopup="dialog" aria-expanded="false">i</button><span>Rank pairs by predicted future SI</span><span class="ranking-hint" id="rankXHint"></span></summary>
           <div class="ranking-inner"><div class="ranking-chart" id="rankXChart" role="img" aria-label="Pairs ranked from highest to lowest by predicted future scientific interest"></div></div>
         </details>
         <details class="pair-plot-panel" id="pairPlotPanel">
-          <summary><span id="pairPlotSummary">Yearly SI and publication counts</span><span class="pair-plot-hint" id="pairPlotHint">Select a pair to view</span><button type="button" class="info-button" data-info="yearly-plot" aria-label="Information about the yearly SI and publication plot" aria-haspopup="dialog" aria-expanded="false">i</button></summary>
+          <summary><button type="button" class="info-button" data-info="yearly-plot" aria-label="Information about the yearly SI and publication plot" aria-haspopup="dialog" aria-expanded="false">i</button><span id="pairPlotSummary">Yearly SI and publication counts</span><span class="pair-plot-hint" id="pairPlotHint">Select a pair to view</span></summary>
           <div class="pair-plot-inner"><div id="pairPlot" class="pair-plot-empty">Select a pair above to view its yearly plot.</div></div>
         </details>
         <details class="pmid-panel" id="pmidPanel">
-          <summary><span id="pmidSummary">2025 PubMed records for the selected pair</span><span id="pmidCount" class="pmid-count">Select a point to load PMIDs</span><button type="button" class="info-button" data-info="pubmed" aria-label="Information about PubMed records" aria-haspopup="dialog" aria-expanded="false">i</button></summary>
+          <summary><button type="button" class="info-button" data-info="pubmed" aria-label="Information about PubMed records" aria-haspopup="dialog" aria-expanded="false">i</button><span id="pmidSummary">2025 PubMed records for the selected pair</span><span id="pmidCount" class="pmid-count">Select a point to load PMIDs</span></summary>
           <div class="pmid-toolbar"><div class="pmid-tools"><label class="sr-only" for="pmidSort">Sort PMIDs</label><select id="pmidSort" class="pmid-sort" aria-label="Sort PMIDs"><option value="date">Date: newest</option><option value="confidence">Confidence: high</option></select></div></div>
           <div id="pmidList" class="pmid-list"><p class="pmid-empty">Click a plotted pair to browse its PubMed abstracts.</p></div>
         </details>
