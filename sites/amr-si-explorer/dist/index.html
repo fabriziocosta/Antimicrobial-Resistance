@@ -29,7 +29,7 @@
         <img class="brand-logo" src="./amr-explorer-logo.png" alt="AMR Explorer emblem: a bacterium inside a circle with a resistance shield">
         <div class="brand-copy">
           <div class="brand-kicker">Antimicrobial resistance · scientific interest</div>
-          <h1 class="brand-title"><span>AMR</span><span class="brand-accent">Explorer</span><span class="brand-version" id="appVersion">v1.0.5</span></h1>
+          <h1 class="brand-title"><span>AMR</span><span class="brand-accent">Explorer</span><span class="brand-version" id="appVersion">v1.0.6</span></h1>
         </div>
       </div>
       <div class="brand-meta">
@@ -61,6 +61,8 @@
       </aside>
         <section class="summary" aria-label="Figure summary">
           <div class="metric"><strong id="visibleCount">—</strong><span>Pairs shown</span></div>
+          <div class="metric"><strong id="bacteriaCount">—</strong><span>Bacteria shown</span></div>
+          <div class="metric"><strong id="antibioticCount">—</strong><span>Antibiotics shown</span></div>
           <div class="metric"><strong id="glassCount">—</strong><span>GLASS matches</span></div>
           <button class="metric pmid-metric" id="pmidMetric" type="button" aria-label="Open the 2025 PubMed records for the selected pair"><strong id="pmidMetricValue">—</strong><span id="pmidMetricLabel">Select a point to load PMIDs</span></button>
         </section>
@@ -187,7 +189,7 @@
       Plotly.react(chart,ranked.length?traces:[],layout,{responsive:true,displaylogo:false,modeBarButtonsToRemove:['lasso2d','select2d']}).then(()=>{if(!chart.__rankClickAttached){chart.on('plotly_click',ev=>{const pair=ev.points?.[0]?.customdata;if(!pair)return;const match=state.filtered.find(r=>r.pathogen===pair[0]&&r.antibiotic===pair[1]);if(match){state.selected=match;state.pmidYear=2025;render();}});chart.__rankClickAttached=true;}});
     }
   }
-  function render(){state.filtered=visible();el('visibleCount').textContent=state.filtered.length.toLocaleString();el('glassCount').textContent=state.filtered.filter(r=>r.is_glass_pair).length.toLocaleString();
+  function render(){state.filtered=visible();el('visibleCount').textContent=state.filtered.length.toLocaleString();el('bacteriaCount').textContent=new Set(state.filtered.map(r=>r.pathogen)).size.toLocaleString();el('antibioticCount').textContent=new Set(state.filtered.map(r=>r.antibiotic)).size.toLocaleString();el('glassCount').textContent=state.filtered.filter(r=>r.is_glass_pair).length.toLocaleString();
     if(state.selected&&!state.filtered.includes(state.selected)){state.selected=null;state.pmidYear=2025;}
     const rows=state.filtered;renderRankingPlots(rows);const xRange=bounds(rows,'future_predicted_SI',state.thresholdX);const yRange=boundsValues(rows.map(siGradient),state.thresholdY);
     const trace={type:'scatter',mode:el('showLabels').checked?'markers+text':'markers',x:rows.map(r=>r.future_predicted_SI),y:rows.map(siGradient),text:labels(rows),textposition:'middle right',textfont:{size:10,color:'#203b5e'},hovertext:rows.map(tooltip),hovertemplate:'%{hovertext}<extra></extra>',customdata:rows.map(r=>[r.pathogen,r.antibiotic]),marker:{size:rows.map(r=>r.is_glass_pair?13:9),opacity:.8,color:rows.map(r=>r.post_fit_count_abs_pct_error_mean),colorscale:[[0,'#2166ac'],[1,'#f4f7fa']],cmin:0,cmax:75,showscale:true,colorbar:{title:{text:'Mean abs<br>count error (%)'},len:.62,thickness:13},line:{color:rows.map(r=>r.is_glass_pair?'#141c27':'#66788d'),width:rows.map(r=>r.is_glass_pair?2.8:1)}} ,name:'Pairs',showlegend:false};
