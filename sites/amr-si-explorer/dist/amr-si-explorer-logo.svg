@@ -1,53 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="logo-title logo-description">
   <title id="logo-title">AMR SI Explorer</title>
-  <desc id="logo-description">A bacterium and resistance shield over a geometric latitude and longitude globe.</desc>
+  <desc id="logo-description">The original bacterium and resistance shield artwork, placed over a geometric globe.</desc>
   <defs>
-    <clipPath id="globe">
-      <circle cx="128" cy="128" r="108"/>
-    </clipPath>
-    <mask id="bacterium-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+    <clipPath id="globe"><circle cx="128" cy="128" r="108"/></clipPath>
+    <mask id="art-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
       <rect width="256" height="256" fill="white"/>
-      <rect x="88" y="42" width="80" height="172" rx="40" fill="black"/>
+      <rect x="95" y="68" width="66" height="119" rx="33" fill="black"/>
     </mask>
   </defs>
-
-  <!-- The globe is constructed from a true circle and clipped meridians. -->
-  <circle cx="128" cy="128" r="108" stroke="#132a43" stroke-width="9"/>
-  <g clip-path="url(#globe)" mask="url(#bacterium-clearance)" stroke="#132a43" stroke-width="3.2" opacity="0.9">
-    <ellipse cx="128" cy="128" rx="57" ry="108"/>
-    <ellipse cx="128" cy="128" rx="107" ry="46"/>
+  <!-- Geometric globe, drawn behind the preserved artwork. -->
+  <circle cx="128" cy="128" r="108" stroke="#132a43" stroke-width="9.3"/>
+  <g clip-path="url(#globe)" mask="url(#art-clearance)" stroke="#132a43" stroke-width="3.2">
+    <ellipse cx="128" cy="128" rx="58" ry="108"/>
+    <ellipse cx="128" cy="128" rx="108" ry="47"/>
   </g>
-
-  <!-- Rod-shaped bacterium, drawn as a clear foreground mark. -->
-  <g stroke="#132a43" stroke-linecap="round" stroke-linejoin="round">
-    <g fill="none" stroke-width="3.5">
-      <path d="M94 82c-9 0-10-8-19-8s-10 6-17 4"/>
-      <path d="M92 103c-10 1-12-7-21-5s-9 8-16 7"/>
-      <path d="M91 125c-10 0-12-7-21-4s-8 8-15 8"/>
-      <path d="M92 147c-10-1-12-8-21-6s-8 9-15 9"/>
-      <path d="M94 170c-9-2-11-9-19-8s-10 6-16 5"/>
-      <path d="M162 82c9 0 10-8 19-8s10 6 17 4"/>
-      <path d="M164 103c10 1 12-7 21-5s9 8 16 7"/>
-      <path d="M165 125c10 0 12-7 21-4s8 8 15 8"/>
-      <path d="M164 147c10-1 12-8 21-6s8 9 15 9"/>
-      <path d="M162 170c9-2 11-9 19-8s10 6 16 5"/>
-      <path d="M108 56c0-7-5-9-9-10m29 10c1-7-2-10 0-14m20 14c1-6 5-8 10-9"/>
-      <path d="M108 200c0 7-5 9-9 10m29-10c1 7-2 10 0 14m20-14c1 6 5 8 10 9"/>
-    </g>
-    <rect x="91" y="53" width="74" height="150" rx="37" fill="#f7f9fc" stroke-width="5.5"/>
-    <rect x="101" y="62" width="54" height="132" rx="27" fill="#f7f9fc" stroke-width="2.5"/>
-    <g fill="none" stroke-width="3.1">
-      <path d="M115 81c28 10-8 18 20 29s-8 19 20 30-8 19-20 30 8 18-20 25"/>
-      <path d="M141 81c-28 10 8 18-20 29s8 19-20 30 8 19 20 30-8 18 20 25"/>
-    </g>
-    <g stroke-width="2.3">
-      <path d="M117 84h22M119 97h18M120 110h16M118 123h20M117 136h22M120 149h16M119 162h18M117 175h22"/>
-    </g>
-  </g>
-
-  <!-- The resistance shield sits in front of the globe's eastern edge. -->
-  <g stroke="#137c73" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M178 111l21-7 21 7-2 20c-2 14-9 24-19 31-10-7-17-17-19-31z" fill="#f7f9fc" stroke-width="5"/>
-    <path d="m188 128 8 8 15-17" stroke-width="4.5"/>
-  </g>
+  <!-- A matching-color underlay keeps globe lines behind the original transparent shield. -->
+  <path d="M180 108l18-6 18 6-2 20c-2 12-7 20-16 27-9-7-14-15-16-27z" fill="#f7f9fc"/>
+  <image href="./amr-bacterium-shield.png" x="0" y="0" width="256" height="256"/>
 </svg>
