@@ -2,7 +2,7 @@
 
 A static, browser-local Plotly viewer for resistance-focused SI pairs. It supports pathogen, antibiotic, and GLASS filters, editable quadrant thresholds, point selection, detailed hover records, and filtered CSV download. Pair counts and PMID lists are rebuilt from the resistance-only screen. Provisional data can be published for exploratory review, with an explicit uncalibrated status banner; final data require the human-reviewed precision target.
 
-The canonical public explorer is [AMR SI Explorer on GitHub Pages](https://fabriziocosta.github.io/Antimicrobial-Resistance/). Its static files are committed under `dist/` and deployed by `.github/workflows/deploy-amr-si-explorer.yml` whenever this directory changes on `main`.
+The explorer version is tracked in `dist/version.json` and shown in the header; increment it with each release. The canonical public explorer is [AMR SI Explorer on GitHub Pages](https://fabriziocosta.github.io/Antimicrobial-Resistance/). Its static files are committed under `dist/` and deployed by `.github/workflows/deploy-amr-si-explorer.yml` whenever this directory changes on `main`.
 
 The explorer also includes a collapsed, explorer-wide Future-SI-weighted Atlas profile map, with one point per antibiotic, matching the notebook’s IMSTE view. Its coordinates and hover diagnostics are stored in `dist/future_si_profiles.json`; rerun `notebooks/exploratory_antibiotic_literature_similarity.ipynb` to regenerate that payload after changing forecast or IMSTE settings.
 
