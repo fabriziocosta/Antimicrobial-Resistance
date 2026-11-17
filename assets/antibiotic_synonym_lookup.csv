@@ -17,6 +17,10 @@ Azlocillin,Azlocillin
 Aztreonam,Aztreonam
 Bacampicilin,Bacampicillin
 Bacampicillin,Bacampicillin
+Bedaquiline,Bedaquiline
+R207910,Bedaquiline
+Sirturo,Bedaquiline
+TMC207,Bedaquiline
 Bekanamycin,Bekanamycin
 Benzathine benzylpenicillin,Benzathine-benzylpenicillin
 Benzathine penicillin G,Benzathine-benzylpenicillin
@@ -28,6 +32,10 @@ Benzylpenicillin,Benzylpenicillin
 Penicillin G,Benzylpenicillin
 Biapenem,Biapenem
 Brodimoprim,Brodimoprim
+Capastat,Capreomycin
+Capreomycin,Capreomycin
+Capreomycin sulfate,Capreomycin
+Capreomycin sulphate,Capreomycin
 Carbenicilin,Carbenicillin
 Carbenicillin,Carbenicillin
 Carindacillin,Carindacillin
@@ -156,6 +164,10 @@ Ciprofloxacin,Ciprofloxacin
 Ciprofloxacine,Ciprofloxacin
 Clarithromycin,Clarithromycin
 Clindamycin,Clindamycin
+B 663,Clofazimine
+Chlofazimine,Clofazimine
+Clofazimine,Clofazimine
+Lamprene,Clofazimine
 Clofoctol,Clofoctol
 Clometocillin,Clometocillin
 Clomocycline,Clomocycline
@@ -163,6 +175,10 @@ Cloxacillin,Cloxacillin
 Colistimethate sodium,Colistin
 Colistin,Colistin
 Polymyxin E,Colistin
+CS,Cycloserine
+Cycloserine,Cycloserine
+D-cycloserine,Cycloserine
+Seromycin,Cycloserine
 Dalbavancin,Dalbavancin
 Dalfopristin-quinupristin,Dalfopristin/quinupristin
 Dalfopristin/quinupristin,Dalfopristin/quinupristin
@@ -170,6 +186,10 @@ Quinupristin-dalfopristin,Dalfopristin/quinupristin
 Quinupristin/dalfopristin,Dalfopristin/quinupristin
 Daptomycin,Daptomycin
 Delafloxacin,Delafloxacin
+Delamanid,Delamanid
+Delaminid,Delamanid
+Deltyba,Delamanid
+OPC-67683,Delamanid
 Demeclocycline,Demeclocycline
 Demethylchlortetracycline,Demeclocycline
 Dibekacin,Dibekacin
@@ -184,6 +204,13 @@ Eravacycline,Eravacycline
 Ertapenem,Ertapenem
 Erythromycin,Erythromycin
 Erythromycine,Erythromycin
+EMB,Ethambutol
+Ethambutol,Ethambutol
+Ethambutol dihydrochloride,Ethambutol
+2-ethylthioisonicotinamide,Ethionamide
+ETA,Ethionamide
+Ethionamide,Ethionamide
+Trecator,Ethionamide
 Faropenem,Faropenem
 Fidaxomicin,Fidaxomicin
 Fleroxacin,Fleroxacin
@@ -213,6 +240,10 @@ Imipenem/cilastatin,Imipenem/cilastatin
 Imipenem-cilastatin-relebactam,Imipenem/cilastatin/relebactam
 Imipenem/cilastatin/relebactam,Imipenem/cilastatin/relebactam
 Isepamicin,Isepamicin
+INH,Isoniazid
+Isoniazid,Isoniazid
+Isonicotinic acid hydrazide,Isoniazid
+Isonicotinylhydrazine,Isoniazid
 Josamycin,Josamycin
 Kanamycin,Kanamycin
 Lascufloxacin,Lascufloxacin
@@ -264,6 +295,10 @@ Oxolinic acid,Oxolinic-acid
 Oxolinic-acid,Oxolinic-acid
 Oxytetracycline,Oxytetracycline
 Panipenem,Panipenem
+4-aminosalicylic acid,Para-aminosalicylic acid
+PAS,Para-aminosalicylic acid
+Para-aminosalicylic acid,Para-aminosalicylic acid
+p-aminosalicylic acid,Para-aminosalicylic acid
 Pazufloxacin,Pazufloxacin
 Pazufloxacine,Pazufloxacin
 Pefloxacin,Pefloxacin
@@ -291,13 +326,26 @@ Procaine benzylpenicillin,Procaine-benzylpenicillin
 Procaine-benzylpenicillin,Procaine-benzylpenicillin
 Procaine/benzylpenicillin,Procaine-benzylpenicillin
 Propicillin,Propicillin
+2-propylthioisonicotinamide,Prothionamide
+PTH,Prothionamide
+Prothionamide,Prothionamide
+Protionamide,Prothionamide
 Prulifloxacin,Prulifloxacin
 Prulifloxacine,Prulifloxacin
+PZA,Pyrazinamide
+Pyrazinamide,Pyrazinamide
+Pyrazine-2-carboxamide,Pyrazinamide
+Pyrazinecarboxamide,Pyrazinamide
 Ribostamycin,Ribostamycin
 Rifabutin,Rifabutin
 Rifampicin,Rifampicin
 Rifampin,Rifampicin
 Rifamycin,Rifamycin
+DL 473,Rifapentine
+DL-473,Rifapentine
+Priftin,Rifapentine
+Rifapentine,Rifapentine
+Rifamixin,Rifaximin
 Rifaximin,Rifaximin
 Rokitamycin,Rokitamycin
 Rolitetracycline,Rolitetracycline
@@ -403,10 +451,15 @@ Telavancin,Telavancin
 Telithromycin,Telithromycin
 Temafloxacin,Temafloxacin
 Temocillin,Temocillin
+Terizidona,Terizidone
+Terizidone,Terizidone
 Tetracyclin,Tetracycline
 Tetracycline,Tetracycline
 Thiamphenicol,Thiamphenicol
 Thiophenicol,Thiamphenicol
+TBI,Thioacetazone
+Thiacetazone,Thioacetazone
+Thioacetazone,Thioacetazone
 Ticarcillin,Ticarcillin
 Tigecycline,Tigecycline
 Tinidazole,Tinidazole

@@ -49,7 +49,7 @@ collection:
   max_workers: 4
   max_pending_futures: 8
   partial_interval_max: 1
-  refresh_cached_intervals: true
+  refresh_cached_intervals: false
   refresh_cached_pairs: []
   background_scope: observed_entities
   background_fetch_threshold: 9500

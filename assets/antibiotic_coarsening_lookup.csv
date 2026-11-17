@@ -11,11 +11,13 @@ Azithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Azlocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Aztreonam,Monobactams,Monobactams,Beta lactam and related,Naturally occurring/modified
 Bacampicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Bedaquiline,Diarylquinolines,Other antituberculosis agents,Antimycobacterials,Synthetic
 Bekanamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Benzathine-benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Biapenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Brodimoprim,Trimethoprim-derivatives,Sulfonamides/Trimethoprim derivatives and their combinations,Sulfonamides/Trimethoprim derivatives and their combinations,Synthetic
+Capreomycin,Cyclic peptide antibiotics,Antimycobacterial antibiotics,Antimycobacterials,Naturally occurring/modified
 Carbenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Carindacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Carumonam,Monobactams,Monobactams,Beta lactam and related,Naturally occurring/modified
@@ -75,15 +77,18 @@ Cinoxacin,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synth
 Ciprofloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Clarithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Clindamycin,Lincosamides,Miscellaneous,MLS,Naturally occurring/modified
+Clofazimine,Riminophenazines,Antileprosy agents,Antimycobacterials,Synthetic
 Clofoctol,Phenol derivatives,Miscellaneous,Other,Naturally occurring/modified
 Clometocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Clomocycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Cloxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Colistin,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
+Cycloserine,D-alanine analogues,Antimycobacterial antibiotics,Antimycobacterials,Naturally occurring/modified
 Dalbavancin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modified
 Dalfopristin/quinupristin,Streptogramins,Miscellaneous,MLS,Naturally occurring/modified
 Daptomycin,Lipopeptides,Miscellaneous,Other,Naturally occurring/modified
 Delafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Delamanid,Nitroimidazole derivatives,Other antituberculosis agents,Antimycobacterials,Synthetic
 Demeclocycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Dibekacin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Dicloxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
@@ -95,6 +100,8 @@ Epicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/mo
 Eravacycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Ertapenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Erythromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
+Ethambutol,Ethylenediamine derivatives,Other antituberculosis agents,Antimycobacterials,Synthetic
+Ethionamide,Thiocarbamide derivatives,Thiocarbamide derivatives,Antimycobacterials,Synthetic
 Faropenem,Penems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Fidaxomicin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Fleroxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
@@ -115,6 +122,7 @@ Iclaprim,Trimethoprim-derivatives,Sulfonamides/Trimethoprim derivatives and thei
 Imipenem/cilastatin,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Imipenem/cilastatin/relebactam,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
 Isepamicin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
+Isoniazid,Hydrazides,Hydrazides,Antimycobacterials,Synthetic
 Josamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Kanamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Lascufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
@@ -156,6 +164,7 @@ Oxacillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/mo
 Oxolinic-acid,Quinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Oxytetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Panipenem,Carbapenems,Penems/Carbapenems,Beta lactam and related,Naturally occurring/modified
+Para-aminosalicylic acid,Aminosalicylic acid derivatives,Aminosalicylic acid and derivatives,Antimycobacterials,Synthetic
 Pazufloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Pefloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Penamecillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
@@ -173,11 +182,14 @@ Polymyxin-B,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
 Pristinamycin,Streptogramins,Miscellaneous,MLS,Naturally occurring/modified
 Procaine-benzylpenicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Propicillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Prothionamide,Thiocarbamide derivatives,Thiocarbamide derivatives,Antimycobacterials,Synthetic
 Prulifloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
+Pyrazinamide,Pyrazinecarboxamides,Other antituberculosis agents,Antimycobacterials,Synthetic
 Ribostamycin,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
-Rifabutin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
-Rifampicin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rifabutin,Rifamycins,Rifamycins,Antimycobacterials,Naturally occurring/modified
+Rifampicin,Rifamycins,Rifamycins,Antimycobacterials,Naturally occurring/modified
 Rifamycin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Rifapentine,Rifamycins,Rifamycins,Antimycobacterials,Naturally occurring/modified
 Rifaximin,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
 Rokitamycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Rolitetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
@@ -233,8 +245,10 @@ Telavancin,Glycopeptides,Glycopeptides,Glycopeptides,Naturally occurring/modifie
 Telithromycin,Macrolides,Macrolides,MLS,Naturally occurring/modified
 Temafloxacin,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
 Temocillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
+Terizidone,Cycloserine derivatives,Other antituberculosis agents,Antimycobacterials,Synthetic
 Tetracycline,Tetracyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Thiamphenicol,Amphenicols,Miscellaneous,Other,Naturally occurring/modified
+Thioacetazone,Thiosemicarbazones,Other antituberculosis agents,Antimycobacterials,Synthetic
 Ticarcillin,Penicillins,Penicillins,Beta lactam and related,Naturally occurring/modified
 Tigecycline,Glycylcyclines,Tetracyclines and related,Tetracyclines and related,Naturally occurring/modified
 Tinidazole,Imidazoles,Imidazoles,Imidazoles,Synthetic
