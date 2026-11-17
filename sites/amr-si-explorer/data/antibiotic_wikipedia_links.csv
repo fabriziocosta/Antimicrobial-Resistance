@@ -6,7 +6,9 @@ Ampicillin,Ampicillin,https://en.wikipedia.org/wiki/Ampicillin,found,exact_title
 Ampicillin/sulbactam,Ampicillin/sulbactam,https://en.wikipedia.org/wiki/Ampicillin%2Fsulbactam,found,exact_title_or_redirect
 Azithromycin,Azithromycin,https://en.wikipedia.org/wiki/Azithromycin,found,exact_title_or_redirect
 Aztreonam,Aztreonam,https://en.wikipedia.org/wiki/Aztreonam,found,exact_title_or_redirect
+Bedaquiline,Bedaquiline,https://en.wikipedia.org/wiki/Bedaquiline,found,exact_title_or_redirect
 Benzylpenicillin,Benzylpenicillin,https://en.wikipedia.org/wiki/Benzylpenicillin,found,exact_title_or_redirect
+Capreomycin,Capreomycin,https://en.wikipedia.org/wiki/Capreomycin,found,exact_title_or_redirect
 Cefalexin,Cefalexin,https://en.wikipedia.org/wiki/Cefalexin,found,exact_title_or_redirect
 Cefazolin,Cefazolin,https://en.wikipedia.org/wiki/Cefazolin,found,exact_title_or_redirect
 Cefepime,Cefepime,https://en.wikipedia.org/wiki/Cefepime,found,exact_title_or_redirect
@@ -19,10 +21,14 @@ Ceftolozane/tazobactam,Ceftolozane/tazobactam,https://en.wikipedia.org/wiki/Ceft
 Ceftriaxone,Ceftriaxone,https://en.wikipedia.org/wiki/Ceftriaxone,found,exact_title_or_redirect
 Cefuroxime,Cefuroxime,https://en.wikipedia.org/wiki/Cefuroxime,found,exact_title_or_redirect
 Chloramphenicol,Chloramphenicol,https://en.wikipedia.org/wiki/Chloramphenicol,found,exact_title_or_redirect
+Chlortetracycline,Chlortetracycline,https://en.wikipedia.org/wiki/Chlortetracycline,found,exact_title_or_redirect
 Ciprofloxacin,Ciprofloxacin,https://en.wikipedia.org/wiki/Ciprofloxacin,found,exact_title_or_redirect
 Clarithromycin,Clarithromycin,https://en.wikipedia.org/wiki/Clarithromycin,found,exact_title_or_redirect
 Clindamycin,Clindamycin,https://en.wikipedia.org/wiki/Clindamycin,found,exact_title_or_redirect
+Clofazimine,Clofazimine,https://en.wikipedia.org/wiki/Clofazimine,found,exact_title_or_redirect
+Cloxacillin,Cloxacillin,https://en.wikipedia.org/wiki/Cloxacillin,found,exact_title_or_redirect
 Colistin,Colistin,https://en.wikipedia.org/wiki/Colistin,found,exact_title_or_redirect
+Dalfopristin/quinupristin,Quinupristin/dalfopristin,https://en.wikipedia.org/wiki/Quinupristin%2Fdalfopristin,found,exact_title_or_redirect
 Daptomycin,Daptomycin,https://en.wikipedia.org/wiki/Daptomycin,found,exact_title_or_redirect
 Doxycycline,Doxycycline,https://en.wikipedia.org/wiki/Doxycycline,found,exact_title_or_redirect
 Ertapenem,Ertapenem,https://en.wikipedia.org/wiki/Ertapenem,found,exact_title_or_redirect
@@ -39,6 +45,7 @@ Linezolid,Linezolid,https://en.wikipedia.org/wiki/Linezolid,found,exact_title_or
 Meropenem,Meropenem,https://en.wikipedia.org/wiki/Meropenem,found,exact_title_or_redirect
 Meticillin,Methicillin,https://en.wikipedia.org/wiki/Methicillin,found,exact_title_or_redirect
 Metronidazole,Metronidazole,https://en.wikipedia.org/wiki/Metronidazole,found,exact_title_or_redirect
+Minocycline,Minocycline,https://en.wikipedia.org/wiki/Minocycline,found,exact_title_or_redirect
 Moxifloxacin,Moxifloxacin,https://en.wikipedia.org/wiki/Moxifloxacin,found,exact_title_or_redirect
 Neomycin,Neomycin,https://en.wikipedia.org/wiki/Neomycin,found,exact_title_or_redirect
 Nitrofurantoin,Nitrofurantoin,https://en.wikipedia.org/wiki/Nitrofurantoin,found,exact_title_or_redirect
@@ -51,10 +58,13 @@ Piperacillin,Piperacillin,https://en.wikipedia.org/wiki/Piperacillin,found,exact
 Piperacillin/tazobactam,Piperacillin/tazobactam,https://en.wikipedia.org/wiki/Piperacillin%2Ftazobactam,found,exact_title_or_redirect
 Polymyxin-B,Polymyxin B,https://en.wikipedia.org/wiki/Polymyxin_B,found,normalized_title_or_redirect
 Pyrazinamide,Pyrazinamide,https://en.wikipedia.org/wiki/Pyrazinamide,found,exact_title_or_redirect
+Rifabutin,Rifabutin,https://en.wikipedia.org/wiki/Rifabutin,found,exact_title_or_redirect
 Rifampicin,Rifampicin,https://en.wikipedia.org/wiki/Rifampicin,found,exact_title_or_redirect
+Rifaximin,Rifaximin,https://en.wikipedia.org/wiki/Rifaximin,found,exact_title_or_redirect
 Streptomycin,Streptomycin,https://en.wikipedia.org/wiki/Streptomycin,found,exact_title_or_redirect
 Sulfamethoxazole,Sulfamethoxazole,https://en.wikipedia.org/wiki/Sulfamethoxazole,found,exact_title_or_redirect
 Sulfamethoxazole/trimethoprim,Trimethoprim/sulfamethoxazole,https://en.wikipedia.org/wiki/Trimethoprim%2Fsulfamethoxazole,found,exact_title_or_redirect
+Teicoplanin,Teicoplanin,https://en.wikipedia.org/wiki/Teicoplanin,found,exact_title_or_redirect
 Tetracycline,Tetracycline,https://en.wikipedia.org/wiki/Tetracycline,found,exact_title_or_redirect
 Ticarcillin,Ticarcillin,https://en.wikipedia.org/wiki/Ticarcillin,found,exact_title_or_redirect
 Tigecycline,Tigecycline,https://en.wikipedia.org/wiki/Tigecycline,found,exact_title_or_redirect

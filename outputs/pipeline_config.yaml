@@ -148,12 +148,12 @@ glass_interactive:
   antibiotic_analysis_level: antibiotic
   num_future_years: 3
   min_amr_pair_publication_count: 1.0
-  min_num_years_with_valid_counts: 8
+  min_num_years_with_valid_counts: 6
   min_plot_si: -100.0
-  min_last_available_count: 3
-  min_total_publications: 20
+  min_last_available_count: 2
+  min_total_publications: 15
   min_count_abs_pct_error_mean: 0
-  max_count_abs_pct_error_mean: 75
+  max_count_abs_pct_error_mean: 100
   min_counts_background: 10
   min_abs_delta_si: 0.005
   min_si_delta: null
