@@ -283,20 +283,28 @@
     const xs=rows.map(r=>Number(r.imste_1)),ys=rows.map(r=>Number(r.imste_2));
     const xMin=Math.min(...xs),xMax=Math.max(...xs),yMin=Math.min(...ys),yMax=Math.max(...ys);
     const xSpan=Math.max(xMax-xMin,1e-3),ySpan=Math.max(yMax-yMin,1e-3);
-    const labelX=xMax+.07*xSpan,xLow=xMin-.05*xSpan,xHigh=labelX+.42*xSpan;
+    const splitX=(xMin+xMax)/2,labelGap=.045*xSpan,labelRoom=.39*xSpan;
+    const leftLabelX=xMin-labelGap,rightLabelX=xMax+labelGap;
+    const xLow=xMin-labelRoom,xHigh=xMax+labelRoom;
     const labelYSpan=Math.max(ySpan*1.08,(xHigh-xLow)*.72),yMid=(yMin+yMax)/2;
     const yLow=yMid-labelYSpan/2,yHigh=yMid+labelYSpan/2,labelInset=.025*labelYSpan;
     const ordered=[...rows].sort((a,b)=>Number(b.imste_2)-Number(a.imste_2));
-    const labelYs=ordered.map((_,i)=>ordered.length===1?yMid:yHigh-labelInset-(i/(ordered.length-1))*(labelYSpan-2*labelInset));
+    const leftRows=ordered.filter(row=>Number(row.imste_1)<=splitX);
+    const rightRows=ordered.filter(row=>Number(row.imste_1)>splitX);
+    const placeLabels=group=>group.map((_,i)=>group.length===1?yMid:yHigh-labelInset-(i/(group.length-1))*(labelYSpan-2*labelInset));
+    const leftLabelYs=placeLabels(leftRows),rightLabelYs=placeLabels(rightRows);
     const leaderX=[],leaderY=[];
-    ordered.forEach((row,i)=>{leaderX.push(Number(row.imste_1),labelX,null);leaderY.push(Number(row.imste_2),labelYs[i],null);});
+    for(const [group,labelX,labelYs] of [[leftRows,leftLabelX,leftLabelYs],[rightRows,rightLabelX,rightLabelYs]]){
+      group.forEach((row,i)=>{leaderX.push(Number(row.imste_1),labelX,null);leaderY.push(Number(row.imste_2),labelYs[i],null);});
+    }
     const traces=[
       {type:'scatter',mode:'lines',x:leaderX,y:leaderY,hoverinfo:'skip',showlegend:false,line:{color:'#9aa79d',width:.7}},
       {type:'scatter',mode:'markers',x:rows.map(r=>r.imste_1),y:rows.map(r=>r.imste_2),text:rows.map(r=>r.antibiotic),
        customdata:rows.map(r=>[r.antibiotic,r.n_available_bacteria,r.effective_sample_size,r.largest_normalized_weight,r.bootstrap_centroid_radius_95,r.weighted_feature_dispersion]),
        marker:{size:rows.map(r=>Math.max(8,Math.min(24,Math.sqrt(Number(r.n_available_bacteria)||1)*4))),color:rows.map(r=>r.effective_sample_size),colorscale:'YlGn_r',showscale:true,cmin:0,cmax:Math.max(1,...rows.map(r=>Number(r.effective_sample_size)||0)),colorbar:{title:{text:'Effective sample<br>size'},thickness:13},line:{color:'black',width:1}},
        hovertemplate:'<b>%{customdata[0]}</b><br>Matched forecast bacteria: %{customdata[1]}<br>Effective sample size: %{customdata[2]:.2f}<br>Largest normalized weight: %{customdata[3]:.3f}<br>Bootstrap centroid radius (95th pct): %{customdata[4]:.3f}<br>Weighted feature dispersion: %{customdata[5]:.3f}<br>IMSTE 1: %{x:.4f}<br>IMSTE 2: %{y:.4f}<extra></extra>',showlegend:false},
-      {type:'scatter',mode:'text',x:ordered.map(()=>labelX),y:labelYs,text:ordered.map(r=>r.antibiotic),textposition:'middle right',textfont:{color:'#17351b',size:10},hoverinfo:'skip',showlegend:false},
+      {type:'scatter',mode:'text',x:leftRows.map(()=>leftLabelX),y:leftLabelYs,text:leftRows.map(r=>r.antibiotic),textposition:'middle left',textfont:{color:'#17351b',size:10},hoverinfo:'skip',showlegend:false},
+      {type:'scatter',mode:'text',x:rightRows.map(()=>rightLabelX),y:rightLabelYs,text:rightRows.map(r=>r.antibiotic),textposition:'middle right',textfont:{color:'#17351b',size:10},hoverinfo:'skip',showlegend:false},
     ];
     const layout={autosize:true,height:800,paper_bgcolor:'#fff',plot_bgcolor:'#fff',font:{family:'Inter, Segoe UI, Arial, sans-serif',color:'#24405f',size:11},
       title:{text:`SI Antibiotic profiles: cosine metric, IMSTE 2D projection<br><sup>${futureProfileData.reference_year} → ${futureProfileData.future_year}</sup>`,x:.02,xanchor:'left',font:{size:17}},
