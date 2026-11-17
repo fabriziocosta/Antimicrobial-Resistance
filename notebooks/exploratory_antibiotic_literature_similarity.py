@@ -1,6 +1,8 @@
 """Analysis pipeline for exploratory antibiotic literature similarity."""
 from __future__ import annotations
 from dataclasses import dataclass
+from inspect import signature
+import warnings
 from pathlib import Path
 import datetime as dt
 import json
@@ -18,7 +20,27 @@ try:
 except ImportError as exc:
     raise RuntimeError("Install the Atlas V2 [viz] extra in the notebook environment before running this analysis.") from exc
 
-@dataclass(frozen=True)
+
+_WARNED_IMSTE_OPTIONS = set()
+
+
+def _make_compatible_imste(**kwargs):
+    """Build IMSTE across versions with different supported constructor options."""
+    supported = signature(IteratedMinimumSpanningTreeEmbedder).parameters
+    unsupported = sorted(set(kwargs) - set(supported))
+    if unsupported:
+        unsupported_key = tuple(unsupported)
+        if unsupported_key not in _WARNED_IMSTE_OPTIONS:
+            warnings.warn(
+                "Installed IMSTE does not support these configured options; ignoring them: "
+                + ", ".join(unsupported),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _WARNED_IMSTE_OPTIONS.add(unsupported_key)
+        kwargs = {name: value for name, value in kwargs.items() if name in supported}
+    return IteratedMinimumSpanningTreeEmbedder(**kwargs)
+
 def write_future_si_profile_payload(analysis: dict, output_path: Path) -> Path:
     """Write the precomputed browser payload for the Future-SI explorer plot."""
     output_path = Path(output_path)
@@ -42,6 +64,7 @@ def write_future_si_profile_payload(analysis: dict, output_path: Path) -> Path:
     return output_path
 
 
+@dataclass(frozen=True)
 class AnalysisSettings:
     project_root: Path
     atlas_root: Path
@@ -398,7 +421,7 @@ def run_analysis(settings: AnalysisSettings) -> dict:
     mst_max_value = atlas_settings.get("imste_mst_max_neighbors")
     mst_max_neighbors = None if mst_max_value is None else max(mst_neighbors, min(int(mst_max_value), n_points - 1))
 
-    embedder = IteratedMinimumSpanningTreeEmbedder(
+    embedder = _make_compatible_imste(
         n_msts=int(atlas_settings["imste_n_msts"]),
         n_epochs=int(atlas_settings["imste_n_epochs"]),
         mst_method=str(atlas_settings["imste_mst_method"]),
@@ -766,7 +789,7 @@ def run_analysis(settings: AnalysisSettings) -> dict:
     comparison_mst_max_value=comparison_settings.get("imste_mst_max_neighbors")
     comparison_mst_max_neighbors=None if comparison_mst_max_value is None else max(comparison_mst_neighbors,min(int(comparison_mst_max_value),comparison_n-1))
     def fit_comparison_imste(vectors):
-        embedder=IteratedMinimumSpanningTreeEmbedder(
+        embedder=_make_compatible_imste(
             n_msts=int(comparison_settings["imste_n_msts"]),n_epochs=int(comparison_settings["imste_n_epochs"]),
             mst_method=str(comparison_settings["imste_mst_method"]),mst_neighbors=comparison_mst_neighbors,
             mst_inter_component_edges=int(comparison_settings["imste_mst_inter_component_edges"]),mst_max_neighbors=comparison_mst_max_neighbors,
