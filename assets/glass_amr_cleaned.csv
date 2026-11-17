@@ -155,7 +155,7 @@ Neisseria meningitidis,Penicillin G,Neisseria meningitidis,Benzylpenicillin,Fals
 Neisseria meningitidis,cefotaxime,Neisseria meningitidis,Cefotaxime,False,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
 Neisseria meningitidis,Ceftriaxone,Neisseria meningitidis,Ceftriaxone,False,False,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
 Neisseria meningitidis,Ciprofloxacin,Neisseria meningitidis,Ciprofloxacin,False,False,Fluoroquinolones,Qinolones/fluoroquinolones,Qinolones/fluoroquinolones,Synthetic
-Neisseria meningitidis,Rifampicin,Neisseria meningitidis,Rifampicin,False,False,Rifamycins,Rifamycins,Rifamycins,Naturally occurring/modified
+Neisseria meningitidis,Rifampicin,Neisseria meningitidis,Rifampicin,False,False,Rifamycins,Rifamycins,Antimycobacterials,Naturally occurring/modified
 Pseudomonas aeruginosa,amikacin,Pseudomonas aeruginosa,Amikacin,False,True,Aminoglycosides,Aminocyclitols/Aminoglycosides,Aminocyclitols/Aminoglycosides,Naturally occurring/modified
 Pseudomonas aeruginosa,ceftazidime,Pseudomonas aeruginosa,Ceftazidime,False,True,Third-generation-cephalosporins,Cephalosporins,Beta lactam and related,Naturally occurring/modified
 Pseudomonas aeruginosa,Colistin,Pseudomonas aeruginosa,Colistin,False,False,Polymyxins,Miscellaneous,Other,Naturally occurring/modified
